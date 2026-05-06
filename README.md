@@ -201,20 +201,6 @@ vistamirror/
 
 ---
 
-## 🆚 与 emby-pulse 对比
-
-| 功能 | 镜界 Vistamirror | emby-pulse |
-|------|------------------|------------|
-| 用户管理 | ✅ 邀请码 + 完整生命周期 | ✅ |
-| 数据仪表盘 | ✅ | ✅ |
-| Telegram 通知 | ✅ 播放 + 入库 | ✅ |
-| 追剧日历 | 规划中 | ✅ |
-| 观影报表生成 | 规划中 | ✅ |
-| 企业微信 | ✅ | ❌ |
-| 媒体库质量扫描 | ✅ | ❌ |
-
----
-
 ## 🐛 问题反馈
 
 如果您遇到问题，请通过以下方式反馈：
@@ -227,15 +213,6 @@ vistamirror/
 ## 📄 许可证
 
 本项目基于 [MIT License](LICENSE) 开源。
-
----
-
-## 🙏 致谢
-
-- 灵感来源于 [emby-pulse](https://github.com/zeyu8023/emby-pulse)
-- 使用了 Emby 官方 API 文档
-
----
 
 <p align="center">
   <strong>镜界 Vistamirror</strong> - 让 Emby 管理更优雅
