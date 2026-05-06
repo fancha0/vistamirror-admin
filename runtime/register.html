@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>镜界Vistamirror - 邀请码注册</title>
+  <meta name="description" content="使用邀请码注册 Emby 账号。">
+  <link rel="icon" type="image/png" href="/logo.png?v=20260408-2030">
+  <link rel="stylesheet" href="/register.css">
+</head>
+<body>
+  <main class="register-page">
+    <section class="register-shell">
+      <header class="register-header">
+        <div class="brand-wrap">
+          <img src="/logo.png?v=20260408-2030" alt="镜界Vistamirror" class="brand-logo">
+          <div class="brand-copy">
+            <p class="brand-tag">镜界Vistamirror</p>
+            <h1>邀请码注册</h1>
+            <p>使用有效邀请码创建你的 Emby 账号</p>
+          </div>
+        </div>
+      </header>
+
+      <div id="register-message" class="message neutral">正在校验邀请码...</div>
+
+      <section class="meta-section" aria-label="邀请码信息">
+        <div class="meta-grid">
+          <article class="meta-item">
+            <span>邀请码</span>
+            <strong id="invite-code-view">-</strong>
+          </article>
+          <article class="meta-item">
+            <span>状态</span>
+            <strong id="invite-status-view">-</strong>
+          </article>
+          <article class="meta-item">
+            <span>初始时长</span>
+            <strong id="invite-days-view">-</strong>
+          </article>
+          <article class="meta-item">
+            <span>到期时间</span>
+            <strong id="invite-expiry-view">-</strong>
+          </article>
+        </div>
+      </section>
+
+      <form id="register-form" class="register-form" novalidate>
+        <label>
+          <span>邀请码</span>
+          <input id="invite-code-input" name="inviteCode" type="text" readonly>
+        </label>
+        <label>
+          <span>用户名</span>
+          <input id="username-input" name="username" type="text" minlength="2" autocomplete="username" placeholder="请输入用户名">
+        </label>
+        <label>
+          <span>密码（至少 6 位）</span>
+          <input id="password-input" name="password" type="password" minlength="6" autocomplete="new-password" placeholder="请输入密码">
+        </label>
+        <label>
+          <span>确认密码</span>
+          <input id="confirm-password-input" name="confirmPassword" type="password" minlength="6" autocomplete="new-password" placeholder="请再次输入密码">
+        </label>
+        <button id="register-submit" type="submit" class="submit-button">校验邀请码并注册</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="/register.js"></script>
+</body>
+</html>

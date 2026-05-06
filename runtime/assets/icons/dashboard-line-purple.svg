@@ -1,0 +1,15 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="dashboardLinePurple" x1="10" y1="12" x2="54" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BF79FF"/>
+      <stop offset="1" stop-color="#8B5BFF"/>
+    </linearGradient>
+  </defs>
+  <path d="M10 40C10 27.8497 19.8497 18 32 18C44.1503 18 54 27.8497 54 40" stroke="url(#dashboardLinePurple)" stroke-width="4" stroke-linecap="round"/>
+  <path d="M32 40L44 28" stroke="url(#dashboardLinePurple)" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="40" r="3" fill="url(#dashboardLinePurple)"/>
+  <path d="M18 32H22" stroke="url(#dashboardLinePurple)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M42 32H46" stroke="url(#dashboardLinePurple)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M26 26L29 29" stroke="url(#dashboardLinePurple)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M38 29L41 26" stroke="url(#dashboardLinePurple)" stroke-width="3" stroke-linecap="round"/>
+</svg>

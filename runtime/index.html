@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>镜界Vistamirror 用户管理台</title>
+  <meta name="description" content="镜界Vistamirror 风格的 Emby 用户管理控制台，支持 Emby API 接入、邀请管理、到期续费与登录日志。">
+  <link rel="icon" type="image/png" href="logo.png?v=20260408-2030">
+  <link rel="apple-touch-icon" href="logo.png?v=20260408-2030">
+  <link rel="stylesheet" href="styles.css?v=20260503-quality-scan-poster">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">
+          <img src="logo.png?v=20260408-2030" alt="镜界Vistamirror 图标">
+        </div>
+        <div class="brand-copy">
+          <h1>镜界<span class="brand-en">Vistamirror</span></h1>
+        </div>
+      </div>
+
+      <label id="global-search-trigger" class="sidebar-search" role="button" tabindex="0" aria-label="打开全局搜索">
+        <span class="sidebar-search-icon">⌕</span>
+        <input id="sidebar-global-search" type="text" placeholder="全局搜索..." aria-label="全局搜索" readonly>
+        <em>Cmd+K</em>
+      </label>
+
+      <nav class="nav">
+        <p class="nav-group-title">数据与分析</p>
+        <button class="nav-item active" data-view="overview" type="button"><span class="nav-icon">📈</span>仪表盘</button>
+        <button class="nav-item" data-view="content-ranking" type="button"><span class="nav-icon">🎞</span>内容排行</button>
+        <button class="nav-item" data-view="data-insights" type="button"><span class="nav-icon">🔎</span>数据洞察</button>
+        <button class="nav-item" data-view="users" type="button"><span class="nav-icon nav-icon-svg" aria-hidden="true"><svg class="quality-audit-nav-svg" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" focusable="false"><path d="M0 0m125.582536 0l772.834928 0q125.582536 0 125.582536 125.582536l0 772.834928q0 125.582536-125.582536 125.582536l-772.834928 0q-125.582536 0-125.582536-125.582536l0-772.834928q0-125.582536 125.582536-125.582536Z" fill="#AA66CC"></path><path d="M305.165563 463.901889h94.56365v96.196222H305.165563z" fill="#F5F5F5"></path><path d="M466.413539 479.599706h258.44886v15.697817H466.413539zM466.413539 527.697817h258.44886v15.697817H466.413539z" fill="#CED0D0"></path><path d="M354.142752 525.186166l-43.953888-43.953887-11.176845 11.176845 43.953887 43.953888 11.176846 11.051263 11.051263-11.051263 61.284278-61.284278-11.051263-11.176845-61.284278 61.284277z" fill="#FB5D74"></path><path d="M305.165563 463.901889h94.56365v96.196222H305.165563z" fill="#F5F5F5"></path><path d="M466.413539 479.599706h258.44886v15.697817H466.413539zM466.413539 527.697817h258.44886v15.697817H466.413539z" fill="#CED0D0"></path><path d="M354.142752 525.186166l-43.953888-43.953887-11.176845 11.176845 43.953887 43.953888 11.176846 11.051263 11.051263-11.051263 61.284278-61.284278-11.051263-11.176845-61.284278 61.284277z" fill="#FB5D74"></path><path d="M215.750797 145.926907m37.046848 0l518.40471 0q37.046848 0 37.046848 37.046848l0 688.569046q0 37.046848-37.046848 37.046848l-518.40471 0q-37.046848 0-37.046848-37.046848l0-688.569046q0-37.046848 37.046848-37.046848Z" fill="#334D5C"></path><path d="M250.285995 190.383125m37.046848 0l449.334314 0q37.046848 0 37.046848 37.046848l0 599.65661q0 37.046848-37.046848 37.046848l-449.334314 0q-37.046848 0-37.046848-37.046848l0-599.65661q0-37.046848 37.046848-37.046848Z" fill="#F5F5F5"></path><path d="M661.443218 162.503802h-298.886436a17.707138 17.707138 0 0 0-17.707138 17.707137v57.265637a17.707138 17.707138 0 0 0 17.707138 17.707138h87.907775v-15.8234h124.326711v15.8234h87.907775a17.707138 17.707138 0 0 0 17.707138-17.707138v-57.265637a17.707138 17.707138 0 0 0-18.962963-17.707137z" fill="#F5F5F5"></path><path d="M634.31739 175.689968v-32.149129H389.68261v32.149129h-39.558499v14.567574h39.558499v14.441992h244.63478v-14.441992h38.553839v-14.567574h-38.553839z" fill="#334D5C"></path><path d="M313.328428 329.026245h89.1636v90.670591h-89.1636z" fill="#F5F5F5"></path><path d="M465.283297 343.844984h243.63012v14.818739h-243.63012zM465.283297 389.18028h243.63012v14.818739h-243.63012z" fill="#CED0D0"></path><path d="M359.417219 386.794211l-41.442237-41.442237-10.423351 10.548934 41.442237 41.316654 10.423351 10.548933 10.42335-10.548933 57.767967-57.767967-10.423351-10.42335-57.767966 57.767966z" fill="#FB5D74"></path><path d="M313.328428 481.985774h89.1636v90.670591h-89.1636z" fill="#F5F5F5"></path><path d="M465.283297 496.804513h243.63012v14.818739h-243.63012zM465.283297 542.139809h243.63012v14.818739h-243.63012z" fill="#CED0D0"></path><path d="M359.417219 539.75374l-41.442237-41.442236-10.423351 10.548933 41.442237 41.316654 10.423351 10.548933 10.42335-10.548933 57.767967-57.767967-10.423351-10.42335-57.767966 57.767966z" fill="#FB5D74"></path><path d="M313.328428 634.945303h89.1636v90.670591h-89.1636z" fill="#F5F5F5"></path><path d="M465.283297 649.63846h243.63012v14.818739h-243.63012zM465.283297 695.099338h243.63012v14.818739h-243.63012z" fill="#CED0D0"></path><path d="M604.679912 864.133431l0.376747-168.657346h168.657346L604.679912 864.133431z" fill="#FFFFFF"></path><path d="M776.727986 692.838852l-0.376747 175.564386-175.564386 0.125582 175.941133-175.689968z" fill="#334D5C"></path></svg></span>质量盘点</button>
+        <button class="nav-item" data-view="missing" type="button"><span class="nav-icon nav-icon-svg" aria-hidden="true"><svg class="missing-nav-svg" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" focusable="false"><path d="M512 0c282.760533 0 512 229.239467 512 512 0 282.760533-229.239467 512-512 512-282.760533 0-512-229.239467-512-512C0 229.239467 229.239467 0 512 0z" fill="#8460D8" opacity=".1"></path><path d="M645.9392 521.1136a123.733333 123.733333 0 0 1 122.0608 123.426133 123.733333 123.733333 0 0 1-122.0608 123.460267 124.177067 124.177067 0 0 1-109.090133-61.1328 122.914133 122.914133 0 0 1 0-124.586667 124.177067 124.177067 0 0 1 109.090133-61.166933z m-43.793067 52.599467a20.48 20.48 0 0 0-28.9792 28.945066l41.028267 41.0624-45.841067 45.841067a20.48 20.48 0 0 0 28.945067 28.9792l45.8752-45.8752 45.841067 45.8752a20.48 20.48 0 0 0 28.9792-28.9792L672.085333 643.754667l41.028267-41.0624a20.48 20.48 0 0 0-28.945067-28.945067l-41.028266 41.028267z" fill="#8460D8" opacity=".6"></path><path d="M617.8816 238.933333a79.189333 79.189333 0 0 1 79.189333 79.189334l0.034134 178.244266a144.110933 144.110933 0 0 0-68.334934-17.237333c-83.831467 0-151.790933 72.123733-151.790933 161.0752 0 34.440533 10.205867 66.321067 27.5456 92.501333H386.389333A79.189333 79.189333 0 0 1 307.2 653.5168V318.122667A79.189333 79.189333 0 0 1 386.389333 238.933333h231.492267z m-129.467733 186.845867h-104.584534a20.002133 20.002133 0 1 0 0 40.004267h104.584534a20.002133 20.002133 0 1 0 0-40.004267z m100.625066-100.113067h-205.2096a20.002133 20.002133 0 0 0 0 40.0384h205.2096a20.002133 20.002133 0 1 0 0-40.0384z" fill="#8460D8"></path></svg></span>缺集管理</button>
+        <button class="nav-item" data-view="dedup" type="button"><span class="nav-icon">🗂</span>去重管理</button>
+        <button class="nav-item" data-view="logs" type="button"><span class="nav-icon">🕘</span>播放历史</button>
+        <p class="nav-group-title">互动与维护</p>
+        <button class="nav-item" data-view="workorders" type="button"><span class="nav-icon">🎬</span>工单大厅</button>
+        <button class="nav-item" data-view="user-center" type="button"><span class="nav-icon">👥</span>用户管理</button>
+        <button class="nav-item" data-view="points" type="button"><span class="nav-icon">🪪</span>积分引擎</button>
+        <button class="nav-item" data-view="risk-control" type="button"><span class="nav-icon">🛡</span>风险管控</button>
+        <button class="nav-item" data-view="client-control" type="button"><span class="nav-icon">🖥</span>客户端管控</button>
+        <button class="nav-item" data-view="calendar" type="button"><span class="nav-icon">🗓</span>追剧日历</button>
+        <p class="nav-group-title">系统与构建</p>
+        <button class="nav-item" data-view="bot-assistant" type="button"><span class="nav-icon">🤖</span>机器人助手</button>
+        <button class="nav-item" data-view="task-center" type="button"><span class="nav-icon">⚡</span>任务中心</button>
+        <button class="nav-item" data-view="workshop" type="button"><span class="nav-icon">🪄</span>映迹工坊</button>
+        <button class="nav-item" data-view="about-support" type="button"><span class="nav-icon">ℹ</span>关于与支持</button>
+        <p class="nav-group-title">扩展能力</p>
+        <button class="nav-item" data-view="plugins" type="button"><span class="nav-icon">🧩</span>插件中心</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="sidebar-exit" type="button">退出管理系统</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <nav class="frozen-navbar" aria-label="顶部导航">
+        <div class="frozen-navbar-actions">
+          <button class="nav-icon-btn" type="button" aria-label="通知">🔔</button>
+          <div class="profile-menu">
+            <button id="profile-menu-btn" class="nav-icon-btn" type="button" aria-label="设置" aria-haspopup="menu" aria-expanded="false">⚙</button>
+            <div id="profile-menu-panel" class="profile-menu-panel" role="menu" hidden>
+              <div class="profile-menu-head">
+                <strong>镜界Vistamirror</strong>
+                <span>管理员</span>
+              </div>
+              <button id="profile-open-settings" class="profile-menu-item" type="button" role="menuitem">系统设置</button>
+              <button id="profile-open-support" class="profile-menu-item" type="button" role="menuitem">关于与支持</button>
+            </div>
+          </div>
+          <button class="nav-icon-btn" type="button" aria-label="快捷工具">⌘</button>
+        </div>
+      </nav>
+
+      <header class="topbar">
+        <div class="topbar-hero">
+          <div class="topbar-icon">👥</div>
+          <div>
+            <h2 id="topbar-title">用户管理</h2>
+            <p id="topbar-subtitle" class="topbar-text">统筹全站账号与权限生命周期</p>
+          </div>
+        </div>
+        <div id="topbar-actions" class="topbar-actions">
+          <div id="topbar-logs-toolbar-host" class="topbar-actions-group" hidden></div>
+          <div id="topbar-user-center-actions" class="topbar-actions-group" hidden>
+            <button id="uc-invite-manage-btn" class="ghost-btn" type="button">邀请管理</button>
+            <button id="uc-generate-invite-btn" class="mint-btn" type="button">生成邀请</button>
+            <button id="uc-create-user-btn" class="primary-btn" type="button">创建用户</button>
+          </div>
+          <div id="topbar-bot-actions" class="topbar-actions-group" hidden>
+            <button id="bot-save-btn" class="primary-btn" type="button">保存配置</button>
+          </div>
+          <button id="settings-save-btn" class="settings-save-btn" type="button" hidden>保存配置</button>
+        </div>
+      </header>
+
+      <section id="overview-stats-grid" class="stats-grid">
+        <article class="stat-card accent-purple">
+          <p>电影</p>
+          <strong id="stat-movies">-</strong>
+          <span id="stat-movies-sub">Movie</span>
+        </article>
+        <article class="stat-card accent-green">
+          <p>电视剧</p>
+          <strong id="stat-series">-</strong>
+          <span id="stat-series-sub">Series</span>
+        </article>
+        <article class="stat-card accent-orange">
+          <p>剧集</p>
+          <strong id="stat-episodes">-</strong>
+          <span id="stat-episodes-sub">Episode</span>
+        </article>
+        <article class="stat-card">
+          <p>用户</p>
+          <strong id="stat-users">0</strong>
+          <span id="stat-users-sub">用户总数</span>
+        </article>
+      </section>
+
+      <section id="view-overview" class="view-section active">
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">搜索与筛选</p>
+                <h3>用户总览</h3>
+              </div>
+            </div>
+            <div class="toolbar toolbar-wide">
+              <div class="search-box search-box-wide">
+                <input id="user-search" type="search" placeholder="搜索用户名 / Emby Connect / 邮箱备注">
+              </div>
+              <div class="filter-group">
+                <button class="filter-chip active" data-user-filter="all" type="button">全部</button>
+                <button class="filter-chip" data-user-filter="online" type="button">活跃</button>
+                <button class="filter-chip" data-user-filter="expiring" type="button">即将到期</button>
+                <button class="filter-chip" data-user-filter="disabled" type="button">已禁用</button>
+              </div>
+            </div>
+
+            <div class="user-table-wrap">
+              <p id="client-software-filter-feedback" class="client-filter-feedback" hidden></p>
+              <table class="user-table">
+                <thead>
+                  <tr>
+                    <th>用户信息</th>
+                    <th>账号状态</th>
+                    <th>管理员</th>
+                    <th>最后活跃</th>
+                    <th>Emby Connect</th>
+                    <th>续费状态</th>
+                    <th>操作管理</th>
+                  </tr>
+                </thead>
+                <tbody id="users-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">同步结果</p>
+                <h3>最近状态</h3>
+              </div>
+            </div>
+            <div class="overview-grid compact-overview-grid">
+              <article class="overview-card">
+                <span>远程访问开启</span>
+                <strong id="overview-remote">0</strong>
+              </article>
+              <article class="overview-card">
+                <span>Live TV 开启</span>
+                <strong id="overview-livetv">0</strong>
+              </article>
+              <article class="overview-card">
+                <span>邀请待使用</span>
+                <strong id="overview-invites">0</strong>
+              </article>
+            </div>
+            <div id="sync-feed" class="activity-feed"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-content-ranking" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <span id="content-ranking-source" class="badge neutral" hidden>等待连接 Emby</span>
+            <div class="user-table-wrap">
+              <table class="user-table">
+                <thead>
+                  <tr>
+                    <th>排名</th>
+                    <th>影片名称</th>
+                    <th>播放次数</th>
+                    <th>最近播放</th>
+                  </tr>
+                </thead>
+                <tbody id="content-ranking-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-data-insights" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">数据洞察</p>
+                <h3>行为分析</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“数据洞察”独立界面。后续可接入时段活跃、设备分布、码率分布、异常波动分析。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-users" class="view-section">
+        <div class="quality-dashboard-shell">
+          <section class="quality-overview-card quality-card">
+            <div class="quality-overview-main">
+              <div class="quality-overview-icon" aria-hidden="true">◈</div>
+              <div>
+                <div class="quality-title-row">
+                  <h3>全景质量盘点</h3>
+                </div>
+                <p class="quality-subtitle">上次扫库时间：<strong id="quality-last-scan-time">未执行重扫</strong></p>
+                <p id="user-action-feedback" class="quality-feedback quality-scan-feedback"></p>
+                <span id="detail-name" class="quality-hidden-meta" aria-hidden="true">未选择用户</span>
+              </div>
+            </div>
+            <div class="quality-overview-actions">
+              <button id="quality-rescan-btn" class="primary-btn quality-primary-btn" type="button">重扫媒体库</button>
+            </div>
+          </section>
+
+          <div class="quality-analysis-grid">
+            <section class="quality-card quality-matrix-card quality-resolution-card">
+              <div class="quality-section-head">
+                <span class="quality-section-icon" aria-hidden="true">◈</span>
+                <div>
+                  <h3>分辨率矩阵</h3>
+                  <p id="quality-resolution-total" class="quality-section-subtitle">等待媒体库扫描</p>
+                </div>
+              </div>
+              <div id="quality-resolution-bars" class="quality-resolution-bars">
+                <div class="quality-resolution-skeleton">正在统计媒体分辨率...</div>
+              </div>
+              <div class="quality-legacy-user-metrics" hidden>
+                <span id="detail-last-login">-</span>
+                <span id="detail-last-activity">-</span>
+                <span id="detail-device-count">0</span>
+                <span id="quality-risk-value">待查看</span>
+              </div>
+            </section>
+
+            <section class="quality-card quality-dynamic-card quality-resolution-focus-card">
+              <div class="quality-section-head">
+                <span class="quality-section-icon purple" aria-hidden="true">◉</span>
+                <div>
+                  <h3 id="quality-resolution-focus-title">质量风险摘要</h3>
+                  <p id="quality-resolution-focus-subtitle" class="quality-section-subtitle">点击左侧分辨率查看详情</p>
+                </div>
+              </div>
+              <div id="quality-resolution-focus-body" class="quality-resolution-focus-body">
+                <div class="quality-resolution-focus-empty">正在准备风险摘要与筛选控制台...</div>
+              </div>
+            </section>
+          </div>
+
+          <section class="quality-card quality-resolution-detail-card quality-resolution-detail-standalone">
+              <div class="quality-section-head">
+                <span class="quality-section-icon purple" aria-hidden="true">◉</span>
+                <div>
+                  <h3 id="quality-resolution-detail-title">分辨率片单</h3>
+                  <p id="quality-resolution-detail-subtitle" class="quality-section-subtitle">点击左侧分辨率查看影片明细</p>
+                </div>
+              </div>
+              <div id="quality-resolution-detail-list" class="quality-resolution-detail-list">
+                <div class="quality-resolution-empty">等待分辨率数据</div>
+              </div>
+              <div class="quality-legacy-policy" hidden>
+                <div class="quality-policy-layout">
+                  <div class="quality-policy-hero">
+                    <p>EMBY CONNECT</p>
+                    <strong id="detail-email">-</strong>
+                    <span id="detail-note">请先连接 Emby 并选择一个用户。</span>
+                  </div>
+                  <div class="toggle-list quality-toggle-grid">
+                    <label class="toggle-row">
+                      <span>允许远程访问</span>
+                      <input id="toggle-remote" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <span>允许媒体下载</span>
+                      <input id="toggle-download" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <span>允许 Live TV</span>
+                      <input id="toggle-livetv" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <span>禁用用户</span>
+                      <input id="toggle-disabled" type="checkbox">
+                    </label>
+                  </div>
+                </div>
+              </div>
+          </section>
+
+          <section class="quality-card quality-list-card">
+            <div class="quality-list-head">
+              <div>
+                <p class="section-label">Profile Snapshot</p>
+                <h3>账号画像明细</h3>
+              </div>
+              <span class="quality-count-pill">4 项</span>
+            </div>
+            <div class="profile-card quality-profile-inline">
+              <div id="detail-avatar" class="avatar">EP</div>
+              <div>
+                <p class="profile-line">当前选中用户</p>
+                <p class="profile-note">下方保留现有字段与策略数据，并以卡片形式展示。</p>
+              </div>
+            </div>
+            <div id="detail-meta" class="detail-list quality-detail-list"></div>
+          </section>
+
+          <section class="quality-card quality-activity-card">
+            <div class="quality-list-head">
+              <div>
+                <p class="section-label">Activity Trace</p>
+                <h3>相关活动</h3>
+              </div>
+              <span class="quality-count-pill">最近 5 条</span>
+            </div>
+            <div id="detail-activity" class="activity-feed quality-activity-feed"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-invites" class="view-section">
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">邀请码管理</p>
+                <h3>生成邀请与快速建号</h3>
+              </div>
+            </div>
+
+            <form id="invite-form" class="form-grid">
+              <label class="field">
+                <span>邀请备注</span>
+                <input id="invite-label" type="text" placeholder="例如 朋友 / 家庭成员 / 测试用户">
+              </label>
+              <label class="field">
+                <span>默认用户名</span>
+                <input id="invite-username" type="text" placeholder="例如 movie_fan">
+              </label>
+              <label class="field">
+                <span>有效天数</span>
+                <input id="invite-days" type="number" min="1" value="7">
+              </label>
+              <label class="field">
+                <span>套餐名称</span>
+                <input id="invite-plan" type="text" placeholder="例如 月费标准">
+              </label>
+              <div class="form-actions">
+                <button class="primary-btn" type="submit">生成邀请</button>
+              </div>
+            </form>
+
+            <p class="hint-text">说明：这里的邀请管理是面板扩展层，用于提前生成待使用名额和续费方案。</p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">邀请列表</p>
+                <h3>待使用 / 已使用</h3>
+              </div>
+            </div>
+            <div id="invite-list" class="card-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-renewals" class="view-section">
+        <div class="dashboard-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">到期续费</p>
+                <h3>续费计划与到期日管理</h3>
+              </div>
+            </div>
+            <p class="hint-text">Emby 原生用户没有会员到期日字段，这里使用面板本地数据层为每个用户附加套餐和到期日期。</p>
+            <div id="renewal-list" class="card-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">续费编辑</p>
+                <h3>为用户设置到期信息</h3>
+              </div>
+            </div>
+
+            <form id="renewal-form" class="form-grid">
+              <label class="field">
+                <span>选择用户</span>
+                <select id="renewal-user"></select>
+              </label>
+              <label class="field">
+                <span>套餐名称</span>
+                <input id="renewal-plan" type="text" placeholder="例如 年费旗舰">
+              </label>
+              <label class="field">
+                <span>到期日期</span>
+                <input id="renewal-expiry" type="date">
+              </label>
+              <label class="field">
+                <span>管理备注</span>
+                <input id="renewal-note" type="text" placeholder="例如 已付款，等待确认">
+              </label>
+              <div class="form-actions">
+                <button class="primary-btn" type="submit">保存续费信息</button>
+              </div>
+            </form>
+
+            <p id="renewal-feedback" class="action-feedback">尚未修改任何续费信息。</p>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-logs" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact playback-head playback-head-swap">
+              <div id="logs-toolbar-host">
+                <div id="logs-toolbar" class="toolbar">
+                  <label class="field">
+                    <select id="log-user-filter">
+                      <option value="">所有用户大盘</option>
+                    </select>
+                  </label>
+                  <div class="search-box">
+                    <input id="log-search" type="search" placeholder="搜索影视名称...">
+                  </div>
+                  <button id="log-query-btn" class="primary-btn" type="button">立即查询</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="user-table-wrap">
+              <table class="user-table playback-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>用户</th>
+                    <th>内容媒体</th>
+                    <th>观影时长</th>
+                    <th>客户端接入</th>
+                    <th>终端设备</th>
+                  </tr>
+                </thead>
+                <tbody id="log-list"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-missing" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">缺集管理</p>
+                <h3>缺失条目处理</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“缺集管理”独立界面。后续可接入自动巡检、缺集标注和补集任务。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-dedup" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">去重管理</p>
+                <h3>重复项治理</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“去重管理”独立界面。后续可接入重复资源扫描、命名归一与批量合并。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-workorders" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">工单大厅</p>
+                <h3>待处理事项</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里预留为工单管理独立界面。后续可接入工单状态流转、责任人分配、SLA 统计。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-user-center" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="user-center-stats">
+              <article class="user-center-stat-card">
+                <p>总用户数</p>
+                <strong id="uc-stat-total">0</strong>
+              </article>
+              <article class="user-center-stat-card vip">
+                <p>VIP 会员数</p>
+                <strong id="uc-stat-vip">0</strong>
+              </article>
+              <article class="user-center-stat-card success">
+                <p>活跃正常数</p>
+                <strong id="uc-stat-active">0</strong>
+              </article>
+              <article class="user-center-stat-card warning">
+                <p>7 天内到期数</p>
+                <strong id="uc-stat-expiring">0</strong>
+              </article>
+              <article class="user-center-stat-card danger">
+                <p>已封禁 / 过期数</p>
+                <strong id="uc-stat-blocked">0</strong>
+              </article>
+            </div>
+
+            <div class="toolbar user-center-toolbar">
+              <div class="search-box">
+                <input id="user-center-search" type="search" placeholder="搜索用户名或备注...">
+              </div>
+              <label class="field">
+                <select id="user-center-sort">
+                  <option value="recommend">排序：智能推荐（管理员 > VIP > 状态）</option>
+                  <option value="last-login">排序：最近登录</option>
+                  <option value="name">排序：用户名</option>
+                  <option value="status">排序：账号状态</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="user-table-wrap">
+              <table class="user-table user-center-table">
+                <thead>
+                  <tr>
+                    <th>用户信息</th>
+                    <th>并发限制</th>
+                    <th>账号状态</th>
+                    <th>有效期至</th>
+                    <th>最后登录</th>
+                    <th>操作管理</th>
+                  </tr>
+                </thead>
+                <tbody id="user-center-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-points" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">积分引擎</p>
+                <h3>积分策略与发放记录</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“积分引擎”独立界面，后续可接入签到积分、活跃奖励和兑换规则。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-risk-control" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">风险管控</p>
+                <h3>异常行为检测</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“风险管控”独立界面，后续可接入异地登录、暴力尝试与设备指纹监控。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-client-control" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">客户端管控</p>
+                <h3>终端态势与管控</h3>
+              </div>
+              <span id="client-device-source" class="badge neutral">等待连接 Emby</span>
+            </div>
+
+            <div class="client-stats-grid">
+              <article class="client-stat-card">
+                <div class="client-stat-card-head">
+                  <span>历史设备总数</span>
+                  <em class="client-stat-icon neutral" aria-hidden="true">🗄</em>
+                </div>
+                <strong id="client-stat-total" class="client-stat-value">0</strong>
+              </article>
+              <article class="client-stat-card">
+                <div class="client-stat-card-head">
+                  <span>当前在线设备</span>
+                  <em class="client-stat-icon success" aria-hidden="true">📶</em>
+                </div>
+                <strong id="client-stat-online" class="client-stat-value success">0</strong>
+              </article>
+              <article class="client-stat-card">
+                <div class="client-stat-card-head">
+                  <span>已违规拦截</span>
+                  <em class="client-stat-icon danger" aria-hidden="true">⛔</em>
+                </div>
+                <strong id="client-stat-blocked" class="client-stat-value danger">0</strong>
+              </article>
+            </div>
+
+            <div class="client-charts-grid">
+              <article class="client-chart-card">
+                <div class="panel-head compact">
+                  <div>
+                    <h3>生态分布</h3>
+                  </div>
+                  <span class="client-chart-hint">按客户端软件统计</span>
+                </div>
+                <div id="client-ecosystem-chart" class="client-donut-chart" role="img" aria-label="设备生态分布图">
+                  <div id="client-ecosystem-tooltip" class="client-donut-tooltip" hidden></div>
+                </div>
+                <div id="client-ecosystem-legend" class="client-donut-legend"></div>
+                <p id="client-ecosystem-empty" class="client-chart-empty" hidden>暂无设备分布数据。</p>
+              </article>
+              <article class="client-chart-card">
+                <div class="panel-head compact">
+                  <div class="client-chart-title-wrap">
+                    <span class="client-chart-title-icon" aria-hidden="true">🏆</span>
+                    <h3>历史高频设备 TOP 10</h3>
+                  </div>
+                  <span class="client-chart-hint">点击图表筛选</span>
+                </div>
+                <div id="client-top-devices-chart" class="client-bar-chart" role="img" aria-label="历史设备TOP10柱状图"></div>
+                <p id="client-top-devices-empty" class="client-chart-empty" hidden>暂无播放历史设备数据。</p>
+              </article>
+            </div>
+
+            <div class="user-table-wrap">
+              <table class="user-table">
+                <thead>
+                  <tr>
+                    <th>用户</th>
+                    <th>设备名称 / ID</th>
+                    <th>使用软件</th>
+                    <th>最后活动时间</th>
+                  </tr>
+                </thead>
+                <tbody id="client-devices-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-calendar" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">追剧日历</p>
+                <h3>更新排期</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“追剧日历”独立界面，后续可接入 TMDB 剧集更新日历与订阅提醒。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-bot-assistant" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="bot-grid">
+              <article class="bot-card bot-card-control">
+                <div class="panel-head compact">
+                  <div>
+                    <h3>通知开关</h3>
+                    <p class="section-label">推送场景总控</p>
+                  </div>
+                </div>
+                <label class="toggle-row">
+                  <div>
+                    <strong>启用底层引擎</strong>
+                    <p class="toggle-desc">总开关，必须开启才能生效</p>
+                  </div>
+                  <input id="bot-enable-core" type="checkbox">
+                </label>
+                <label class="toggle-row">
+                  <div>
+                    <strong>播放状态通知</strong>
+                    <p class="toggle-desc">播放类事件总开关（细分事件可在下方勾选）</p>
+                  </div>
+                  <input id="bot-enable-playback" type="checkbox">
+                </label>
+                <label class="toggle-row">
+                  <div>
+                    <strong>新资源入库通知</strong>
+                    <p class="toggle-desc">需配合 Emby Webhook 使用</p>
+                  </div>
+                  <input id="bot-enable-library" type="checkbox">
+                </label>
+                <div class="bot-subsection">
+                  <strong class="bot-subsection-title">播放事件通知</strong>
+                  <div class="bot-compact-toggle-grid">
+                    <label class="toggle-row">
+                      <div>
+                        <strong>开始播放</strong>
+                      </div>
+                      <input id="bot-event-start" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <div>
+                        <strong>暂停播放</strong>
+                      </div>
+                      <input id="bot-event-pause" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <div>
+                        <strong>恢复播放</strong>
+                      </div>
+                      <input id="bot-event-resume" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <div>
+                        <strong>停止播放</strong>
+                      </div>
+                      <input id="bot-event-stop" type="checkbox">
+                    </label>
+                  </div>
+                </div>
+                <div class="bot-subsection">
+                  <strong class="bot-subsection-title">消息展示字段</strong>
+                  <div class="bot-compact-toggle-grid">
+                    <label class="toggle-row">
+                      <div>
+                        <strong>显示 IP</strong>
+                      </div>
+                      <input id="bot-show-ip" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <div>
+                        <strong>显示 IP 归属地</strong>
+                      </div>
+                      <input id="bot-show-ip-geo" type="checkbox">
+                    </label>
+                    <label class="toggle-row">
+                      <div>
+                        <strong>显示剧情简介</strong>
+                      </div>
+                      <input id="bot-show-overview" type="checkbox">
+                    </label>
+                  </div>
+                </div>
+                <label class="field field-inline">
+                  <span>去重时间窗（秒）</span>
+                  <input id="bot-dedupe-seconds" type="number" min="1" max="120" step="1" placeholder="默认 10">
+                </label>
+
+                <div class="route-card">
+                  <div class="panel-head compact">
+                    <strong>EMBY WEBHOOK 填入地址</strong>
+                  </div>
+                  <p id="bot-webhook-url" class="route-copy">等待连接 Emby 后自动生成</p>
+                  <p id="bot-webhook-status" class="route-status">最近一次：暂无 webhook 记录</p>
+                </div>
+              </article>
+
+              <article class="bot-card bot-card-channel bot-card-telegram">
+                <div class="panel-head compact">
+                  <div class="bot-card-title-wrap">
+                    <span class="bot-channel-icon bot-channel-icon-telegram" aria-hidden="true"></span>
+                    <div>
+                      <h3>推送配置</h3>
+                      <p class="section-label">Telegram 通道</p>
+                    </div>
+                  </div>
+                  <button id="bot-telegram-test" class="ghost-btn" type="button">发送测试</button>
+                </div>
+                <div class="config-grid">
+                  <label class="toggle-row field-span-2">
+                    <div>
+                      <strong>启用 Telegram 命令菜单</strong>
+                      <p class="toggle-desc">私聊支持 /help、/check、/zhengzaibofang 等命令</p>
+                    </div>
+                    <input id="bot-enable-commands" type="checkbox">
+                  </label>
+                  <label class="field field-span-2">
+                    <span>BOT TOKEN</span>
+                    <div class="password-field">
+                      <input id="bot-telegram-token" type="password" placeholder="例如 123456:ABCDEF...">
+                      <button id="bot-telegram-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 Telegram Token" data-target="bot-telegram-token" data-open="false">🙈</button>
+                    </div>
+                  </label>
+                  <label class="field field-span-2">
+                    <span>ADMIN CHAT ID</span>
+                    <input id="bot-telegram-chat-id" type="text" placeholder="例如 6067958942">
+                  </label>
+                  <p id="bot-env-managed-hint" class="hint-text field-span-2" hidden>
+                    该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
+                  </p>
+                </div>
+              </article>
+
+              <article class="bot-card bot-card-channel bot-card-wechat">
+                <div class="panel-head compact">
+                  <div class="bot-card-title-wrap">
+                    <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
+                    <div>
+                      <h3>消息投递配置</h3>
+                      <p class="section-label">企业微信（推送）</p>
+                    </div>
+                  </div>
+                  <button id="bot-wechat-test" class="ghost-btn" type="button">发送测试</button>
+                </div>
+                <div class="config-grid">
+                  <label class="field">
+                    <span>企业 ID</span>
+                    <input id="bot-wechat-corp-id" type="text" placeholder="wwxxxxxxxxxxxx">
+                  </label>
+                  <label class="field">
+                    <span>应用 ID</span>
+                    <input id="bot-wechat-agent-id" type="text" placeholder="1000008">
+                  </label>
+                  <label class="field field-span-2">
+                    <span>应用 Secret</span>
+                    <div class="password-field">
+                      <input id="bot-wechat-secret" type="password" placeholder="输入应用 Secret">
+                      <button id="bot-wechat-secret-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏应用 Secret" data-target="bot-wechat-secret" data-open="false">🙈</button>
+                    </div>
+                  </label>
+                  <label class="field field-span-2">
+                    <span>接收人（可选）</span>
+                    <input id="bot-wechat-to-user" type="text" placeholder="例如 @all 或 username1|username2">
+                  </label>
+                </div>
+              </article>
+
+              <article class="bot-card">
+                <div class="panel-head compact">
+                  <div>
+                    <h3>回调安全配置</h3>
+                    <p class="section-label">企业微信交互指令回调</p>
+                  </div>
+                </div>
+                <div class="config-grid">
+                  <label class="field field-span-2">
+                    <span>回调 Token</span>
+                    <input id="bot-wechat-callback-token" type="text" placeholder="可选，建议配置">
+                  </label>
+                  <label class="field field-span-2">
+                    <span>EncodingAESKey</span>
+                    <div class="password-field">
+                      <input id="bot-wechat-callback-aes" type="password" placeholder="可选，43 位">
+                      <button id="bot-wechat-callback-aes-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 EncodingAESKey" data-target="bot-wechat-callback-aes" data-open="false">🙈</button>
+                    </div>
+                  </label>
+                </div>
+                <div class="route-card">
+                  <div class="panel-head compact">
+                    <strong>微信后台回调 URL 填入</strong>
+                    <button id="bot-copy-callback-url" class="ghost-btn" type="button">复制</button>
+                  </div>
+                  <p id="bot-wechat-callback-url" class="route-copy">等待连接 Emby 后自动生成</p>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-task-center" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+          </section>
+        </div>
+      </section>
+
+      <section id="view-workshop" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">映迹工坊</p>
+                <h3>加工工作流</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“映迹工坊”独立界面，后续可接入转码流程、刮削清洗和媒体修复工具。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">系统设置</p>
+                <h3>媒体服务器核心</h3>
+              </div>
+              <span id="connection-badge" class="status-badge neutral">未连接</span>
+            </div>
+
+            <div class="config-shell">
+              <div class="config-main">
+                <div class="segment-grid">
+                  <button class="segment-card selected" type="button">
+                    <span class="segment-icon">▶</span>
+                    <strong>Emby</strong>
+                  </button>
+                  <button class="segment-card" type="button">
+                    <span class="segment-icon">J</span>
+                    <strong>Jellyfin</strong>
+                  </button>
+                </div>
+
+                <div class="config-grid settings-core-grid">
+                  <section class="settings-card field-span-2">
+                    <div class="settings-card-head">
+                      <h4>Emby 连接配置</h4>
+                      <p>用于拉取用户、日志、排行和设备数据。</p>
+                    </div>
+                    <div class="settings-subgrid">
+                      <label class="field field-span-2">
+                        <span>内网通信地址 (HOST)</span>
+                        <input id="server-url" type="text" placeholder="例如 http://192.168.1.10:8096 或 https://demo.example.com/emby">
+                      </label>
+                      <label class="field field-span-2">
+                        <span>系统 API KEY</span>
+                        <div class="password-field">
+                          <input id="api-key" type="password" placeholder="输入 Emby 后台生成的 API Key">
+                          <button id="api-key-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 API Key" data-target="api-key" data-open="false">🙈</button>
+                        </div>
+                      </label>
+                    </div>
+                  </section>
+
+                  <section class="settings-card settings-card-tmdb field-span-2">
+                    <div class="settings-card-head">
+                      <h4>TMDB 海报兜底</h4>
+                      <p>当 Emby 无海报或海报加载失败时，自动切换到 TMDB。</p>
+                      <span id="tmdb-status-tip" class="tmdb-status-badge is-off">已关闭</span>
+                    </div>
+                    <div class="tmdb-switch-row">
+                      <label for="tmdb-enabled" class="tmdb-switch" aria-label="启用 TMDB 海报兜底">
+                        <input id="tmdb-enabled" type="checkbox">
+                        <span class="tmdb-switch-slider"></span>
+                      </label>
+                      <div class="tmdb-switch-copy">
+                        <strong>启用 TMDB 兜底策略</strong>
+                        <p>优先 Emby；若封面不可用，则按标题/季信息尝试 TMDB。</p>
+                      </div>
+                    </div>
+                    <div class="settings-subgrid">
+                      <label class="field field-span-2">
+                        <span>TMDB Bearer Token</span>
+                        <div class="password-field">
+                          <input id="tmdb-token" type="password" placeholder="输入 TMDB Read Access Token (v4)">
+                          <button id="tmdb-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 TMDB Token" data-target="tmdb-token" data-open="false">🙈</button>
+                        </div>
+                      </label>
+                      <label class="field">
+                        <span>TMDB 语言</span>
+                        <input id="tmdb-language" type="text" value="zh-CN" placeholder="zh-CN">
+                      </label>
+                      <label class="field">
+                        <span>TMDB 地区</span>
+                        <input id="tmdb-region" type="text" value="CN" placeholder="CN">
+                      </label>
+                      <p id="tmdb-token-hint" class="tmdb-token-hint field-span-2">TMDB 兜底未启用，系统将仅使用 Emby 海报。</p>
+                    </div>
+                  </section>
+
+                  <div class="form-actions field-span-2">
+                    <button id="connect-btn" class="primary-btn" type="button">连接 Emby</button>
+                    <button id="diagnose-btn" class="ghost-btn" type="button">连接诊断</button>
+                    <button id="disconnect-btn" class="ghost-btn" type="button">清除配置</button>
+                  </div>
+
+                  <p id="connection-message" class="hint-text field-span-2">
+                    提示：Emby API 基础路径通常是 `http://你的地址:8096/emby`。如果只填域名或端口，面板会自动补上 `/emby`。
+                  </p>
+                  <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
+                    该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-about-support" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">关于与支持</p>
+                <h3>文档与反馈</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“关于与支持”独立界面，后续可接入版本日志、常见问题和反馈入口。</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-plugins" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="section-label">插件中心</p>
+                <h3>扩展能力</h3>
+              </div>
+            </div>
+            <div class="empty-state">这里是“插件中心”独立界面，后续可接入插件市场、启停控制和版本升级。</div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="global-toast" class="global-toast" hidden></div>
+
+  <div id="uc-invite-manage-modal" class="user-center-modal" hidden>
+    <div class="user-center-modal-panel user-center-manage-panel">
+      <div class="panel-head compact invite-manage-head">
+        <div>
+          <p class="section-label">邀请管理</p>
+          <h3>系统邀请码管理</h3>
+        </div>
+        <button id="uc-invite-manage-close-icon-btn" class="invite-manage-close-icon" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="invite-manage-table-wrap">
+        <table class="invite-manage-table">
+          <thead>
+            <tr>
+              <th><input id="uc-invite-select-all" type="checkbox" aria-label="全选邀请码"></th>
+              <th>邀请码链接</th>
+              <th>初始时长</th>
+              <th>使用状态（包含人）</th>
+              <th>生成时间</th>
+            </tr>
+          </thead>
+          <tbody id="uc-invite-manage-list"></tbody>
+        </table>
+      </div>
+      <div class="invite-manage-footer">
+        <button id="uc-invite-bulk-delete-btn" class="danger-soft-btn" type="button">批量删除</button>
+        <button id="uc-invite-manage-close-btn" class="ghost-btn" type="button">返回关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="uc-invite-modal" class="user-center-modal" hidden>
+    <div class="user-center-modal-panel invite-config-panel">
+      <div class="invite-modal-title">
+        <span class="invite-modal-icon">🔗</span>
+        <h3>生成邀请码</h3>
+      </div>
+      <form id="uc-invite-form" class="invite-config-form">
+        <label class="field">
+          <span>账号有效期</span>
+        </label>
+        <div class="invite-preset-group">
+          <button class="invite-preset-btn" type="button" data-days="1">1 天</button>
+          <button class="invite-preset-btn" type="button" data-days="7">7 天</button>
+          <button class="invite-preset-btn active" type="button" data-days="30">30 天</button>
+          <button class="invite-preset-btn" type="button" data-days="90">90 天</button>
+          <button class="invite-preset-btn" type="button" data-days="180">180 天</button>
+          <button class="invite-preset-btn" type="button" data-days="365">365 天</button>
+          <button class="invite-preset-btn" type="button" data-days="permanent">永久</button>
+        </div>
+
+        <div class="invite-custom-days">
+          <input id="uc-invite-custom-days" type="number" min="1" placeholder="或自定义天数...">
+          <div class="invite-custom-stepper">
+            <button id="uc-invite-custom-inc" type="button" aria-label="增加天数">▲</button>
+            <button id="uc-invite-custom-dec" type="button" aria-label="减少天数">▼</button>
+          </div>
+          <span class="invite-day-suffix">天</span>
+        </div>
+
+        <label class="field">
+          <span>生成数量 (1-50)</span>
+          <input id="uc-invite-quantity" type="number" min="1" max="50" value="1">
+        </label>
+
+        <label class="field">
+          <span>权限继承源 (全量克隆)</span>
+          <select id="uc-invite-template">
+            <option value="default">默认模板 (全库)</option>
+            <option value="family">家庭模板 (受限库)</option>
+            <option value="movie">电影模板 (电影库)</option>
+            <option value="series">剧集模板 (剧集库)</option>
+          </select>
+        </label>
+
+        <div class="form-actions invite-modal-actions">
+          <button id="uc-invite-cancel-btn" class="ghost-btn" type="button">取消</button>
+          <button class="mint-btn" type="submit">生成链接</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="uc-invite-result-modal" class="user-center-modal" hidden>
+    <div class="user-center-modal-panel invite-result-panel">
+      <div class="invite-modal-title">
+        <span class="invite-modal-icon">🔗</span>
+        <h3>生成邀请码</h3>
+      </div>
+
+      <div id="uc-invite-result-list" class="invite-result-list"></div>
+
+      <div class="invite-result-actions">
+        <button id="uc-invite-copy-all-btn" class="mint-btn" type="button">复制全部</button>
+        <button id="uc-invite-done-btn" class="ghost-btn" type="button">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="uc-create-user-modal" class="user-center-modal" hidden>
+    <div class="user-center-modal-panel create-user-panel">
+      <div class="create-user-header">
+        <h3>创建用户配置</h3>
+        <button id="uc-create-user-close-icon-btn" class="invite-manage-close-icon" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <div class="create-user-tabs" role="tablist" aria-label="创建用户配置标签">
+        <button class="create-user-tab active" type="button" data-create-tab="basic">基础资料</button>
+        <button class="create-user-tab" type="button" data-create-tab="library">库权限</button>
+        <button class="create-user-tab" type="button" data-create-tab="advanced">高级策略</button>
+      </div>
+
+      <div class="create-user-content">
+        <section class="create-user-pane active" data-create-pane="basic">
+          <div class="config-grid">
+            <label class="field field-span-2">
+              <span>用户名</span>
+              <input id="uc-create-username" type="text" placeholder="请输入用户名">
+            </label>
+            <label class="field field-span-2">
+              <span>用户备注（选填）</span>
+              <input id="uc-create-note" type="text" placeholder="例如：家庭共享账号">
+            </label>
+            <label class="field field-span-2">
+              <span>密码</span>
+              <input id="uc-create-password" type="password" placeholder="至少 6 位">
+            </label>
+            <label class="field field-span-2">
+              <span>确认密码</span>
+              <input id="uc-create-confirm-password" type="password" placeholder="请再次输入密码">
+            </label>
+            <label class="field">
+              <span>账号状态</span>
+              <select id="uc-create-status">
+                <option value="active">活跃正常</option>
+                <option value="disabled">禁用</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>到期日期（仅本地）</span>
+              <input id="uc-create-expiry" type="date">
+            </label>
+          </div>
+        </section>
+
+        <section class="create-user-pane" data-create-pane="library">
+          <article class="create-user-card">
+            <p class="section-label">一键镜像全量策略</p>
+            <div class="create-preset-grid">
+              <label class="field">
+                <span>默认模板（全库）</span>
+                <select id="uc-create-template">
+                  <option value="default">默认模板（全库）</option>
+                  <option value="home">家庭模板（均衡）</option>
+                  <option value="strict">儿童模板（严格）</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>镜像来源用户</span>
+                <select id="uc-create-source-user">
+                  <option value="">请选择用户</option>
+                </select>
+              </label>
+            </div>
+            <div class="create-preset-actions">
+              <button id="uc-create-refresh-source-users-btn" class="ghost-btn" type="button">刷新用户列表</button>
+              <button id="uc-create-apply-preset-btn" class="mint-btn" type="button">获取预设</button>
+            </div>
+          </article>
+
+          <article class="create-user-card">
+            <p class="section-label">策略勾选</p>
+            <div class="create-policy-groups">
+              <div class="create-policy-group">
+                <h4>媒体库策略</h4>
+                <label class="toggle-row"><span>允许远程访问</span><input id="uc-create-remote" type="checkbox"></label>
+                <label class="toggle-row"><span>允许 Live TV</span><input id="uc-create-livetv" type="checkbox"></label>
+              </div>
+              <div class="create-policy-group">
+                <h4>杂项策略</h4>
+                <label class="toggle-row"><span>允许删除媒体</span><input id="uc-create-delete-media" type="checkbox"></label>
+                <label class="toggle-row"><span>允许管理合集</span><input id="uc-create-manage-collections" type="checkbox"></label>
+              </div>
+            </div>
+            <div class="create-rating-wrap">
+              <p>年龄分级勾选（勾选驱动最高分级）</p>
+              <div id="uc-create-rating-list" class="create-rating-list"></div>
+            </div>
+          </article>
+
+          <article class="create-user-card">
+            <label class="toggle-row">
+              <div>
+                <strong>开通所有媒体库访问权</strong>
+                <p class="toggle-desc">关闭后启用白名单，仅可访问勾选媒体库</p>
+              </div>
+              <input id="uc-create-enable-all-folders" type="checkbox">
+            </label>
+            <div class="create-library-head">
+              <p>指定访问权限（白名单）</p>
+              <button id="uc-create-reset-folders" class="ghost-btn" type="button">重置子文件夹限制</button>
+            </div>
+            <div id="uc-create-folders-list" class="create-folders-list"></div>
+          </article>
+        </section>
+
+        <section class="create-user-pane" data-create-pane="advanced">
+          <div class="config-grid">
+            <label class="field">
+              <span>家长控制（最高分级）</span>
+              <select id="uc-create-max-rating">
+                <option value="0">全部可见</option>
+                <option value="6">6+</option>
+                <option value="9">9+</option>
+                <option value="13">13+</option>
+                <option value="16">16+</option>
+                <option value="18">18+</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>专属并发控制（覆盖全局）</span>
+              <input id="uc-create-stream-limit" type="number" min="0" placeholder="0 表示不限">
+            </label>
+          </div>
+          <div class="toggle-list user-config-toggle-list">
+            <label class="toggle-row">
+              <span>允许下载媒体</span>
+              <input id="uc-create-download" type="checkbox">
+            </label>
+            <label class="toggle-row">
+              <span>允许视频转码</span>
+              <input id="uc-create-video-transcode" type="checkbox">
+            </label>
+            <label class="toggle-row">
+              <span>允许音频转码</span>
+              <input id="uc-create-audio-transcode" type="checkbox">
+            </label>
+          </div>
+        </section>
+      </div>
+
+      <div class="create-user-footer">
+        <p id="uc-create-feedback" class="action-feedback">请填写创建用户参数。</p>
+        <div class="create-user-footer-actions">
+          <button id="uc-create-cancel-btn" class="ghost-btn" type="button">取消</button>
+          <button id="uc-create-save-btn" class="primary-btn" type="button">保存配置并创建</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="uc-user-config-modal" class="user-center-modal" hidden>
+    <div class="user-center-modal-panel user-config-panel">
+      <div class="user-config-header">
+        <h3>编辑用户配置</h3>
+        <button id="uc-user-config-close-icon-btn" class="invite-manage-close-icon" type="button" aria-label="关闭">×</button>
+      </div>
+
+      <div class="user-config-tabs" role="tablist" aria-label="用户配置标签">
+        <button class="user-config-tab active" type="button" data-config-tab="basic">基础资料</button>
+        <button class="user-config-tab" type="button" data-config-tab="library">库权限</button>
+        <button class="user-config-tab" type="button" data-config-tab="advanced">高级策略</button>
+      </div>
+
+      <div class="user-config-content">
+        <section class="user-config-pane active" data-config-pane="basic">
+          <div class="config-grid">
+            <label class="field field-span-2">
+              <span>当前用户名</span>
+              <input id="uc-config-username" type="text" readonly>
+            </label>
+            <label class="field field-span-2">
+              <span>用户备注（仅本地）</span>
+              <input id="uc-config-note" type="text" placeholder="添加备注，仅管理员可见">
+            </label>
+            <label class="field field-span-2">
+              <span>重置密码</span>
+              <input id="uc-config-password" type="password" placeholder="如需修改请输入新密码，否则留空">
+            </label>
+            <label class="field">
+              <span>账号状态</span>
+              <select id="uc-config-status">
+                <option value="active">活跃正常</option>
+                <option value="disabled">已禁用</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>到期日期（仅本地）</span>
+              <input id="uc-config-expiry" type="date">
+            </label>
+          </div>
+        </section>
+
+        <section class="user-config-pane" data-config-pane="library">
+          <article class="user-config-card">
+            <label class="toggle-row">
+              <div>
+                <strong>开通所有媒体库访问权</strong>
+                <p class="toggle-desc">关闭后将启用白名单，仅可访问勾选媒体库</p>
+              </div>
+              <input id="uc-config-enable-all-folders" type="checkbox">
+            </label>
+          </article>
+
+          <div class="user-config-library-head">
+            <p>指定访问权限（白名单）</p>
+            <button id="uc-config-reset-folders" class="ghost-btn" type="button">重置白名单</button>
+          </div>
+          <div id="uc-config-folders-list" class="user-config-folders-list"></div>
+        </section>
+
+        <section class="user-config-pane" data-config-pane="advanced">
+          <div class="config-grid">
+            <label class="field">
+              <span>并发限制</span>
+              <input id="uc-config-stream-limit" type="number" min="0" placeholder="0 表示不限">
+            </label>
+            <label class="field">
+              <span>管理员权限</span>
+              <select id="uc-config-admin">
+                <option value="false">普通用户</option>
+                <option value="true">管理员</option>
+              </select>
+            </label>
+          </div>
+          <div class="toggle-list user-config-toggle-list">
+            <label class="toggle-row">
+              <span>允许远程访问</span>
+              <input id="uc-config-remote" type="checkbox">
+            </label>
+            <label class="toggle-row">
+              <span>允许媒体下载</span>
+              <input id="uc-config-download" type="checkbox">
+            </label>
+            <label class="toggle-row">
+              <span>允许 Live TV</span>
+              <input id="uc-config-livetv" type="checkbox">
+            </label>
+          </div>
+        </section>
+      </div>
+
+      <div class="user-config-footer">
+        <button id="uc-user-config-cancel-btn" class="ghost-btn" type="button">取消</button>
+        <button id="uc-user-config-save-btn" class="primary-btn" type="button">保存配置</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js?v=20260503-quality-scan-poster"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# macOS / editor junk
+.DS_Store
+.vscode/
+.idea/
+
+# Git and local tooling
+.git/
+.gitignore
+
+# Runtime / temp artifacts that should not be baked into image
+*.log
+*.tmp
+.env
+.venv/
+venv/
+
+# Local persisted data (mounted from host)
+data/*.json
+data/*.jsonl
+data/*.log
