@@ -43,3 +43,5 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          push: true
+          tags: docker.io/lishiya003/vistamirror-admin:latest
