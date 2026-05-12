@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Local development server for Emby Pulse UI.
 
@@ -603,6 +603,11 @@ def _generate_invite_code(existing_codes: set[str]) -> str:
 
 class AppHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def __init__(self, *args, **kwargs):
+        runtime_dir = RUNTIME_DIR.resolve()
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        super().__init__(*args, directory=str(runtime_dir), **kwargs)
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
@@ -2500,9 +2505,10 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         message = "\n".join(
             [
-                "镜界Vistamirror Telegram 测试消息",
-                "状态：机器人通道可用",
-                f"时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "【镜界 VistaMirror】测试通知",
+                "",
+                "▸ 状态  ✅ 通道可用",
+                f"▸ 时间  🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             ]
         )
 
