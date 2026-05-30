@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>镜界Vistamirror - 邀请码注册</title>
+  <meta name="description" content="使用邀请码注册 Emby 账号。">
+  <link rel="icon" type="image/png" href="/logo.png?v=20260408-2030">
+  <link rel="stylesheet" href="/register.css?v=20260516-meta-label-title">
+</head>
+<body>
+  <main class="register-page">
+    <section class="register-shell">
+      <div id="register-entry-view" class="register-entry-view">
+        <header class="register-header">
+          <div class="welcome-mark" aria-hidden="true">🎉</div>
+          <div class="brand-copy">
+            <h1>欢迎加入</h1>
+            <p>注册您的专属 Emby 账号</p>
+          </div>
+        </header>
+
+        <div id="register-message" class="message neutral">正在校验邀请码...</div>
+
+        <section class="meta-section" aria-label="邀请码信息">
+          <div class="meta-grid">
+            <article class="meta-item">
+              <span>邀请码</span>
+              <strong id="invite-code-view">-</strong>
+            </article>
+            <article class="meta-item">
+              <span>状态</span>
+              <strong id="invite-status-view">-</strong>
+            </article>
+            <article class="meta-item">
+              <span>初始时长</span>
+              <strong id="invite-days-view">-</strong>
+            </article>
+            <article class="meta-item">
+              <span>到期时间</span>
+              <strong id="invite-expiry-view">-</strong>
+            </article>
+          </div>
+        </section>
+
+        <form id="register-form" class="register-form" novalidate>
+          <label>
+            <span>邀请码</span>
+            <input id="invite-code-input" name="inviteCode" type="text" readonly>
+          </label>
+          <label>
+            <span>用户名</span>
+            <input id="username-input" name="username" type="text" minlength="2" autocomplete="username" placeholder="设置一个好记的名字">
+          </label>
+          <label>
+            <span>密码（至少 6 位）</span>
+            <input id="password-input" name="password" type="password" minlength="6" autocomplete="new-password" placeholder="设置登录密码">
+          </label>
+          <label>
+            <span>确认密码</span>
+            <input id="confirm-password-input" name="confirmPassword" type="password" minlength="6" autocomplete="new-password" placeholder="再次输入登录密码">
+          </label>
+          <button id="register-submit" type="submit" class="submit-button">立即注册</button>
+        </form>
+      </div>
+
+      <section id="register-success-view" class="success-view" aria-label="注册成功" hidden>
+        <div class="success-check" aria-hidden="true">✓</div>
+        <h2>注册成功!</h2>
+        <p class="success-subtitle">请截图保存账号，并在下方选择节点登录</p>
+
+        <div class="success-account-card">
+          <div class="success-credential-grid">
+            <article class="success-credential">
+              <span>👤 用户名</span>
+              <div class="success-copy-row">
+                <strong id="success-username">-</strong>
+                <button id="success-copy-username" type="button" aria-label="复制用户名">⧉</button>
+              </div>
+            </article>
+            <article class="success-credential">
+              <span>🔑 密码</span>
+              <div class="success-copy-row">
+                <strong id="success-password">-</strong>
+                <button id="success-copy-password" type="button" aria-label="复制密码">⧉</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="success-divider"></div>
+
+          <div class="success-node-section">
+            <h3>📡 可访问节点</h3>
+            <div id="success-node-list" class="success-node-list"></div>
+          </div>
+        </div>
+
+        <div class="success-tip">
+          <span aria-hidden="true">i</span>
+          <strong>请妥善保管您的账号密码。</strong>
+        </div>
+
+        <p id="success-feedback" class="success-feedback" aria-live="polite"></p>
+        <button id="success-open-emby" type="button" class="success-open-button">打开 Emby 登录</button>
+      </section>
+    </section>
+  </main>
+
+  <script src="/register.js?v=20260516-meta-label-title"></script>
+</body>
+</html>

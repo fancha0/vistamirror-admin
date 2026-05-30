@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Virtual envs
+.venv/
+venv/
+
+# Local env file (do not commit secrets)
+.env
+.env.local
+
+# Runtime logs / temp
+*.log
+*.tmp
+
+# Optional local editor junk
+.vscode/
+.idea/
