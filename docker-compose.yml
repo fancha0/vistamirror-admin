@@ -1,6 +1,6 @@
 services:
   vistamirror:
-    image: ${IMAGE_NAME:-fancha0/vistamirror-admin:latest}
+    image: ${IMAGE_NAME:-lishiya003/vistamirror-admin:latest}
     container_name: vistamirror-admin
     restart: unless-stopped
     env_file:

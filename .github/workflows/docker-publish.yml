@@ -33,7 +33,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: fancha0/vistamirror-admin
+          images: lishiya003/vistamirror-admin
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag

@@ -108,7 +108,7 @@ docker compose up -d
 ```
 
 - 回滚到历史版本（例：`v0.1.0`）：
-  - 把 `.env` 里的 `IMAGE_NAME` 改成 `fancha0/vistamirror-admin:v0.1.0`
+  - 把 `.env` 里的 `IMAGE_NAME` 改成 `lishiya003/vistamirror-admin:v0.1.0`
   - 再执行：
 
 ```bash
@@ -153,7 +153,7 @@ Compose 默认挂载：
 - `DOCKERHUB_TOKEN`
 
 发布规则：
-- push 到 `main`：推送 `fancha0/vistamirror-admin:latest`
+- push 到 `main`：推送 `lishiya003/vistamirror-admin:latest`
 - push `v*` tag：推送同名版本标签（例如 `v1.0.0`）
 
 ## 你现在只需做两步（必须手动）
