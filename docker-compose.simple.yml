@@ -1,0 +1,16 @@
+services:
+  vistamirror-admin:
+    image: lishiya003/vistamirror-admin:latest
+    container_name: vistamirror-admin
+    restart: unless-stopped
+    ports:
+      - "8091:8091"
+    environment:
+      - TZ=Asia/Shanghai
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8091
+      - APP_DATA_DIR=/app/data
+      - APP_RUNTIME_DIR=/app/runtime
+    volumes:
+      - ./data:/app/data
+      - ./runtime:/app/runtime
