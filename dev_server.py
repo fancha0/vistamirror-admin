@@ -111,6 +111,7 @@ BOT_ENV_FIELD_MAP: dict[str, str] = {
 }
 ADMIN_AUTH_ENV_FIELD_MAP: dict[str, str] = {
     "username": "APP_ADMIN_USERNAME",
+    "password": "APP_ADMIN_PASSWORD",
     "passwordHash": "APP_ADMIN_PASSWORD_HASH",
 }
 
@@ -4549,6 +4550,7 @@ def main() -> None:
     auth_config = AuthConfig(
         enabled=_env_bool("APP_ADMIN_AUTH_ENABLED", False),
         username=str(os.environ.get("APP_ADMIN_USERNAME") or "").strip(),
+        plain_password=str(os.environ.get("APP_ADMIN_PASSWORD") or ""),
         password_hash=str(os.environ.get("APP_ADMIN_PASSWORD_HASH") or "").strip(),
         session_ttl_seconds=max(600, _env_int("APP_ADMIN_SESSION_TTL_SECONDS", 86400)),
         login_max_fails=max(3, _env_int("APP_ADMIN_LOGIN_MAX_FAILS", 5)),

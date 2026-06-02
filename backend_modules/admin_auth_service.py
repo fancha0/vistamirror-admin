@@ -42,6 +42,7 @@ def _b64decode(data: str) -> bytes:
 class AuthConfig:
     enabled: bool
     username: str
+    plain_password: str
     password_hash: str
     session_ttl_seconds: int
     login_max_fails: int
@@ -71,15 +72,23 @@ class AdminAuthService:
         if not self.enabled:
             return
         env_username = str(self._config.username or "").strip()
+        env_plain_password = str(self._config.plain_password or "")
         env_password_hash = str(self._config.password_hash or "").strip()
-        if (env_username and not env_password_hash) or (env_password_hash and not env_username):
-            raise RuntimeError("APP_ADMIN_USERNAME 与 APP_ADMIN_PASSWORD_HASH 需要同时设置，或同时留空。")
-        if env_password_hash and not self._is_supported_password_hash(env_password_hash):
+        has_env_username = bool(env_username)
+        has_env_plain = bool(env_plain_password)
+        has_env_hash = bool(env_password_hash)
+        if has_env_username or has_env_plain or has_env_hash:
+            if not has_env_username:
+                raise RuntimeError("检测到 APP_ADMIN_PASSWORD 或 APP_ADMIN_PASSWORD_HASH，但缺少 APP_ADMIN_USERNAME。")
+            if not has_env_plain and not has_env_hash:
+                raise RuntimeError("已设置 APP_ADMIN_USERNAME，但缺少 APP_ADMIN_PASSWORD 或 APP_ADMIN_PASSWORD_HASH。")
+        if has_env_hash and not has_env_plain and not self._is_supported_password_hash(env_password_hash):
             raise RuntimeError("APP_ADMIN_PASSWORD_HASH 格式不正确，应为 pbkdf2_sha256$<iter>$<salt>$<hash>。")
         username, password_hash, source = self._resolve_credentials_unlocked()
         if not username or not password_hash:
             raise RuntimeError(
-                "APP_ADMIN_AUTH_ENABLED=1 时必须提供管理员凭据：设置 APP_ADMIN_USERNAME/APP_ADMIN_PASSWORD_HASH，"
+                "APP_ADMIN_AUTH_ENABLED=1 时必须提供管理员凭据：设置 APP_ADMIN_USERNAME + APP_ADMIN_PASSWORD（推荐易用）"
+                "或 APP_ADMIN_USERNAME + APP_ADMIN_PASSWORD_HASH，"
                 "或在 data/admin_auth.json 中提供 username + passwordHash。"
             )
         if source == "file" and not self._is_supported_password_hash(password_hash):
@@ -189,7 +198,7 @@ class AdminAuthService:
 
     def get_admin_credential_meta(self) -> dict[str, Any]:
         username, _, source = self._resolve_credentials_unlocked()
-        managed_by_env = source == "env"
+        managed_by_env = source in {"env_plain", "env_hash"}
         return {
             "authEnabled": bool(self.enabled),
             "username": username or "",
@@ -209,11 +218,11 @@ class AdminAuthService:
             return {"ok": False, "status": 400, "error": "当前未启用后台登录鉴权。"}
         with self._lock:
             username, stored_hash, source = self._resolve_credentials_unlocked()
-            if source == "env":
+            if source in {"env_plain", "env_hash"}:
                 return {
                     "ok": False,
                     "status": 409,
-                    "error": "当前管理员凭据由环境变量接管，请在 .env / .env.local 中修改后重启服务。",
+                    "error": "当前管理员凭据由环境变量接管，请在 .env / .env.local（或 docker compose 的 APP_ADMIN_PASSWORD）中修改后重启服务。",
                     "managedByEnv": True,
                 }
             if not username or not stored_hash:
@@ -335,9 +344,12 @@ class AdminAuthService:
 
     def _resolve_credentials_unlocked(self) -> tuple[str, str, str]:
         env_username = str(self._config.username or "").strip()
+        env_plain_password = str(self._config.plain_password or "")
         env_password_hash = str(self._config.password_hash or "").strip()
+        if env_username and env_plain_password:
+            return env_username, self.make_password_hash(env_plain_password), "env_plain"
         if env_username and env_password_hash and self._is_supported_password_hash(env_password_hash):
-            return env_username, env_password_hash, "env"
+            return env_username, env_password_hash, "env_hash"
         file_username = str(self._file_credentials.get("username") or "").strip()
         file_password_hash = str(self._file_credentials.get("passwordHash") or "").strip()
         if file_username and file_password_hash and self._is_supported_password_hash(file_password_hash):

@@ -11,6 +11,9 @@ services:
       - APP_PORT=8091
       - APP_DATA_DIR=/app/data
       - APP_RUNTIME_DIR=/app/runtime
+      - APP_ADMIN_AUTH_ENABLED=1
+      - APP_ADMIN_USERNAME=admin
+      - APP_ADMIN_PASSWORD=admin123
     volumes:
       - ./data:/app/data
       - ./runtime:/app/runtime

@@ -1395,7 +1395,7 @@ function renderAdminCredentialForm() {
   }
 
   if (managedByEnv) {
-    setAdminCredentialFeedback("当前管理员凭据由环境变量接管，请在 .env/.env.local 修改后重启服务。", "warning");
+    setAdminCredentialFeedback("当前管理员凭据由环境变量接管，请在 .env/.env.local 或 docker compose 的 APP_ADMIN_PASSWORD 修改后重启服务。", "warning");
   } else if (!allowUpdate && source === "missing") {
     setAdminCredentialFeedback("管理员凭据状态读取失败，请刷新页面或重启服务后重试。", "error");
   }
@@ -1432,7 +1432,7 @@ async function handleAdminCredentialSubmit(event) {
     return;
   }
   if (appState.adminCredentialMeta?.managedByEnv) {
-    setAdminCredentialFeedback("当前管理员凭据由环境变量接管，请在 .env/.env.local 修改后重启服务。", "warning");
+    setAdminCredentialFeedback("当前管理员凭据由环境变量接管，请在 .env/.env.local 或 docker compose 的 APP_ADMIN_PASSWORD 修改后重启服务。", "warning");
     return;
   }
   if (!appState.adminCredentialMeta?.allowUpdate) {
