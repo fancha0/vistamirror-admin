@@ -30,7 +30,6 @@ services:
       - "${APP_PORT:-8091}:${APP_PORT:-8091}"
     volumes:
       - ./data:/app/data
-      - ./runtime:/app/runtime
     healthcheck:
       test:
         [

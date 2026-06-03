@@ -16,4 +16,3 @@ services:
       - APP_ADMIN_PASSWORD=admin123
     volumes:
       - ./data:/app/data
-      - ./runtime:/app/runtime

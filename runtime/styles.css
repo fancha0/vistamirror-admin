@@ -10398,6 +10398,15 @@ body.auth-required {
   overflow: auto;
 }
 
+body.auth-pending #app-root,
+body.auth-required #app-root,
+body.auth-login #app-root,
+body.auth-pending .frozen-navbar,
+body.auth-required .frozen-navbar,
+body.auth-login .frozen-navbar {
+  display: none !important;
+}
+
 .admin-auth-loading {
   min-height: 100vh;
   display: grid;
