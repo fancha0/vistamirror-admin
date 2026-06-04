@@ -10398,12 +10398,54 @@ body.auth-required {
   overflow: auto;
 }
 
+body.auth-pending > :not(#admin-auth-loading),
+body.auth-required > :not(#admin-auth-shell),
+body.auth-login > :not(#admin-auth-shell) {
+  display: none !important;
+}
+
 body.auth-pending #app-root,
 body.auth-required #app-root,
 body.auth-login #app-root,
 body.auth-pending .frozen-navbar,
 body.auth-required .frozen-navbar,
-body.auth-login .frozen-navbar {
+body.auth-login .frozen-navbar,
+body.auth-pending .frozen-navbar-actions,
+body.auth-required .frozen-navbar-actions,
+body.auth-login .frozen-navbar-actions,
+body.auth-pending .topbar,
+body.auth-required .topbar,
+body.auth-login .topbar,
+body.auth-pending .sidebar,
+body.auth-required .sidebar,
+body.auth-login .sidebar,
+body.auth-pending .main-content,
+body.auth-required .main-content,
+body.auth-login .main-content,
+body.auth-pending .global-search-modal,
+body.auth-required .global-search-modal,
+body.auth-login .global-search-modal,
+body.auth-pending .mobile-bottom-tabbar,
+body.auth-required .mobile-bottom-tabbar,
+body.auth-login .mobile-bottom-tabbar,
+body.auth-pending .mobile-menu-overlay,
+body.auth-required .mobile-menu-overlay,
+body.auth-login .mobile-menu-overlay,
+body.auth-pending .mobile-menu-drawer,
+body.auth-required .mobile-menu-drawer,
+body.auth-login .mobile-menu-drawer,
+body.auth-pending #radar-live-backdrop,
+body.auth-required #radar-live-backdrop,
+body.auth-login #radar-live-backdrop,
+body.auth-pending #radar-live-popover,
+body.auth-required #radar-live-popover,
+body.auth-login #radar-live-popover,
+body.auth-pending .profile-menu-panel,
+body.auth-required .profile-menu-panel,
+body.auth-login .profile-menu-panel,
+body.auth-pending .live-status-card,
+body.auth-required .live-status-card,
+body.auth-login .live-status-card {
   display: none !important;
 }
 

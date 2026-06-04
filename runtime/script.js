@@ -1202,20 +1202,53 @@ function setAuthError(message = "") {
   elements.authError.hidden = !text;
 }
 
+function closeAuthOnlyOverlays() {
+  closeProfileMenu?.();
+  closeProjectLogModal?.();
+  globalSearchModal?.close?.();
+  document.body.classList.remove(
+    "global-search-open",
+    "mobile-drawer-open",
+    "adaptive-drawer-open",
+    "has-glass-overlay"
+  );
+  document.querySelectorAll([
+    ".global-search-modal",
+    ".mobile-menu-overlay",
+    ".mobile-menu-drawer",
+    "#radar-live-backdrop",
+    "#radar-live-popover"
+  ].join(",")).forEach((node) => {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    node.hidden = true;
+    node.classList.remove("open");
+  });
+}
+
 function applyAuthUiState({ mode = "loading", user = "" } = {}) {
   const safeMode = String(mode || "loading");
   document.body.classList.toggle("auth-pending", safeMode === "loading");
   document.body.classList.toggle("auth-required", safeMode === "login");
+  document.body.classList.toggle("auth-login", safeMode === "login");
   document.body.classList.toggle("auth-authenticated", safeMode === "ready");
 
   if (elements.authLoading) {
     elements.authLoading.hidden = safeMode !== "loading";
+    elements.authLoading.style.display = safeMode === "loading" ? "" : "none";
   }
   if (elements.authShell) {
     elements.authShell.hidden = safeMode !== "login";
+    elements.authShell.style.display = safeMode === "login" ? "" : "none";
   }
   if (elements.appRoot) {
     elements.appRoot.hidden = safeMode !== "ready";
+    elements.appRoot.style.display = safeMode === "ready" ? "" : "none";
+    elements.appRoot.inert = safeMode !== "ready";
+  }
+  if (safeMode !== "ready") {
+    closeAuthOnlyOverlays();
   }
   appState.authUser = String(user || "");
 }
@@ -1224,9 +1257,10 @@ function onUnauthorizedDetected() {
   if (!appState.authEnabled) {
     return;
   }
+  const hadAuthenticatedUi = appState.authenticated || document.body.classList.contains("auth-authenticated");
   appState.authenticated = false;
   applyAuthUiState({ mode: "login" });
-  setAuthError("登录已过期，请重新登录。");
+  setAuthError(hadAuthenticatedUi ? "登录已过期，请重新登录。" : "");
 }
 
 async function inviteApiFetch(path, options = {}) {
