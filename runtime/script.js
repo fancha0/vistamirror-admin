@@ -159,6 +159,8 @@ const appState = {
   authBootstrapped: false
 };
 
+let postAuthBootstrapPromise = null;
+
 if (appState.activeView === "project-logs") {
   appState.activeView = "settings";
   localStorage.setItem(STORAGE_KEYS.activeView, "settings");
@@ -796,6 +798,51 @@ function shouldUseLocalProxy() {
   return window.location.protocol === "http:" || window.location.protocol === "https:";
 }
 
+function normalizeRequestPath(path = "") {
+  const raw = String(path || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    return new URL(raw, window.location.origin).pathname;
+  } catch {
+    return raw.split("?")[0] || raw;
+  }
+}
+
+function isAdminAuthRoute(path = "") {
+  return ["/api/auth/me", "/api/auth/login", "/api/auth/logout"].includes(normalizeRequestPath(path));
+}
+
+function isAdminReady() {
+  return Boolean(
+    appState.authBootstrapped &&
+    (!appState.authEnabled || appState.authenticated) &&
+    document.body.classList.contains("auth-authenticated")
+  );
+}
+
+function requireAdminReadyForRequest(path = "") {
+  if (isAdminAuthRoute(path) || isAdminReady()) {
+    return true;
+  }
+  throw new Error("后台尚未登录，已跳过请求。");
+}
+
+function stopAuthenticatedBackgroundWork() {
+  if (appState.botWebhookStatusTimer) {
+    clearInterval(appState.botWebhookStatusTimer);
+    appState.botWebhookStatusTimer = null;
+  }
+  appState.botWebhookRefreshPromise = null;
+  postAuthBootstrapPromise = null;
+  window.dispatchEvent(new CustomEvent("vistamirror:auth-lock"));
+}
+
+function notifyAuthenticatedReady() {
+  window.dispatchEvent(new CustomEvent("vistamirror:auth-ready"));
+}
+
 function appendApiKeyToPath(path, apiKey) {
   const [pathname, query = ""] = String(path || "").split("?");
   const params = new URLSearchParams(query);
@@ -805,6 +852,7 @@ function appendApiKeyToPath(path, apiKey) {
 }
 
 async function embyFetch(path, options = {}) {
+  requireAdminReadyForRequest(`/api/emby${path}`);
   if (!appState.config.serverUrl || !appState.config.apiKey) {
     throw new Error("请先填写 Emby 地址和 API Key。");
   }
@@ -1206,6 +1254,7 @@ function closeAuthOnlyOverlays() {
   closeProfileMenu?.();
   closeProjectLogModal?.();
   globalSearchModal?.close?.();
+  stopAuthenticatedBackgroundWork();
   document.body.classList.remove(
     "global-search-open",
     "mobile-drawer-open",
@@ -1249,6 +1298,8 @@ function applyAuthUiState({ mode = "loading", user = "" } = {}) {
   }
   if (safeMode !== "ready") {
     closeAuthOnlyOverlays();
+  } else {
+    notifyAuthenticatedReady();
   }
   appState.authUser = String(user || "");
 }
@@ -1264,6 +1315,7 @@ function onUnauthorizedDetected() {
 }
 
 async function inviteApiFetch(path, options = {}) {
+  requireAdminReadyForRequest(path);
   const response = await fetch(path, {
     ...options,
     headers: {
@@ -1642,6 +1694,9 @@ function summarizeAuthSignalsFromActivityLogs(rows = []) {
 }
 
 function sendProjectLog(payload = {}) {
+  if (!isAdminReady()) {
+    return;
+  }
   const body = {
     level: payload.level || "info",
     module: payload.module || "system",
@@ -4106,6 +4161,7 @@ function collectCreateUserPolicy() {
 }
 
 async function embyRawFetch(path, options = {}) {
+  requireAdminReadyForRequest(`/api/emby${path}`);
   if (!appState.config.serverUrl || !appState.config.apiKey) {
     throw new Error("请先填写 Emby 地址和 API Key。");
   }
@@ -6085,6 +6141,9 @@ function renderBotWebhookStatus() {
 
 async function refreshBotWebhookInfo(options = {}) {
   const { silent = true, statusOnly = false } = options;
+  if (!isAdminReady()) {
+    return false;
+  }
   if (appState.botWebhookRefreshPromise) {
     return appState.botWebhookRefreshPromise;
   }
@@ -6137,11 +6196,14 @@ async function refreshBotWebhookInfo(options = {}) {
 }
 
 function ensureBotWebhookStatusPolling() {
+  if (!isAdminReady()) {
+    return;
+  }
   if (appState.botWebhookStatusTimer) {
     return;
   }
   appState.botWebhookStatusTimer = setInterval(() => {
-    if (document.visibilityState === "visible") {
+    if (document.visibilityState === "visible" && isAdminReady()) {
       refreshBotWebhookInfo({ silent: true, statusOnly: true });
     }
   }, 15000);
@@ -6199,7 +6261,7 @@ function renderBotAssistant() {
   if (elements.botWechatCallbackUrl) {
     elements.botWechatCallbackUrl.textContent = getWechatCallbackUrlForBot();
   }
-  if (shouldUseLocalProxy()) {
+  if (shouldUseLocalProxy() && isAdminReady()) {
     refreshBotWebhookInfo({ silent: true });
   }
   renderEnvControlledState();
@@ -8649,7 +8711,6 @@ const initialView = VIEW_META[appState.activeView] ? appState.activeView : "over
 switchView(initialView);
 renderAll();
 
-let postAuthBootstrapPromise = null;
 async function startPostAuthBootstrap() {
   if (postAuthBootstrapPromise) {
     return postAuthBootstrapPromise;
@@ -9842,7 +9903,7 @@ async function startPostAuthBootstrap() {
     if (!force && now - STATE.lastSyncAt < LIBRARY_SYNC_INTERVAL_MS) {
       return;
     }
-    if (!appState?.config?.serverUrl || !appState?.config?.apiKey) {
+    if (!isAdminReady() || !appState?.config?.serverUrl || !appState?.config?.apiKey) {
       STATE.views = [];
       renderUserViews([]);
       return;
@@ -9887,10 +9948,17 @@ async function startPostAuthBootstrap() {
 
   setInterval(() => {
     const activeView = document.querySelector(".main-content")?.dataset?.activeView || "";
-    if (activeView === "overview") {
+    if (activeView === "overview" && isAdminReady()) {
       ensureAndRefresh(false);
     }
   }, LIBRARY_SYNC_INTERVAL_MS);
+
+  window.addEventListener("vistamirror:auth-ready", () => {
+    const activeView = document.querySelector(".main-content")?.dataset?.activeView || "";
+    if (activeView === "overview") {
+      ensureAndRefresh(true);
+    }
+  });
 })();
 
 /**
@@ -10023,7 +10091,7 @@ async function startPostAuthBootstrap() {
   }
 
   async function fetchSessionsFromServer() {
-    if (!appState?.config?.serverUrl || !appState?.config?.apiKey) {
+    if (!isAdminReady() || !appState?.config?.serverUrl || !appState?.config?.apiKey) {
       return [];
     }
     try {
@@ -10132,6 +10200,11 @@ async function startPostAuthBootstrap() {
   }
 
   async function tick() {
+    if (!isAdminReady()) {
+      state.sessions = [];
+      renderPopover();
+      return;
+    }
     const rawSessions = await fetchSessionsFromServer();
     state.sessions = normalizeSessions(rawSessions);
     renderPopover();
@@ -10194,8 +10267,27 @@ async function startPostAuthBootstrap() {
     }
   });
 
-  tick();
-  state.timerId = setInterval(tick, 1000);
+  function startTicker() {
+    if (state.timerId || !isAdminReady()) {
+      return;
+    }
+    tick();
+    state.timerId = setInterval(tick, 1000);
+  }
+
+  function stopTicker() {
+    if (!state.timerId) {
+      return;
+    }
+    clearInterval(state.timerId);
+    state.timerId = null;
+    state.sessions = [];
+    renderPopover();
+  }
+
+  window.addEventListener("vistamirror:auth-ready", startTicker);
+  window.addEventListener("vistamirror:auth-lock", stopTicker);
+  startTicker();
 })();
 
 /**
@@ -10670,6 +10762,7 @@ async function startPostAuthBootstrap() {
   }
 
   async function fetchScheduledTasksFromServer() {
+    requireAdminReadyForRequest("/api/emby/ScheduledTasks");
     const result = await embyFetch("/ScheduledTasks");
     if (Array.isArray(result)) {
       return result;
@@ -10790,7 +10883,7 @@ async function startPostAuthBootstrap() {
     if (!ensureModuleMounted()) {
       return;
     }
-    if (!isEmbyConnected()) {
+    if (!isAdminReady() || !isEmbyConnected()) {
       state.tasks = [];
       state.grouped = [];
       state.lastError = "";
@@ -10833,7 +10926,7 @@ async function startPostAuthBootstrap() {
   }
 
   function startPolling() {
-    if (state.timerId) {
+    if (state.timerId || !isAdminReady()) {
       return;
     }
     state.timerId = window.setInterval(() => {
@@ -10851,6 +10944,11 @@ async function startPostAuthBootstrap() {
 
   function onViewChanged() {
     const currentView = getActiveView();
+    if (!isAdminReady()) {
+      stopPolling();
+      state.activeView = "";
+      return;
+    }
     if (state.activeView === currentView && state.mounted) {
       return;
     }
@@ -10913,6 +11011,8 @@ async function startPostAuthBootstrap() {
     onViewChanged();
   }
 
+  window.addEventListener("vistamirror:auth-ready", onViewChanged);
+  window.addEventListener("vistamirror:auth-lock", stopPolling);
   init();
 })();
 
@@ -12054,6 +12154,7 @@ async function startPostAuthBootstrap() {
   }
 
   async function fetchAnnualRankingData() {
+    requireAdminReadyForRequest("/api/ranking/annual");
     const params = new URLSearchParams({
       scope: state.scope || "all",
       category: state.category || "global",
@@ -12393,7 +12494,7 @@ async function startPostAuthBootstrap() {
     if (!ensureMounted()) {
       return;
     }
-    if (!isConnected()) {
+    if (!isAdminReady() || !isConnected()) {
       state.error = "";
       state.source = "none";
       state.events = [];
@@ -12431,7 +12532,7 @@ async function startPostAuthBootstrap() {
   }
 
   function startPolling() {
-    if (state.timerId) {
+    if (state.timerId || !isAdminReady()) {
       return;
     }
     state.timerId = window.setInterval(() => {
@@ -12449,6 +12550,11 @@ async function startPostAuthBootstrap() {
 
   function onViewChange() {
     const view = getCurrentView();
+    if (!isAdminReady()) {
+      stopPolling();
+      state.activeView = "";
+      return;
+    }
     if (state.activeView === view && state.mounted) {
       return;
     }
@@ -12493,9 +12599,10 @@ async function startPostAuthBootstrap() {
     renderAnnualRanking();
     observeViewChange();
     bindExternalRefresh();
-    refreshAnnualRanking({ manual: false });
     onViewChange();
   }
 
+  window.addEventListener("vistamirror:auth-ready", onViewChange);
+  window.addEventListener("vistamirror:auth-lock", stopPolling);
   init();
 })();
