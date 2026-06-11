@@ -9728,6 +9728,19 @@ body.vistamirror-fig1-skin .playback-device {
   grid-column: 1 / -1 !important;
 }
 
+.main-content[data-active-view="settings"] #view-settings .connection-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px solid #dbe7ff;
+  border-radius: 10px;
+  background: #f6f9ff;
+  color: #64748b;
+  font-size: 13px;
+}
+
 .main-content[data-active-view="settings"] #view-settings .settings-card {
   min-width: 0;
   border-radius: 14px !important;

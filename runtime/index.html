@@ -7,7 +7,7 @@
   <meta name="description" content="镜界Vistamirror 风格的 Emby 用户管理控制台，支持 Emby API 接入、邀请管理、到期续费与登录日志。">
   <link rel="icon" type="image/png" href="logo.png?v=20260408-2030">
   <link rel="apple-touch-icon" href="logo.png?v=20260408-2030">
-  <link rel="stylesheet" href="styles.css?v=20260604-auth-shell-only">
+  <link rel="stylesheet" href="styles.css?v=20260606-settings-save-autoconnect">
 </head>
 <body class="auth-pending">
   <section id="admin-auth-loading" class="admin-auth-loading" aria-live="polite">
@@ -824,6 +824,40 @@
                 </div>
               </article>
 
+              <article class="bot-card bot-card-channel bot-card-wechat">
+                <div class="panel-head compact">
+                  <div class="bot-card-title-wrap">
+                    <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
+                    <div>
+                      <h3>消息投递配置</h3>
+                      <p class="section-label">企业微信（推送）</p>
+                    </div>
+                  </div>
+                  <button id="bot-wechat-test" class="ghost-btn" type="button">发送测试</button>
+                </div>
+                <div class="config-grid">
+                  <label class="field">
+                    <span>企业 ID</span>
+                    <input id="bot-wechat-corp-id" type="text" placeholder="wwxxxxxxxxxxxx">
+                  </label>
+                  <label class="field">
+                    <span>应用 ID</span>
+                    <input id="bot-wechat-agent-id" type="text" placeholder="1000008">
+                  </label>
+                  <label class="field field-span-2">
+                    <span>应用 Secret</span>
+                    <div class="password-field">
+                      <input id="bot-wechat-secret" type="password" placeholder="输入应用 Secret">
+                      <button id="bot-wechat-secret-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏应用 Secret" data-target="bot-wechat-secret" data-open="false">🙈</button>
+                    </div>
+                  </label>
+                  <label class="field field-span-2">
+                    <span>接收人（可选）</span>
+                    <input id="bot-wechat-to-user" type="text" placeholder="例如 @all 或 username1|username2">
+                  </label>
+                </div>
+              </article>
+
               <article class="bot-card bot-card-channel bot-card-telegram">
                 <div class="panel-head compact">
                   <div class="bot-card-title-wrap">
@@ -857,40 +891,6 @@
                   <p id="bot-env-managed-hint" class="hint-text field-span-2" hidden>
                     该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
                   </p>
-                </div>
-              </article>
-
-              <article class="bot-card bot-card-channel bot-card-wechat">
-                <div class="panel-head compact">
-                  <div class="bot-card-title-wrap">
-                    <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
-                    <div>
-                      <h3>消息投递配置</h3>
-                      <p class="section-label">企业微信（推送）</p>
-                    </div>
-                  </div>
-                  <button id="bot-wechat-test" class="ghost-btn" type="button">发送测试</button>
-                </div>
-                <div class="config-grid">
-                  <label class="field">
-                    <span>企业 ID</span>
-                    <input id="bot-wechat-corp-id" type="text" placeholder="wwxxxxxxxxxxxx">
-                  </label>
-                  <label class="field">
-                    <span>应用 ID</span>
-                    <input id="bot-wechat-agent-id" type="text" placeholder="1000008">
-                  </label>
-                  <label class="field field-span-2">
-                    <span>应用 Secret</span>
-                    <div class="password-field">
-                      <input id="bot-wechat-secret" type="password" placeholder="输入应用 Secret">
-                      <button id="bot-wechat-secret-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏应用 Secret" data-target="bot-wechat-secret" data-open="false">🙈</button>
-                    </div>
-                  </label>
-                  <label class="field field-span-2">
-                    <span>接收人（可选）</span>
-                    <input id="bot-wechat-to-user" type="text" placeholder="例如 @all 或 username1|username2">
-                  </label>
                 </div>
               </article>
 
@@ -982,6 +982,10 @@
                           <button id="api-key-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 API Key" data-target="api-key" data-open="false">🙈</button>
                         </div>
                       </label>
+                      <div class="connection-state field-span-2">
+                        <span id="connection-badge" class="status-badge neutral">未连接</span>
+                        <span id="connection-message">尚未连接媒体服务器。填写地址和 API Key 后点击保存配置。</span>
+                      </div>
                     </div>
                   </section>
 
@@ -1019,48 +1023,6 @@
                       <p id="tmdb-token-hint" class="tmdb-token-hint field-span-2">TMDB 兜底未启用，系统将仅使用 Emby 海报。</p>
                     </div>
                   </section>
-
-                  <section class="settings-card settings-card-admin-auth field-span-2">
-                    <div class="settings-card-head">
-                      <h4>后台管理员凭据</h4>
-                      <p>用于修改后台登录用户名与密码。</p>
-                    </div>
-                    <form id="admin-credential-form" class="settings-subgrid admin-credential-form">
-                      <label class="field">
-                        <span>当前用户名</span>
-                        <input id="admin-credential-current-username" type="text" placeholder="-" readonly>
-                      </label>
-                      <label class="field">
-                        <span>当前密码</span>
-                        <input id="admin-credential-current-password" type="password" placeholder="请输入当前密码">
-                      </label>
-                      <label class="field">
-                        <span>新用户名</span>
-                        <input id="admin-credential-next-username" type="text" placeholder="请输入新用户名">
-                      </label>
-                      <label class="field">
-                        <span>新密码</span>
-                        <input id="admin-credential-next-password" type="password" placeholder="请输入新密码（至少 6 位）">
-                      </label>
-                      <label class="field field-span-2">
-                        <span>确认新密码</span>
-                        <input id="admin-credential-confirm-password" type="password" placeholder="请再次输入新密码">
-                      </label>
-                      <p id="admin-credential-env-hint" class="hint-text field-span-2" hidden>
-                        当前管理员凭据由环境变量接管，请在 .env / .env.local 中修改后重启服务。
-                      </p>
-                      <p id="admin-credential-feedback" class="hint-text field-span-2" hidden></p>
-                      <div class="form-actions field-span-2">
-                        <button id="admin-credential-submit" class="primary-btn" type="submit">更新账号与密码</button>
-                      </div>
-                    </form>
-                  </section>
-
-                  <div class="form-actions field-span-2">
-                    <button id="connect-btn" class="primary-btn" type="button">连接 Emby</button>
-                    <button id="diagnose-btn" class="ghost-btn" type="button">连接诊断</button>
-                    <button id="disconnect-btn" class="ghost-btn" type="button">清除配置</button>
-                  </div>
 
                   <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
                     该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
@@ -1527,7 +1489,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260606-auth-request-gate"></script>
+  <script src="script.js?v=20260610-library-stable-refresh"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

@@ -5996,6 +5996,8 @@ async function saveSettingsConfig() {
   }
 
   applyConfigFromInputs({ persist: true });
+  syncActiveMediaServerFields();
+  const activeServerConfig = getMediaServerConfig();
   const hasManaged = (appState?.envControlledFields?.embyConfig || []).length > 0;
   addSyncEvent(
     "系统配置已保存",
@@ -6026,6 +6028,14 @@ async function saveSettingsConfig() {
     }
     appState.settingsSaveTimer = null;
   }, 1000);
+
+  if (activeServerConfig.serverUrl && activeServerConfig.apiKey) {
+    appState.config.serverUrl = activeServerConfig.serverUrl;
+    appState.config.apiKey = activeServerConfig.apiKey;
+    await loadEmbyData();
+  } else {
+    renderConnectionState(false, "配置已保存，请填写媒体服务器地址和 API Key 后再次保存连接。");
+  }
 }
 
 function readBotConfigFromInputs() {
@@ -6410,6 +6420,7 @@ function togglePasswordVisibility(button) {
 }
 
 async function loadEmbyData() {
+  let dataReady = false;
   try {
     renderConnectionState(true, "正在从 Emby 拉取数据...");
     const [systemInfo, usersResult, sessions, logsResult, mediaCounts, topItems, devicesResult, qualityItemsResult] = await Promise.all([
@@ -6468,12 +6479,16 @@ async function loadEmbyData() {
         detail: authSummary
       });
     }
+    dataReady = true;
   } catch (error) {
     renderConnectionState(false, `连接失败：${error.message}`, "danger");
     addSyncEvent("连接 Emby 失败", error.message, "danger");
   }
 
   renderAll();
+  if (dataReady) {
+    window.dispatchEvent(new CustomEvent("vistamirror:emby-data-ready"));
+  }
 }
 
 async function runQualityRescan() {
@@ -6715,9 +6730,6 @@ function switchView(view) {
     loadMissingList({ quiet: true }).catch(() => {
       // 初次进入缺集页读取失败时保持静默，避免打断主流程
     });
-  }
-  if (targetView === "settings") {
-    loadAdminCredentialMeta({ silent: false });
   }
   if (elements.mainContent) {
     elements.mainContent.scrollTo({ top: 0, behavior: "smooth" });
@@ -8637,10 +8649,6 @@ function initEvents() {
     switchView("about-support");
   });
 
-  elements.quickLogBtn?.addEventListener("click", () => {
-    openProjectLogModal();
-  });
-
   document.querySelector(".sidebar-exit")?.addEventListener("click", async (event) => {
     event.preventDefault();
     if (appState.authEnabled) {
@@ -9611,6 +9619,7 @@ async function startPostAuthBootstrap() {
   const STATE = {
     mounted: false,
     loading: false,
+    pendingForceRefresh: false,
     lastSyncAt: 0,
     views: []
   };
@@ -9788,13 +9797,13 @@ async function startPostAuthBootstrap() {
     });
   }
 
-  function renderUserViews(views) {
+  function renderUserViews(views, emptyMessage = "未读取到可展示的 Emby 媒体库视图。") {
     const grid = document.getElementById("my-library-grid");
     if (!grid) {
       return;
     }
     if (!Array.isArray(views) || !views.length) {
-      grid.innerHTML = `<div class="my-library-empty">未读取到可展示的 Emby 媒体库视图。</div>`;
+      grid.innerHTML = `<div class="my-library-empty">${escapeHtml(emptyMessage)}</div>`;
       return;
     }
     grid.innerHTML = views.map((view) => buildCardHtml(view)).join("");
@@ -9821,6 +9830,19 @@ async function startPostAuthBootstrap() {
 
   async function fetchUserViews() {
     let lastError = null;
+    const selectedUserId = String(appState?.selectedUserId || "").trim();
+
+    if (selectedUserId) {
+      try {
+        const result = await embyFetch(`/Users/${encodeURIComponent(selectedUserId)}/Views`);
+        const normalized = normalizeUserViews(result);
+        if (normalized.length > 0) {
+          return normalized;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+    }
 
     try {
       const result = await embyFetch("/UserViews");
@@ -9837,6 +9859,30 @@ async function startPostAuthBootstrap() {
       const normalizedFallback = normalizeVirtualFolderViews(fallback);
       if (normalizedFallback.length > 0) {
         return normalizedFallback;
+      }
+    } catch (error) {
+      if (!lastError) {
+        lastError = error;
+      }
+    }
+
+    try {
+      const libraries = await fetchAllLibraries();
+      const normalizedLibraries = Array.isArray(libraries)
+        ? libraries.map((item) => ({
+          id: String(item?.id || "").trim(),
+          name: String(item?.name || "").trim(),
+          collectionType: normalizeCollectionType(item?.collectionType),
+          type: "CollectionFolder",
+          imageTags: {},
+          backdropImageTags: [],
+          recursiveItemCount: Number(item?.recursiveItemCount),
+          childCount: Number(item?.childCount),
+          itemCount: Number(item?.itemCount)
+        })).filter((item) => item.id && item.name)
+        : [];
+      if (normalizedLibraries.length > 0) {
+        return normalizedLibraries;
       }
     } catch (error) {
       if (!lastError) {
@@ -9898,6 +9944,9 @@ async function startPostAuthBootstrap() {
   async function refreshLibraryData(force = false) {
     const now = Date.now();
     if (STATE.loading) {
+      if (force) {
+        STATE.pendingForceRefresh = true;
+      }
       return;
     }
     if (!force && now - STATE.lastSyncAt < LIBRARY_SYNC_INTERVAL_MS) {
@@ -9913,12 +9962,16 @@ async function startPostAuthBootstrap() {
     try {
       const views = await fetchUserViews();
       STATE.views = views;
-      renderUserViews(views);
+      renderUserViews(views, "已连接 Emby，但未读取到媒体库视图，请检查 API Key 权限或媒体库访问权限。");
       STATE.lastSyncAt = now;
     } catch (error) {
       renderUserViewsError(error?.message || "未知错误");
     } finally {
       STATE.loading = false;
+      if (STATE.pendingForceRefresh) {
+        STATE.pendingForceRefresh = false;
+        window.setTimeout(() => refreshLibraryData(true), 0);
+      }
     }
   }
 
@@ -9954,6 +10007,13 @@ async function startPostAuthBootstrap() {
   }, LIBRARY_SYNC_INTERVAL_MS);
 
   window.addEventListener("vistamirror:auth-ready", () => {
+    const activeView = document.querySelector(".main-content")?.dataset?.activeView || "";
+    if (activeView === "overview") {
+      ensureAndRefresh(true);
+    }
+  });
+
+  window.addEventListener("vistamirror:emby-data-ready", () => {
     const activeView = document.querySelector(".main-content")?.dataset?.activeView || "";
     if (activeView === "overview") {
       ensureAndRefresh(true);
@@ -10214,9 +10274,11 @@ async function startPostAuthBootstrap() {
   }
 
   noticeBtn.addEventListener("click", (event) => {
+    event.preventDefault();
     event.stopPropagation();
+    event.stopImmediatePropagation?.();
     setOpen(!state.open);
-  });
+  }, { capture: true });
 
   function isRadarInteractiveTarget(target) {
     return target instanceof Element
