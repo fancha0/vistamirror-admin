@@ -1024,6 +1024,52 @@
                     </div>
                   </section>
 
+                  <section class="settings-card settings-card-ai field-span-2">
+                    <div class="settings-card-head">
+                      <div>
+                        <h4>AI 助手</h4>
+                        <p class="toggle-desc">OpenAI 兼容接口，用于 Telegram 媒体问答。</p>
+                      </div>
+                      <button id="ai-test-btn" class="ghost-btn" type="button">测试连接</button>
+                    </div>
+                    <div class="tmdb-switch-row">
+                      <label for="ai-enabled" class="tmdb-switch" aria-label="启用 AI 助手">
+                        <input id="ai-enabled" type="checkbox">
+                        <span class="tmdb-switch-slider"></span>
+                      </label>
+                      <div class="tmdb-switch-copy">
+                        <strong>启用 AI 媒体问答</strong>
+                        <p>私聊可直接提问，群聊使用 /ai 触发。</p>
+                      </div>
+                    </div>
+                    <div class="settings-subgrid">
+                      <label class="field field-span-2">
+                        <span>Base URL</span>
+                        <input id="ai-base-url" type="text" placeholder="例如 https://api.openai.com/v1 或兼容接口地址">
+                      </label>
+                      <label class="field field-span-2">
+                        <span>AI API KEY</span>
+                        <div class="password-field">
+                          <input id="ai-api-key" type="password" placeholder="输入 OpenAI 兼容 API Key">
+                          <button id="ai-api-key-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 AI API Key" data-target="ai-api-key" data-open="false">🙈</button>
+                        </div>
+                      </label>
+                      <label class="field">
+                        <span>模型名称</span>
+                        <input id="ai-model" type="text" placeholder="例如 gpt-4o-mini / deepseek-chat">
+                      </label>
+                      <label class="field">
+                        <span>温度</span>
+                        <input id="ai-temperature" type="number" min="0" max="2" step="0.1" placeholder="0.4">
+                      </label>
+                      <label class="field">
+                        <span>最大回复长度</span>
+                        <input id="ai-max-tokens" type="number" min="128" max="4000" step="64" placeholder="800">
+                      </label>
+                      <p id="ai-feedback" class="tmdb-token-hint field-span-2">AI 未启用，Telegram 不会触发媒体问答。</p>
+                    </div>
+                  </section>
+
                   <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
                     该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
                   </p>
@@ -1489,7 +1535,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260610-library-stable-refresh"></script>
+  <script src="script.js?v=20260613-ai-config-feedback"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

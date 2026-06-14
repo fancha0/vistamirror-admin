@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   invites: "embyPulseInvites",
   renewals: "embyPulseRenewals",
   botConfig: "embyPulseBotConfig",
+  aiConfig: "vistamirrorAiConfig",
   activeView: "embyPulseActiveView",
   inviteSyncEndpoint: "embyPulseInviteSyncEndpoint",
   qualityLastScanAt: "embyPulseQualityLastScanAt"
@@ -31,6 +32,15 @@ const DEFAULT_BOT_CONFIG = {
   wechatToUser: "@all",
   wechatCallbackToken: "",
   wechatCallbackAes: ""
+};
+
+const DEFAULT_AI_CONFIG = {
+  enabled: false,
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: "",
+  model: "gpt-4o-mini",
+  temperature: 0.4,
+  maxTokens: 800
 };
 
 const DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console";
@@ -65,6 +75,7 @@ const appState = {
   invites: loadJson(STORAGE_KEYS.invites, []),
   renewals: loadJson(STORAGE_KEYS.renewals, {}),
   botConfig: loadJson(STORAGE_KEYS.botConfig, DEFAULT_BOT_CONFIG),
+  aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
   users: [],
   sessions: [],
   devices: [],
@@ -140,6 +151,7 @@ const appState = {
   envControlledFields: {
     embyConfig: [],
     botConfig: [],
+    aiConfig: [],
     adminAuth: []
   },
   adminCredentialMeta: {
@@ -235,6 +247,28 @@ function normalizeBotConfig(rawConfig) {
   };
 }
 
+function normalizeAiConfig(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  let temperature = Number.parseFloat(String(config.temperature ?? DEFAULT_AI_CONFIG.temperature));
+  if (!Number.isFinite(temperature)) {
+    temperature = DEFAULT_AI_CONFIG.temperature;
+  }
+  temperature = Math.max(0, Math.min(2, temperature));
+  let maxTokens = Number.parseInt(String(config.maxTokens ?? DEFAULT_AI_CONFIG.maxTokens), 10);
+  if (!Number.isFinite(maxTokens)) {
+    maxTokens = DEFAULT_AI_CONFIG.maxTokens;
+  }
+  maxTokens = Math.max(128, Math.min(4000, maxTokens));
+  return {
+    enabled: Boolean(config.enabled ?? DEFAULT_AI_CONFIG.enabled),
+    baseUrl: String(config.baseUrl || DEFAULT_AI_CONFIG.baseUrl).trim().replace(/\/+$/, ""),
+    apiKey: String(config.apiKey || "").trim(),
+    model: String(config.model || DEFAULT_AI_CONFIG.model).trim() || DEFAULT_AI_CONFIG.model,
+    temperature,
+    maxTokens
+  };
+}
+
 function normalizeEnvControlledFields(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const normalizeList = (value) =>
@@ -244,6 +278,7 @@ function normalizeEnvControlledFields(raw) {
   return {
     embyConfig: normalizeList(source.embyConfig),
     botConfig: normalizeList(source.botConfig),
+    aiConfig: normalizeList(source.aiConfig),
     adminAuth: normalizeList(source.adminAuth)
   };
 }
@@ -256,7 +291,7 @@ function mergeEnvControlledFields(raw, groupHint = "") {
       : [];
 
   if (Array.isArray(raw)) {
-    if (groupHint === "embyConfig" || groupHint === "botConfig" || groupHint === "adminAuth") {
+    if (groupHint === "embyConfig" || groupHint === "botConfig" || groupHint === "aiConfig" || groupHint === "adminAuth") {
       current[groupHint] = normalizeList(raw);
     }
     return current;
@@ -268,6 +303,9 @@ function mergeEnvControlledFields(raw, groupHint = "") {
     }
     if (Object.prototype.hasOwnProperty.call(raw, "botConfig")) {
       current.botConfig = normalizeList(raw.botConfig);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "aiConfig")) {
+      current.aiConfig = normalizeList(raw.aiConfig);
     }
     if (Object.prototype.hasOwnProperty.call(raw, "adminAuth")) {
       current.adminAuth = normalizeList(raw.adminAuth);
@@ -293,6 +331,7 @@ function setFieldEnvControlled(input, controlled) {
 function renderEnvControlledState() {
   const embyManaged = appState?.envControlledFields?.embyConfig || [];
   const botManaged = appState?.envControlledFields?.botConfig || [];
+  const aiManaged = appState?.envControlledFields?.aiConfig || [];
   const activeServerType = getActiveMediaServerType();
 
   setFieldEnvControlled(elements.serverUrl, activeServerType === "emby" && embyManaged.includes("serverUrl"));
@@ -312,6 +351,12 @@ function renderEnvControlledState() {
   setFieldEnvControlled(elements.botTelegramChatId, botManaged.includes("telegramChatId"));
   if (elements.botTelegramTokenToggle) {
     elements.botTelegramTokenToggle.disabled = botManaged.includes("telegramToken");
+  }
+  setFieldEnvControlled(elements.aiBaseUrl, aiManaged.includes("baseUrl"));
+  setFieldEnvControlled(elements.aiApiKey, aiManaged.includes("apiKey"));
+  setFieldEnvControlled(elements.aiModel, aiManaged.includes("model"));
+  if (elements.aiApiKeyToggle) {
+    elements.aiApiKeyToggle.disabled = aiManaged.includes("apiKey");
   }
   if (elements.botEnvManagedHint) {
     const hasManaged = botManaged.length > 0;
@@ -376,6 +421,15 @@ const elements = {
   tmdbRegion: document.getElementById("tmdb-region"),
   tmdbStatusTip: document.getElementById("tmdb-status-tip"),
   tmdbTokenHint: document.getElementById("tmdb-token-hint"),
+  aiEnabled: document.getElementById("ai-enabled"),
+  aiBaseUrl: document.getElementById("ai-base-url"),
+  aiApiKey: document.getElementById("ai-api-key"),
+  aiApiKeyToggle: document.getElementById("ai-api-key-toggle"),
+  aiModel: document.getElementById("ai-model"),
+  aiTemperature: document.getElementById("ai-temperature"),
+  aiMaxTokens: document.getElementById("ai-max-tokens"),
+  aiTestBtn: document.getElementById("ai-test-btn"),
+  aiFeedback: document.getElementById("ai-feedback"),
   connectBtn: document.getElementById("connect-btn"),
   diagnoseBtn: document.getElementById("diagnose-btn"),
   disconnectBtn: document.getElementById("disconnect-btn"),
@@ -5933,6 +5987,7 @@ function persistLocalState() {
   saveJson(STORAGE_KEYS.invites, appState.invites);
   saveJson(STORAGE_KEYS.renewals, appState.renewals);
   saveJson(STORAGE_KEYS.botConfig, appState.botConfig);
+  saveJson(STORAGE_KEYS.aiConfig, appState.aiConfig);
 }
 
 function getCurrentSiteOriginForBot() {
@@ -5996,6 +6051,9 @@ async function saveSettingsConfig() {
   }
 
   applyConfigFromInputs({ persist: true });
+  const aiConfig = readAiConfigFromInputs();
+  appState.aiConfig = aiConfig;
+  persistLocalState();
   syncActiveMediaServerFields();
   const activeServerConfig = getMediaServerConfig();
   const hasManaged = (appState?.envControlledFields?.embyConfig || []).length > 0;
@@ -6010,6 +6068,15 @@ async function saveSettingsConfig() {
     failureToast: "配置已保存，但服务端同步失败，邀请注册链接可能无法注册。",
     failureEventTitle: "配置同步失败"
   });
+  try {
+    await pushAiConfigToServer(aiConfig, { silent: true });
+    await loadAiConfigFromServer({ silent: true });
+  } catch (error) {
+    if (elements.aiFeedback) {
+      elements.aiFeedback.textContent = `AI 配置未保存：${error.message || "未知错误"}`;
+    }
+    showToast("AI 配置未保存", 1200);
+  }
 
   const original = elements.settingsSaveBtn.dataset.originalText || elements.settingsSaveBtn.textContent || "保存配置";
   elements.settingsSaveBtn.dataset.originalText = original;
@@ -6035,6 +6102,157 @@ async function saveSettingsConfig() {
     await loadEmbyData();
   } else {
     renderConnectionState(false, "配置已保存，请填写媒体服务器地址和 API Key 后再次保存连接。");
+  }
+}
+
+function readAiConfigFromInputs() {
+  return normalizeAiConfig({
+    enabled: Boolean(elements.aiEnabled?.checked),
+    baseUrl: elements.aiBaseUrl?.value.trim() || DEFAULT_AI_CONFIG.baseUrl,
+    apiKey: elements.aiApiKey?.value.trim() || "",
+    model: elements.aiModel?.value.trim() || DEFAULT_AI_CONFIG.model,
+    temperature: elements.aiTemperature?.value || DEFAULT_AI_CONFIG.temperature,
+    maxTokens: elements.aiMaxTokens?.value || DEFAULT_AI_CONFIG.maxTokens
+  });
+}
+
+function renderAiSettings() {
+  const config = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...appState.aiConfig });
+  if (elements.aiEnabled) {
+    elements.aiEnabled.checked = Boolean(config.enabled);
+  }
+  if (elements.aiBaseUrl) {
+    elements.aiBaseUrl.value = config.baseUrl || DEFAULT_AI_CONFIG.baseUrl;
+  }
+  if (elements.aiApiKey) {
+    elements.aiApiKey.value = config.apiKey || "";
+  }
+  if (elements.aiModel) {
+    elements.aiModel.value = config.model || DEFAULT_AI_CONFIG.model;
+  }
+  if (elements.aiTemperature) {
+    elements.aiTemperature.value = String(config.temperature ?? DEFAULT_AI_CONFIG.temperature);
+  }
+  if (elements.aiMaxTokens) {
+    elements.aiMaxTokens.value = String(config.maxTokens ?? DEFAULT_AI_CONFIG.maxTokens);
+  }
+  updateAiFeedbackFromInputs({ saved: true });
+}
+
+function isSameAiConfig(left, right) {
+  const a = normalizeAiConfig(left);
+  const b = normalizeAiConfig(right);
+  return (
+    Boolean(a.enabled) === Boolean(b.enabled) &&
+    String(a.baseUrl || "") === String(b.baseUrl || "") &&
+    String(a.apiKey || "") === String(b.apiKey || "") &&
+    String(a.model || "") === String(b.model || "") &&
+    Number(a.temperature) === Number(b.temperature) &&
+    Number(a.maxTokens) === Number(b.maxTokens)
+  );
+}
+
+function updateAiFeedbackFromInputs(options = {}) {
+  if (!elements.aiFeedback) {
+    return;
+  }
+  const { saved = false, message = "" } = options;
+  if (message) {
+    elements.aiFeedback.textContent = message;
+    return;
+  }
+  const formConfig = readAiConfigFromInputs();
+  if (!formConfig.enabled) {
+    elements.aiFeedback.textContent = "AI 未启用，Telegram 不会触发媒体问答。";
+    return;
+  }
+  if (!formConfig.baseUrl || !formConfig.apiKey || !formConfig.model) {
+    elements.aiFeedback.textContent = "AI 已开启，请补齐 Base URL、API Key 和模型名称后保存。";
+    return;
+  }
+  if (saved || isSameAiConfig(formConfig, appState.aiConfig)) {
+    elements.aiFeedback.textContent = "AI 已启用，Telegram 私聊可直接提问，群聊使用 /ai。";
+    return;
+  }
+  elements.aiFeedback.textContent = "AI 已填写，点击保存配置后 Telegram 生效。";
+}
+
+async function loadAiConfigFromServer(options = {}) {
+  const { silent = false } = options;
+  try {
+    const result = await inviteApiFetch("/api/ai/config");
+    appState.aiConfig = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...(result?.aiConfig || {}) });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "aiConfig");
+    persistLocalState();
+    renderAiSettings();
+    renderEnvControlledState();
+    return true;
+  } catch (error) {
+    if (!silent && elements.aiFeedback) {
+      elements.aiFeedback.textContent = `读取 AI 配置失败：${error.message || "未知错误"}`;
+    }
+    return false;
+  }
+}
+
+async function pushAiConfigToServer(nextConfig, options = {}) {
+  const { silent = false } = options;
+  const payloadConfig = { ...nextConfig };
+  const aiManaged = appState?.envControlledFields?.aiConfig || [];
+  if (aiManaged.includes("baseUrl")) {
+    delete payloadConfig.baseUrl;
+  }
+  if (aiManaged.includes("apiKey")) {
+    delete payloadConfig.apiKey;
+  }
+  if (aiManaged.includes("model")) {
+    delete payloadConfig.model;
+  }
+  try {
+    const result = await inviteApiFetch("/api/ai/config", {
+      method: "POST",
+      body: JSON.stringify({ aiConfig: payloadConfig })
+    });
+    appState.aiConfig = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...(result?.aiConfig || nextConfig) });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "aiConfig");
+    persistLocalState();
+    renderAiSettings();
+    renderEnvControlledState();
+    return appState.aiConfig;
+  } catch (error) {
+    if (!silent && elements.aiFeedback) {
+      elements.aiFeedback.textContent = `保存 AI 配置失败：${error.message || "未知错误"}`;
+    }
+    throw error;
+  }
+}
+
+async function testAiConfig() {
+  if (!elements.aiTestBtn || elements.aiTestBtn.disabled) {
+    return;
+  }
+  const config = readAiConfigFromInputs();
+  const original = elements.aiTestBtn.textContent || "测试连接";
+  elements.aiTestBtn.disabled = true;
+  elements.aiTestBtn.textContent = "测试中";
+  if (elements.aiFeedback) {
+    elements.aiFeedback.textContent = "正在测试 AI 连接...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/ai/test", {
+      method: "POST",
+      body: JSON.stringify({ aiConfig: config })
+    });
+    updateAiFeedbackFromInputs({ message: result?.message ? `${result.message}，请点击保存配置让机器人生效。` : "连接测试成功，请点击保存配置让机器人生效。" });
+    showToast("AI 连接测试成功", 1200);
+  } catch (error) {
+    if (elements.aiFeedback) {
+      elements.aiFeedback.textContent = `AI 连接测试失败：${error.message || "未知错误"}`;
+    }
+    showToast("AI 连接测试失败", 1200);
+  } finally {
+    elements.aiTestBtn.disabled = false;
+    elements.aiTestBtn.textContent = original;
   }
 }
 
@@ -8436,6 +8654,11 @@ function initEvents() {
   elements.tmdbToken?.addEventListener("input", () => {
     refreshTmdbUiState();
   });
+  [elements.aiEnabled, elements.aiBaseUrl, elements.aiApiKey, elements.aiModel, elements.aiTemperature, elements.aiMaxTokens].forEach((input) => {
+    input?.addEventListener("input", () => updateAiFeedbackFromInputs({ saved: false }));
+    input?.addEventListener("change", () => updateAiFeedbackFromInputs({ saved: false }));
+  });
+  elements.aiTestBtn?.addEventListener("click", testAiConfig);
 
   elements.ucInviteManageBtn?.addEventListener("click", () => {
     openUserCenterInviteManageModal();
@@ -8708,6 +8931,7 @@ function hydrateInputs() {
   }
   renderMediaServerSelector();
   refreshTmdbUiState();
+  renderAiSettings();
   renderEnvControlledState();
 }
 
@@ -8728,6 +8952,7 @@ async function startPostAuthBootstrap() {
       setTimeout(() => {
         refreshInviteSyncStatus({ silent: true });
         loadBotConfigFromServer({ silent: true });
+        loadAiConfigFromServer({ silent: true });
         refreshBotWebhookInfo({ silent: true });
         ensureBotWebhookStatusPolling();
       }, 80);

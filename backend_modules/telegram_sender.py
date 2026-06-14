@@ -126,11 +126,21 @@ class TelegramSender:
             raise RuntimeError(f"Telegram 请求失败：{desc or body[:240]}")
         return parsed
 
-    def send_text(self, *, token: str, chat_id: str, text: str, reply_markup: dict[str, Any] | None = None) -> None:
+    def send_text(
+        self,
+        *,
+        token: str,
+        chat_id: str,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+        parse_mode: str = "",
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        self.api_request(token=token, method="sendMessage", payload=payload)
+        return self.api_request(token=token, method="sendMessage", payload=payload)
 
     def edit_message_text(
         self,
@@ -140,6 +150,7 @@ class TelegramSender:
         message_id: int,
         text: str,
         reply_markup: dict[str, Any] | None = None,
+        parse_mode: str = "",
     ) -> None:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -147,6 +158,8 @@ class TelegramSender:
             "text": text,
             "disable_web_page_preview": True,
         }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
         self.api_request(token=token, method="editMessageText", payload=payload)
@@ -157,6 +170,10 @@ class TelegramSender:
             payload["text"] = text
             payload["show_alert"] = False
         self.api_request(token=token, method="answerCallbackQuery", payload=payload)
+
+    def send_chat_action(self, *, token: str, chat_id: str, action: str = "typing") -> None:
+        payload = {"chat_id": chat_id, "action": action or "typing"}
+        self.api_request(token=token, method="sendChatAction", payload=payload)
 
     def send_photo(
         self,

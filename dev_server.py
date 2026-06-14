@@ -38,6 +38,14 @@ from datetime import date, datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from backend_modules.ai_assistant import (
+    apply_ai_env_overrides,
+    chat_completion,
+    default_ai_config as module_default_ai_config,
+    env_managed_ai_fields,
+    normalize_ai_config as module_normalize_ai_config,
+    validate_ai_config as module_validate_ai_config,
+)
 from backend_modules.ip_locator import build_ip_display
 from backend_modules.message_formatter import compose_playback_message, normalize_content_type, ticks_to_seconds
 from backend_modules.missing_episode_service import MissingEpisodeService
@@ -432,12 +440,24 @@ def _default_bot_config() -> dict[str, Any]:
     return module_default_bot_config()
 
 
+def _default_ai_config() -> dict[str, Any]:
+    return module_default_ai_config()
+
+
 def _normalize_bot_config(raw: Any) -> dict[str, Any]:
     return module_normalize_bot_config(raw)
 
 
+def _normalize_ai_config(raw: Any) -> dict[str, Any]:
+    return module_normalize_ai_config(raw)
+
+
 def _validate_bot_config(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     return module_validate_bot_config(raw)
+
+
+def _validate_ai_config(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+    return module_validate_ai_config(raw)
 
 
 def _env_override_value(env_name: str) -> str:
@@ -458,6 +478,10 @@ def _env_managed_bot_fields() -> list[str]:
         if _env_override_value(env_name):
             managed.append(field)
     return managed
+
+
+def _env_managed_ai_fields() -> list[str]:
+    return env_managed_ai_fields()
 
 
 def _env_managed_admin_auth_fields() -> list[str]:
@@ -493,10 +517,15 @@ def _apply_bot_env_overrides(raw: Any) -> dict[str, Any]:
     return _normalize_bot_config(merged)
 
 
+def _apply_ai_env_overrides(raw: Any) -> dict[str, Any]:
+    return apply_ai_env_overrides(raw)
+
+
 def _env_controlled_fields_payload() -> dict[str, list[str]]:
     return {
         "embyConfig": _env_managed_emby_fields(),
         "botConfig": _env_managed_bot_fields(),
+        "aiConfig": _env_managed_ai_fields(),
         "adminAuth": _env_managed_admin_auth_fields(),
     }
 
@@ -575,16 +604,17 @@ def _store_path() -> pathlib.Path:
 def _read_store_unlocked() -> dict[str, Any]:
     path = _store_path()
     if not path.exists():
-        return {"embyConfig": {}, "invites": [], "botConfig": _default_bot_config()}
+        return {"embyConfig": {}, "invites": [], "botConfig": _default_bot_config(), "aiConfig": _default_ai_config()}
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {"embyConfig": {}, "invites": [], "botConfig": _default_bot_config()}
+        return {"embyConfig": {}, "invites": [], "botConfig": _default_bot_config(), "aiConfig": _default_ai_config()}
 
     emby_config = data.get("embyConfig") if isinstance(data, dict) else {}
     invites = data.get("invites") if isinstance(data, dict) else []
     bot_config = data.get("botConfig") if isinstance(data, dict) else {}
+    ai_config = data.get("aiConfig") if isinstance(data, dict) else {}
     if not isinstance(emby_config, dict):
         emby_config = {}
     if not isinstance(invites, list):
@@ -593,6 +623,7 @@ def _read_store_unlocked() -> dict[str, Any]:
         "embyConfig": emby_config,
         "invites": invites,
         "botConfig": _normalize_bot_config(bot_config),
+        "aiConfig": _normalize_ai_config(ai_config),
     }
 
 
@@ -774,6 +805,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/bot/config":
             self._handle_bot_config_get()
             return
+        if path == "/api/ai/config":
+            self._handle_ai_config_get()
+            return
         if path == "/api/bot/webhook-url":
             self._handle_bot_webhook_url_get()
             return
@@ -833,6 +867,12 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/bot/config":
             self._handle_bot_config_save()
+            return
+        if path == "/api/ai/config":
+            self._handle_ai_config_save()
+            return
+        if path == "/api/ai/test":
+            self._handle_ai_config_test()
             return
         if path == "/api/bot/test":
             self._handle_bot_test()
@@ -1833,6 +1873,141 @@ class AppHandler(SimpleHTTPRequestHandler):
             },
         )
 
+    def _handle_ai_config_get(self) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            path = _store_path()
+            needs_persist = True
+            if path.exists():
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    needs_persist = not isinstance(raw, dict) or not isinstance(raw.get("aiConfig"), dict)
+                except Exception:
+                    needs_persist = True
+            if needs_persist:
+                _write_store_unlocked(store)
+            ai_config = _apply_ai_env_overrides(store.get("aiConfig"))
+
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "aiConfig": ai_config,
+                "envControlledFields": _env_controlled_fields_payload(),
+                "managedByEnv": _env_controlled_fields_payload(),
+            },
+        )
+
+    def _handle_ai_config_save(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        raw_ai_config = payload.get("aiConfig")
+        if raw_ai_config is None:
+            raw_ai_config = payload
+
+        if not isinstance(raw_ai_config, dict):
+            self._send_json(400, {"error": "AI 配置必须是对象"})
+            return
+
+        with STORE_LOCK:
+            current_store = _read_store_unlocked()
+            current_config = _apply_ai_env_overrides(current_store.get("aiConfig"))
+            locked = _env_managed_ai_fields()
+        if locked:
+            raw_ai_config = dict(raw_ai_config)
+            for field in locked:
+                raw_ai_config[field] = current_config.get(field)
+
+        ai_config, error = _validate_ai_config(raw_ai_config)
+        if error:
+            self._send_json(400, {"error": error})
+            return
+        if ai_config is None:
+            self._send_json(400, {"error": "AI 配置无效"})
+            return
+
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            current = _normalize_ai_config(store.get("aiConfig"))
+            locked = _env_managed_ai_fields()
+            if locked:
+                for field in locked:
+                    ai_config[field] = current.get(field)
+            store["aiConfig"] = _normalize_ai_config(ai_config)
+            _write_store_unlocked(store)
+            saved_config = _apply_ai_env_overrides(store.get("aiConfig"))
+
+        if TELEGRAM_COMMAND_SERVICE is not None:
+            TELEGRAM_COMMAND_SERVICE.wakeup()
+
+        self._log_event(
+            level="info",
+            module="system",
+            action="ai_config_saved",
+            message="AI 助手配置已保存。",
+            status=200,
+            detail={"changedFields": sorted(redact_sensitive(raw_ai_config).keys()) if isinstance(raw_ai_config, dict) else []},
+        )
+
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "aiConfig": saved_config,
+                "envControlledFields": _env_controlled_fields_payload(),
+                "managedByEnv": _env_controlled_fields_payload(),
+            },
+        )
+
+    def _handle_ai_config_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw_ai_config = payload.get("aiConfig") if isinstance(payload, dict) else payload
+        ai_config, error = _validate_ai_config(raw_ai_config)
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        if ai_config is None:
+            self._send_json(400, {"ok": False, "error": "AI 配置无效"})
+            return
+        try:
+            started = time.time()
+            answer = chat_completion(
+                config=ai_config,
+                messages=[
+                    {"role": "system", "content": "你是连接测试助手。只回复“连接成功”。"},
+                    {"role": "user", "content": "测试连接"},
+                ],
+                timeout_seconds=20,
+            )
+            elapsed_ms = int((time.time() - started) * 1000)
+        except Exception as err:
+            self._log_event(
+                level="warning",
+                module="system",
+                action="ai_config_test_failed",
+                message="AI 助手连接测试失败。",
+                detail={"model": str(ai_config.get("model") or ""), "error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+
+        self._log_event(
+            level="info",
+            module="system",
+            action="ai_config_test_success",
+            message="AI 助手连接测试成功。",
+            status=200,
+            detail={"model": str(ai_config.get("model") or ""), "elapsedMs": elapsed_ms},
+        )
+        self._send_json(
+            200,
+            {"ok": True, "message": "AI 连接测试成功", "sample": self._shorten(answer, limit=80), "elapsedMs": elapsed_ms},
+        )
+
     def _first_forwarded_value(self, header_name: str) -> str:
         raw = str(self.headers.get(header_name) or "").strip()
         if not raw:
@@ -2208,9 +2383,23 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "RunTimeTicks",
                 "Genres",
                 "SeriesName",
+                "SeriesId",
+                "SeasonId",
+                "ParentId",
                 "ParentIndexNumber",
                 "IndexNumber",
                 "ProductionYear",
+                "PremiereDate",
+                "DateCreated",
+                "People",
+                "Studios",
+                "MediaSources",
+                "MediaStreams",
+                "ChildCount",
+                "RecursiveItemCount",
+                "PrimaryImageItemId",
+                "ImageTags",
+                "Container",
                 "Path",
             ]
         )
@@ -3325,6 +3514,257 @@ class AppHandler(SimpleHTTPRequestHandler):
             "eventName": str(event_name or "").strip(),
         }
 
+    def _library_event_source_text(self, payload: dict[str, Any], event_name: str) -> str:
+        values = [str(event_name or "").strip()]
+        for keys in (
+            ("Event",),
+            ("event",),
+            ("NotificationType",),
+            ("notificationType",),
+            ("Type",),
+            ("type",),
+            ("Name",),
+            ("name",),
+            ("MessageType",),
+            ("messageType",),
+            ("EventId",),
+            ("eventId",),
+            ("Action",),
+            ("action",),
+        ):
+            value = self._get_payload_str(payload, *keys)
+            if value:
+                values.append(value)
+        return " ".join(values).lower()
+
+    def _is_library_item_added_event(self, payload: dict[str, Any], event_name: str) -> bool:
+        source = self._library_event_source_text(payload, event_name)
+        if not source:
+            return False
+        if any(token in source for token in ("scanfinished", "scancompleted", "scan finished", "scan completed", "扫描完成")):
+            return False
+        return any(token in source for token in ("itemadded", "newitem", "newitems", "library.new", "新增", "入库"))
+
+    def _build_library_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        event_name: str,
+        emby_config: dict[str, Any],
+    ) -> dict[str, str]:
+        item_id = self._extract_item_id(payload)
+        item_detail = self._fetch_emby_item_detail(emby_config=emby_config, item_id=item_id)
+        joined = dict(payload)
+        if item_detail:
+            joined.update(item_detail)
+
+        title = self._library_title(joined)
+        year = self._library_year(joined)
+        item_type = str(joined.get("Type") or "").strip().lower()
+        genres = self._library_genres(joined)
+        category = genres or self._library_type_label(item_type)
+        content_type = self._library_content_type_text(item_type, genres)
+        rating = self._library_rating(joined)
+        created_at = self._library_datetime(joined.get("DateCreated") or joined.get("PremiereDate"))
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        episode_info = self._library_episode_info(joined)
+        people = self._library_people(joined)
+        studios = self._library_studios(joined)
+        media_summary = self._library_media_summary(joined)
+        size_text = self._library_file_size(joined)
+        overview = self._shorten(str(joined.get("Overview") or "暂无简介").replace("\n", " "), limit=360)
+
+        lines = [
+            f"🎬 {title}（{year}）" if year else f"🎬 {title}",
+            "=== 基本信息 ===",
+            f"🕒 整理时间 | {now}",
+            "📺 内容状态 | 整理完成",
+        ]
+        if episode_info:
+            lines.append(f"🎞 剧集信息 | {episode_info}")
+        lines.extend(
+            [
+                f"🎭 内容分类 | {category or '未分类'}",
+                "=== 媒体信息 ===",
+                f"🏷 内容类型 | {content_type}",
+            ]
+        )
+        if rating:
+            lines.append(f"⭐ 用户评分 | {rating}")
+        if created_at:
+            lines.append(f"📅 数据入库 | {created_at}")
+        if people:
+            lines.extend(["=== 创作信息 ===", f"👥 主演阵容 | {people}"])
+        lines.append("=== 资源详情 ===")
+        if studios:
+            lines.append(f"👥 发布小组 | {studios}")
+        if media_summary:
+            lines.append(f"🧾 资源规格 | {media_summary}")
+        if size_text:
+            lines.append(f"📦 文件大小 | {size_text}")
+        lines.extend(["=== 内容简介 ===", f"📜 {overview}"])
+
+        caption = "\n".join(lines)
+        if len(caption) > 1000:
+            caption = self._shorten(caption, limit=1000)
+        poster_url, detail_url = self._build_emby_item_urls(emby_config=emby_config, item_id=item_id)
+        return {
+            "caption": caption,
+            "posterUrl": poster_url,
+            "detailUrl": detail_url,
+            "itemId": item_id,
+            "eventName": str(event_name or "").strip(),
+        }
+
+    def _library_title(self, detail: dict[str, Any]) -> str:
+        item_type = str(detail.get("Type") or "").strip().lower()
+        if item_type == "episode":
+            return str(detail.get("SeriesName") or detail.get("Name") or "未命名内容").strip()
+        return str(detail.get("Name") or detail.get("ItemName") or detail.get("SeriesName") or "未命名内容").strip()
+
+    @staticmethod
+    def _library_year(detail: dict[str, Any]) -> str:
+        year = detail.get("ProductionYear")
+        if isinstance(year, int) and year > 0:
+            return str(year)
+        premiere = str(detail.get("PremiereDate") or "").strip()
+        if re.match(r"^\d{4}", premiere):
+            return premiere[:4]
+        return ""
+
+    @staticmethod
+    def _library_datetime(raw: Any) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            return ""
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return value[:19].replace("T", " ")
+
+    @staticmethod
+    def _library_type_label(item_type: str) -> str:
+        mapping = {
+            "movie": "电影",
+            "series": "电视剧",
+            "season": "季",
+            "episode": "剧集",
+            "audio": "音频",
+        }
+        return mapping.get(str(item_type or "").lower(), "媒体")
+
+    def _library_content_type_text(self, item_type: str, genres: str) -> str:
+        base = self._library_type_label(item_type)
+        if genres and genres != base:
+            return f"{base} · {genres}"
+        return base
+
+    @staticmethod
+    def _library_genres(detail: dict[str, Any]) -> str:
+        genres = detail.get("Genres") if isinstance(detail.get("Genres"), list) else []
+        rows = [str(row).strip() for row in genres if str(row).strip()]
+        return " / ".join(rows[:3])
+
+    @staticmethod
+    def _library_rating(detail: dict[str, Any]) -> str:
+        try:
+            rating = float(detail.get("CommunityRating") or 0)
+        except (TypeError, ValueError):
+            return ""
+        if rating <= 0:
+            return ""
+        return f"{rating:.1f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _library_episode_info(detail: dict[str, Any]) -> str:
+        item_type = str(detail.get("Type") or "").strip().lower()
+        season = AppHandler._library_int(detail.get("ParentIndexNumber"))
+        episode = AppHandler._library_int(detail.get("IndexNumber"))
+        if item_type == "episode":
+            season_text = f"S{season:02d}" if season is not None else "SXX"
+            episode_text = f"E{episode:02d}" if episode is not None else "EXX"
+            return f"{season_text} {episode_text}"
+        if item_type in {"season", "series"}:
+            count = AppHandler._library_int(detail.get("ChildCount")) or AppHandler._library_int(detail.get("RecursiveItemCount"))
+            if count and count > 0:
+                season_text = f"S{season:02d}" if season is not None else "SXX"
+                return f"{season_text} E01-E{count:02d}"
+        return ""
+
+    @staticmethod
+    def _library_int(raw: Any) -> int | None:
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    @staticmethod
+    def _library_people(detail: dict[str, Any]) -> str:
+        people = detail.get("People") if isinstance(detail.get("People"), list) else []
+        rows: list[str] = []
+        for person in people:
+            if not isinstance(person, dict):
+                continue
+            name = str(person.get("Name") or "").strip()
+            if name:
+                rows.append(name)
+        return "、".join(rows[:5])
+
+    @staticmethod
+    def _library_studios(detail: dict[str, Any]) -> str:
+        studios = detail.get("Studios") if isinstance(detail.get("Studios"), list) else []
+        rows: list[str] = []
+        for studio in studios:
+            if isinstance(studio, dict):
+                name = str(studio.get("Name") or "").strip()
+            else:
+                name = str(studio or "").strip()
+            if name:
+                rows.append(name)
+        return "、".join(rows[:3])
+
+    @staticmethod
+    def _library_media_summary(detail: dict[str, Any]) -> str:
+        sources = detail.get("MediaSources") if isinstance(detail.get("MediaSources"), list) else []
+        source = sources[0] if sources and isinstance(sources[0], dict) else {}
+        streams = source.get("MediaStreams") if isinstance(source.get("MediaStreams"), list) else detail.get("MediaStreams")
+        streams = streams if isinstance(streams, list) else []
+        container = str(source.get("Container") or detail.get("Container") or "").strip().upper()
+        video = next((row for row in streams if isinstance(row, dict) and str(row.get("Type") or "").lower() == "video"), {})
+        audio = next((row for row in streams if isinstance(row, dict) and str(row.get("Type") or "").lower() == "audio"), {})
+        width = video.get("Width") if isinstance(video, dict) else None
+        height = video.get("Height") if isinstance(video, dict) else None
+        resolution = ""
+        if isinstance(height, int) and height > 0:
+            resolution = f"{height}p"
+        elif isinstance(width, int) and width >= 3000:
+            resolution = "4K"
+        video_codec = str(video.get("Codec") or "").strip().upper() if isinstance(video, dict) else ""
+        audio_codec = str(audio.get("Codec") or "").strip().upper() if isinstance(audio, dict) else ""
+        rows = [value for value in (container, resolution, video_codec, audio_codec) if value]
+        return " · ".join(rows[:4])
+
+    @staticmethod
+    def _library_file_size(detail: dict[str, Any]) -> str:
+        sources = detail.get("MediaSources") if isinstance(detail.get("MediaSources"), list) else []
+        source = sources[0] if sources and isinstance(sources[0], dict) else {}
+        raw_size = source.get("Size") or detail.get("Size")
+        try:
+            size = int(raw_size or 0)
+        except (TypeError, ValueError):
+            return ""
+        if size <= 0:
+            return ""
+        units = ["B", "KB", "MB", "GB", "TB"]
+        value = float(size)
+        unit = units[0]
+        for unit in units:
+            if value < 1024 or unit == units[-1]:
+                break
+            value /= 1024
+        return f"{value:.2f}{unit}".rstrip("0").rstrip(".") if unit == "B" else f"{value:.2f}{unit}"
+
     def _build_webhook_message(self, payload: dict[str, Any], *, event_type: str, event_name: str) -> str:
         if event_type == "playback":
             title = "播放状态通知"
@@ -3561,6 +4001,67 @@ class AppHandler(SimpleHTTPRequestHandler):
             action_text = action
             self._record_webhook_status(event_type=event_type, result="sent", detail=f"Telegram 富媒体推送成功（{action_text}）")
             self._send_json(200, {"ok": True, "sent": True, "eventType": event_type, "action": action})
+            return
+
+        if event_type == "library":
+            item_id = self._extract_item_id(payload)
+            if not item_id:
+                self._record_webhook_status(event_type=event_type, result="library_item_missing", detail="入库事件未包含具体资源 ID，已跳过")
+                self._send_json(200, {"ok": True, "skipped": "library_item_missing"})
+                return
+            if not self._is_library_item_added_event(payload, event_name):
+                self._record_webhook_status(event_type=event_type, result="library_event_filtered", detail="非新增入库资源事件，已跳过")
+                self._send_json(200, {"ok": True, "skipped": "library_event_filtered"})
+                return
+
+            dedupe_window = int(bot_config.get("eventDedupSeconds") or 10)
+            dedupe_key = f"library|{item_id}|{event_name or 'item_added'}"
+            if self._should_dedupe_webhook(dedupe_key, window_seconds=max(1, dedupe_window)):
+                self._record_webhook_status(event_type=event_type, result="duplicate_skipped", detail="重复入库事件已去重")
+                self._send_json(200, {"ok": True, "skipped": "duplicate_skipped"})
+                return
+
+            card = self._build_library_payload(payload, event_name=event_name, emby_config=emby_config)
+            caption = card.get("caption") or "新资源入库通知"
+            poster_url = str(card.get("posterUrl") or "").strip()
+            detail_url = str(card.get("detailUrl") or "").strip()
+            try:
+                if poster_url:
+                    try:
+                        self._send_telegram_photo(
+                            token=token_value,
+                            chat_id=chat_id,
+                            photo_url=poster_url,
+                            caption=caption,
+                            button_text="🔗 查看详情",
+                            button_url=detail_url,
+                        )
+                    except RuntimeError as err:
+                        lowered = str(err).lower()
+                        should_fallback = any(
+                            key in lowered
+                            for key in ("wrong type", "failed to get http url", "wrong file identifier", "http url", "bad request")
+                        )
+                        if not should_fallback:
+                            raise
+                        self._send_telegram_text(token=token_value, chat_id=chat_id, text=caption)
+                else:
+                    self._send_telegram_text(token=token_value, chat_id=chat_id, text=caption)
+            except ValueError as err:
+                self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
+                self._send_json(400, {"error": str(err)})
+                return
+            except RuntimeError as err:
+                self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
+                self._send_json(502, {"error": str(err)})
+                return
+            except Exception as err:
+                self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
+                self._send_json(502, {"error": f"Telegram 发送失败：{err}"})
+                return
+
+            self._record_webhook_status(event_type=event_type, result="sent", detail="Telegram 入库富媒体推送成功")
+            self._send_json(200, {"ok": True, "sent": True, "eventType": event_type, "itemId": item_id})
             return
 
         message = self._build_webhook_message(payload, event_type=event_type, event_name=event_name)
