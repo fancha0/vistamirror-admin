@@ -23,6 +23,7 @@ def default_ai_config() -> dict[str, Any]:
         "model": "gpt-4o-mini",
         "temperature": 0.4,
         "maxTokens": 800,
+        "contextTokensK": 64,
     }
 
 
@@ -39,6 +40,11 @@ def normalize_ai_config(raw: Any) -> dict[str, Any]:
     except (TypeError, ValueError):
         max_tokens = int(defaults["maxTokens"])
     max_tokens = max(128, min(4000, max_tokens))
+    try:
+        context_tokens_k = int(source.get("contextTokensK", defaults["contextTokensK"]))
+    except (TypeError, ValueError):
+        context_tokens_k = int(defaults["contextTokensK"])
+    context_tokens_k = max(4, min(1024, context_tokens_k))
     return {
         "enabled": bool(source.get("enabled", defaults["enabled"])),
         "baseUrl": str(source.get("baseUrl") or defaults["baseUrl"]).strip().rstrip("/"),
@@ -46,6 +52,7 @@ def normalize_ai_config(raw: Any) -> dict[str, Any]:
         "model": str(source.get("model") or defaults["model"]).strip() or defaults["model"],
         "temperature": temperature,
         "maxTokens": max_tokens,
+        "contextTokensK": context_tokens_k,
     }
 
 

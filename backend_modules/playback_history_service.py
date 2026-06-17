@@ -184,6 +184,7 @@ class PlaybackHistoryService:
         title = self._sanitize_media_title(title)
         action = self._infer_action(log, text)
         item_id = self._extract_activity_log_item_id(log)
+        raw_item = self._extract_activity_log_item_payload(log)
         device = str(log.get("DeviceName") or log.get("DeviceId") or "").strip()
         if not device and parsed_device:
             device = parsed_device
@@ -204,6 +205,7 @@ class PlaybackHistoryService:
             "action": action,
             "userId": user_id,
             "source": "emby_activity_log_relaxed" if mode == "relaxed" else "emby_activity_log",
+            "raw": raw_item,
             # 兼容旧渲染字段
             "date": time_text,
             "userName": user,
@@ -600,6 +602,33 @@ class PlaybackHistoryService:
         item = log.get("Item") if isinstance(log.get("Item"), dict) else {}
         value = str(log.get("ItemId") or item.get("Id") or item.get("ItemId") or "").strip()
         return value
+
+    @staticmethod
+    def _extract_activity_log_item_payload(log: dict[str, Any]) -> dict[str, Any]:
+        item = log.get("Item") if isinstance(log.get("Item"), dict) else {}
+        keys = (
+            "Id",
+            "ItemId",
+            "Name",
+            "ItemName",
+            "FileName",
+            "Filename",
+            "Type",
+            "SeriesName",
+            "ParentIndexNumber",
+            "IndexNumber",
+        )
+        payload: dict[str, Any] = {}
+        for key in keys:
+            if item:
+                value = item.get(key)
+            elif key not in {"Id", "Name", "ItemName", "FileName", "Filename", "Type"}:
+                value = log.get(key)
+            else:
+                value = None
+            if value not in (None, ""):
+                payload[key] = value
+        return payload
 
     @staticmethod
     def _infer_action(log: dict[str, Any], text: str) -> str:

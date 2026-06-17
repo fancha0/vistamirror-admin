@@ -40,7 +40,8 @@ const DEFAULT_AI_CONFIG = {
   apiKey: "",
   model: "gpt-4o-mini",
   temperature: 0.4,
-  maxTokens: 800
+  maxTokens: 800,
+  contextTokensK: 64
 };
 
 const DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console";
@@ -259,13 +260,19 @@ function normalizeAiConfig(rawConfig) {
     maxTokens = DEFAULT_AI_CONFIG.maxTokens;
   }
   maxTokens = Math.max(128, Math.min(4000, maxTokens));
+  let contextTokensK = Number.parseInt(String(config.contextTokensK ?? DEFAULT_AI_CONFIG.contextTokensK), 10);
+  if (!Number.isFinite(contextTokensK)) {
+    contextTokensK = DEFAULT_AI_CONFIG.contextTokensK;
+  }
+  contextTokensK = Math.max(4, Math.min(1024, contextTokensK));
   return {
     enabled: Boolean(config.enabled ?? DEFAULT_AI_CONFIG.enabled),
     baseUrl: String(config.baseUrl || DEFAULT_AI_CONFIG.baseUrl).trim().replace(/\/+$/, ""),
     apiKey: String(config.apiKey || "").trim(),
     model: String(config.model || DEFAULT_AI_CONFIG.model).trim() || DEFAULT_AI_CONFIG.model,
     temperature,
-    maxTokens
+    maxTokens,
+    contextTokensK
   };
 }
 
@@ -428,6 +435,7 @@ const elements = {
   aiModel: document.getElementById("ai-model"),
   aiTemperature: document.getElementById("ai-temperature"),
   aiMaxTokens: document.getElementById("ai-max-tokens"),
+  aiContextTokensK: document.getElementById("ai-context-tokens-k"),
   aiTestBtn: document.getElementById("ai-test-btn"),
   aiFeedback: document.getElementById("ai-feedback"),
   connectBtn: document.getElementById("connect-btn"),
@@ -6112,7 +6120,8 @@ function readAiConfigFromInputs() {
     apiKey: elements.aiApiKey?.value.trim() || "",
     model: elements.aiModel?.value.trim() || DEFAULT_AI_CONFIG.model,
     temperature: elements.aiTemperature?.value || DEFAULT_AI_CONFIG.temperature,
-    maxTokens: elements.aiMaxTokens?.value || DEFAULT_AI_CONFIG.maxTokens
+    maxTokens: elements.aiMaxTokens?.value || DEFAULT_AI_CONFIG.maxTokens,
+    contextTokensK: elements.aiContextTokensK?.value || DEFAULT_AI_CONFIG.contextTokensK
   });
 }
 
@@ -6136,6 +6145,9 @@ function renderAiSettings() {
   if (elements.aiMaxTokens) {
     elements.aiMaxTokens.value = String(config.maxTokens ?? DEFAULT_AI_CONFIG.maxTokens);
   }
+  if (elements.aiContextTokensK) {
+    elements.aiContextTokensK.value = String(config.contextTokensK ?? DEFAULT_AI_CONFIG.contextTokensK);
+  }
   updateAiFeedbackFromInputs({ saved: true });
 }
 
@@ -6148,7 +6160,8 @@ function isSameAiConfig(left, right) {
     String(a.apiKey || "") === String(b.apiKey || "") &&
     String(a.model || "") === String(b.model || "") &&
     Number(a.temperature) === Number(b.temperature) &&
-    Number(a.maxTokens) === Number(b.maxTokens)
+    Number(a.maxTokens) === Number(b.maxTokens) &&
+    Number(a.contextTokensK) === Number(b.contextTokensK)
   );
 }
 
@@ -8654,7 +8667,15 @@ function initEvents() {
   elements.tmdbToken?.addEventListener("input", () => {
     refreshTmdbUiState();
   });
-  [elements.aiEnabled, elements.aiBaseUrl, elements.aiApiKey, elements.aiModel, elements.aiTemperature, elements.aiMaxTokens].forEach((input) => {
+  [
+    elements.aiEnabled,
+    elements.aiBaseUrl,
+    elements.aiApiKey,
+    elements.aiModel,
+    elements.aiTemperature,
+    elements.aiMaxTokens,
+    elements.aiContextTokensK
+  ].forEach((input) => {
     input?.addEventListener("input", () => updateAiFeedbackFromInputs({ saved: false }));
     input?.addEventListener("change", () => updateAiFeedbackFromInputs({ saved: false }));
   });

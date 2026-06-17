@@ -33,6 +33,7 @@ COMMAND_MENU: list[dict[str, str]] = [
     {"command": "zhengzaibofang", "description": "🟢 正在播放"},
     {"command": "zuijinruku", "description": "🆕 最近入库"},
     {"command": "zuijinbofangjilu", "description": "📜 最近播放记录"},
+    {"command": "saomiao", "description": "🔄 扫描媒体库"},
     {"command": "ai", "description": "🧠 AI 媒体问答"},
     {"command": "help", "description": "🤖 帮助菜单"},
     {"command": "start", "description": "🚀 启动机器人"},
@@ -144,6 +145,10 @@ class TelegramCommandService:
         self._last_token = ""
         self._commands_registered_token = ""
         self._pending_ai_actions: dict[str, dict[str, Any]] = {}
+        self._ai_chat_history: dict[str, list[dict[str, str]]] = {}
+        self._telegram_dedupe_lock = threading.Lock()
+        self._recent_update_ids: dict[str, float] = {}
+        self._recent_ai_message_keys: dict[str, float] = {}
 
     def _log_project_event(
         self,
@@ -219,6 +224,17 @@ class TelegramCommandService:
         self._wakeup_event.clear()
 
     def _handle_update(self, update: dict[str, Any], token: str) -> None:
+        update_id = str(update.get("update_id") or "").strip()
+        if update_id and not self._claim_recent_key(self._recent_update_ids, update_id, limit=1000):
+            self._log_project_event(
+                level="info",
+                module="webhook",
+                action="telegram_duplicate_update_ignored",
+                message="重复 Telegram 更新已忽略。",
+                detail={"updateId": update_id},
+            )
+            return
+
         callback = update.get("callback_query")
         if isinstance(callback, dict):
             self._handle_callback_query(callback, token)
@@ -231,6 +247,7 @@ class TelegramCommandService:
         chat_id = chat.get("id")
         if chat_id in (None, ""):
             return
+        message_id = message.get("message_id")
         chat_type = str(chat.get("type") or "").strip().lower()
         text = str(message.get("text") or "").strip()
         if not text:
@@ -248,6 +265,18 @@ class TelegramCommandService:
             cmd_name = "ai"
         if not is_private and cmd_name != "ai":
             return
+        ai_message_key = ""
+        if cmd_name == "ai":
+            ai_message_key = self._build_ai_message_key(chat_id=chat_id, message_id=message_id)
+            if ai_message_key and not self._claim_recent_key(self._recent_ai_message_keys, ai_message_key, limit=1000):
+                self._log_project_event(
+                    level="info",
+                    module="webhook",
+                    action="telegram_duplicate_ai_message_ignored",
+                    message="重复 Telegram AI 消息已忽略。",
+                    detail={"updateId": update_id, "chatId": str(chat_id), "messageId": str(message_id or "")},
+                )
+                return
         self._log_project_event(
             level="info",
             module="webhook",
@@ -277,8 +306,46 @@ class TelegramCommandService:
             return
         try:
             self._send_command_reply(token=token, chat_id=str(chat_id), reply=reply)
-        except Exception:
+            if cmd_name == "saomiao":
+                self._log_project_event(
+                    level="info",
+                    module="webhook",
+                    action="telegram_library_scan_reply_sent",
+                    message="Telegram 扫描媒体库列表已发送。",
+                    detail={"command": cmd_name},
+                )
+        except Exception as err:
+            LOGGER.exception("Telegram command reply failed: cmd=%s err=%s", cmd_name, err)
+            self._log_project_event(
+                level="error",
+                module="webhook",
+                action="telegram_command_reply_failed",
+                message=f"Telegram 指令回复发送失败：/{cmd_name}",
+                detail={"command": cmd_name, "error": str(err)},
+            )
             return
+
+    def _claim_recent_key(self, store: dict[str, float], key: str, *, limit: int) -> bool:
+        safe_key = str(key or "").strip()
+        if not safe_key:
+            return True
+        with self._telegram_dedupe_lock:
+            if safe_key in store:
+                return False
+            store[safe_key] = time.time()
+            overflow = len(store) - max(1, int(limit))
+            if overflow > 0:
+                for old_key in list(store.keys())[:overflow]:
+                    store.pop(old_key, None)
+            return True
+
+    @staticmethod
+    def _build_ai_message_key(*, chat_id: Any, message_id: Any) -> str:
+        safe_chat_id = str(chat_id or "").strip()
+        safe_message_id = str(message_id or "").strip()
+        if not safe_chat_id or not safe_message_id:
+            return ""
+        return f"{safe_chat_id}:{safe_message_id}"
 
     def _start_typing_indicator(self, *, token: str, chat_id: str) -> Callable[[], None]:
         stopped = threading.Event()
@@ -315,6 +382,15 @@ class TelegramCommandService:
             return
         if data.startswith("ai_exec:"):
             self._handle_ai_action_callback(
+                data=data,
+                token=token,
+                callback_id=callback_id,
+                chat_id=str(chat_id) if chat_id not in (None, "") else "",
+                message_id=message_id if isinstance(message_id, int) else 0,
+            )
+            return
+        if data.startswith("scan_library:"):
+            self._handle_library_scan_callback(
                 data=data,
                 token=token,
                 callback_id=callback_id,
@@ -411,6 +487,64 @@ class TelegramCommandService:
                         chat_id=chat_id,
                         message_id=message_id,
                         title="🧠 AI 执行失败",
+                        body=str(err),
+                    )
+            except Exception:
+                pass
+
+    def _handle_library_scan_callback(self, *, data: str, token: str, callback_id: str, chat_id: str, message_id: int) -> None:
+        parts = str(data or "").split(":", 2)
+        target = parts[1] if len(parts) >= 2 else ""
+        encoded_id = parts[2] if len(parts) >= 3 else ""
+        detail: dict[str, Any] = {"target": target}
+        try:
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已提交扫描")
+            if target == "all":
+                result_text = self._execute_full_library_scan()
+                detail["libraryName"] = "全库"
+            elif target == "one" and encoded_id:
+                library_id = urllib.parse.unquote(encoded_id)
+                library = self._find_emby_library_by_id(library_id)
+                if not library:
+                    raise RuntimeError("未找到这个媒体库，请重新发送 /saomiao 获取最新列表。")
+                detail["libraryId"] = library_id
+                detail["libraryName"] = str(library.get("name") or "")
+                result_text = self._execute_single_library_scan(library)
+            else:
+                raise RuntimeError("扫描目标无效，请重新发送 /saomiao。")
+            self._log_project_event(
+                level="info",
+                module="webhook",
+                action="telegram_library_scan_submitted",
+                message="Telegram 媒体库扫描已提交。",
+                detail=detail,
+            )
+            if chat_id and message_id:
+                self._edit_ai_markdown_message(
+                    token=token,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    title="🔄 媒体库扫描",
+                    body=result_text,
+                )
+        except Exception as err:
+            LOGGER.exception("Telegram library scan callback failed: %s", err)
+            detail["error"] = str(err)
+            self._log_project_event(
+                level="error",
+                module="webhook",
+                action="telegram_library_scan_failed",
+                message="Telegram 媒体库扫描提交失败。",
+                detail=detail,
+            )
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="扫描提交失败")
+                if chat_id and message_id:
+                    self._edit_ai_markdown_message(
+                        token=token,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        title="🔄 媒体库扫描失败",
                         body=str(err),
                     )
             except Exception:
@@ -531,6 +665,8 @@ class TelegramCommandService:
             return self._cmd_recent_playback()
         if cmd == "zuijinruku":
             return self._cmd_recent_library()
+        if cmd == "saomiao":
+            return self._cmd_scan_library(args)
         if cmd == "ai":
             return self._cmd_ai(args)
         if cmd == "sousuo":
@@ -1107,6 +1243,66 @@ class TelegramCommandService:
             return f"🔍 搜索资源\n未找到“{keyword}”"
         return self._format_search_result(first, keyword=keyword)
 
+    def _cmd_scan_library(self, args: str = "") -> CommandReply:
+        keyword = str(args or "").strip()
+        try:
+            libraries = self._fetch_emby_libraries()
+        except Exception as err:
+            self._log_project_event(
+                level="error",
+                module="webhook",
+                action="telegram_library_scan_list_failed",
+                message="Telegram 扫描媒体库列表读取失败。",
+                detail={"keyword": keyword, "error": str(err)},
+            )
+            return self._ai_markdown_reply("🔄 扫描媒体库", f"读取媒体库失败：{err}")
+        if not libraries:
+            self._log_project_event(
+                level="warning",
+                module="webhook",
+                action="telegram_library_scan_list_empty",
+                message="Telegram 扫描媒体库未读取到可展示媒体库。",
+                detail={"keyword": keyword},
+            )
+            return self._ai_markdown_reply("🔄 扫描媒体库", "未读取到可扫描的 Emby 媒体库。")
+
+        matched = self._filter_emby_libraries(libraries, keyword) if keyword else libraries
+        display_rows = matched if matched else libraries
+        visible_rows = display_rows[:20]
+        intro_lines: list[str] = []
+        if keyword and matched:
+            intro_lines.append(f"已按关键词“{keyword}”匹配到 {len(matched)} 个媒体库。")
+        elif keyword:
+            intro_lines.append(f"未匹配到“{keyword}”，下面显示全部 {len(libraries)} 个媒体库。")
+        else:
+            intro_lines.append(f"当前可扫描媒体库：{len(libraries)} 个。")
+        intro_lines.append("这里只展示扫描按钮，不会直接执行；点击按钮才会提交扫描。")
+        intro_lines.append("")
+        for idx, library in enumerate(visible_rows, start=1):
+            name = str(library.get("name") or "未知媒体库").strip()
+            lib_type = str(library.get("type") or "未知类型").strip()
+            intro_lines.append(f"{idx}. {name}｜{lib_type}")
+        if len(display_rows) > len(visible_rows):
+            intro_lines.append(f"... 还有 {len(display_rows) - len(visible_rows)} 个媒体库未显示，可用 /saomiao 关键词 缩小范围。")
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="telegram_library_scan_list_ready",
+            message="Telegram 扫描媒体库列表已生成。",
+            detail={
+                "keyword": keyword,
+                "total": len(libraries),
+                "matched": len(matched),
+                "displayed": len(visible_rows),
+                "fallbackToAll": bool(keyword and not matched),
+            },
+        )
+        return self._ai_markdown_reply(
+            "🔄 扫描媒体库",
+            "\n".join(intro_lines),
+            reply_markup=self._build_scan_library_keyboard(visible_rows),
+        )
+
     def _cmd_ai(self, args: str) -> CommandReply:
         question = str(args or "").strip()
         if not question:
@@ -1126,7 +1322,7 @@ class TelegramCommandService:
         if execution_reply:
             return execution_reply
 
-        messages = self._build_ai_messages(question)
+        messages = self._build_ai_messages(question, ai_config=ai_config)
         try:
             started = time.time()
             answer = chat_completion(config=ai_config, messages=messages, timeout_seconds=45)
@@ -1148,6 +1344,7 @@ class TelegramCommandService:
             message="Telegram AI 问答已返回。",
             detail={"model": str(ai_config.get("model") or ""), "elapsedMs": elapsed_ms},
         )
+        self._remember_ai_exchange(chat_id="", question=question, answer=answer)
         return self._ai_markdown_reply("🧠 AI 媒体问答", self._truncate_text(answer, 3400))
 
     def _dispatch_ai_streaming(self, args: str, *, token: str, chat_id: str) -> CommandReply | None:
@@ -1169,7 +1366,7 @@ class TelegramCommandService:
         if execution_reply:
             return execution_reply
 
-        messages = self._build_ai_messages(question)
+        messages = self._build_ai_messages(question, chat_id=chat_id, ai_config=ai_config)
         message_id = self._send_ai_markdown_message(
             token=token,
             chat_id=chat_id,
@@ -1198,6 +1395,7 @@ class TelegramCommandService:
                     title="🧠 AI 媒体问答",
                     body=self._truncate_text(answer, 3400),
                 )
+                self._remember_ai_exchange(chat_id=chat_id, question=question, answer=answer)
             except Exception as err:
                 self._log_project_event(
                     level="warning",
@@ -1223,10 +1421,18 @@ class TelegramCommandService:
             message="Telegram AI 问答已返回。",
             detail={"model": str(ai_config.get("model") or ""), "elapsedMs": elapsed_ms, "streaming": True},
         )
+        self._remember_ai_exchange(chat_id=chat_id, question=question, answer=answer)
         return None
 
-    def _build_ai_messages(self, question: str) -> list[dict[str, str]]:
-        context = self._build_ai_media_context(question=question)
+    def _build_ai_messages(self, question: str, *, chat_id: str = "", ai_config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+        context_parts = [
+            self._build_ai_media_context(question=question),
+            self._build_ai_recent_operations_context(),
+        ]
+        conversation_context = self._build_ai_conversation_context(chat_id=chat_id)
+        if conversation_context:
+            context_parts.append(conversation_context)
+        context = self._limit_ai_context_text("\n\n".join(part for part in context_parts if part), ai_config=ai_config)
         return [
             {
                 "role": "system",
@@ -1235,6 +1441,9 @@ class TelegramCommandService:
                     "请用简洁中文回答，优先依据提供的媒体库上下文。"
                     "如果上下文里有“当前媒体库统计”或“命中资源详情”，必须直接使用这些准确数字回答；"
                     "如果上下文里包含任务、日志、缺集或播放历史摘要，也要优先引用这些项目资料。"
+                    "如果用户问“刚才”“执行了吗”“扫描了吗”“上一个操作怎么样”，必须优先查看最近项目操作和会话历史。"
+                    "如果最近操作显示已提交扫描或任务，直接说明目标、时间和结果。"
+                    "如果用户用“它/这个/那个”追问，要结合最近会话历史判断指代对象。"
                     "如果上下文不足，要明确说明不确定，不要编造不存在的片名或数据。"
                     "不要输出任何 Token、API Key、密码或密钥。"
                     "如果用户请求删除、清空、改密钥或改密码，应拒绝并建议到后台手动操作。"
@@ -1244,6 +1453,98 @@ class TelegramCommandService:
             },
             {"role": "user", "content": f"媒体库上下文：\n{context}\n\n用户问题：{question}"},
         ]
+
+    def _remember_ai_exchange(self, *, chat_id: str, question: str, answer: str) -> None:
+        safe_chat_id = str(chat_id or "").strip()
+        if not safe_chat_id:
+            return
+        rows = self._ai_chat_history.setdefault(safe_chat_id, [])
+        now = datetime.now().strftime("%m-%d %H:%M")
+        rows.append(
+            {
+                "time": now,
+                "user": self._truncate_text(str(question or "").strip(), 500),
+                "assistant": self._truncate_text(str(answer or "").strip(), 900),
+            }
+        )
+        self._ai_chat_history[safe_chat_id] = rows[-10:]
+
+    def _build_ai_conversation_context(self, *, chat_id: str) -> str:
+        safe_chat_id = str(chat_id or "").strip()
+        rows = self._ai_chat_history.get(safe_chat_id) if safe_chat_id else []
+        if not rows:
+            return ""
+        lines = ["最近 Telegram 对话上下文："]
+        for row in rows[-6:]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- {row.get('time', '')} 用户：{row.get('user', '')}")
+            lines.append(f"  AI：{row.get('assistant', '')}")
+        return "\n".join(lines)
+
+    def _build_ai_recent_operations_context(self) -> str:
+        try:
+            events, _total = read_project_events(self.event_log_path, limit=60)
+        except Exception as err:
+            return f"最近项目操作：读取失败（{err}）。"
+        important_actions = {
+            "telegram_library_scan_submitted",
+            "telegram_library_scan_failed",
+            "telegram_library_scan_reply_sent",
+            "telegram_library_scan_list_ready",
+            "telegram_command_reply_failed",
+            "telegram_ai_success",
+            "telegram_ai_failed",
+            "telegram_callback_failed",
+            "client_sync_event",
+        }
+        rows = [event for event in events if isinstance(event, dict) and str(event.get("action") or "") in important_actions]
+        if not rows:
+            return "最近项目操作：暂无可用记录。"
+        lines = ["最近项目操作："]
+        for event in rows[:12]:
+            action = str(event.get("action") or "").strip()
+            message = str(event.get("message") or "").strip()
+            detail = event.get("detail") if isinstance(event.get("detail"), dict) else {}
+            summary = self._format_ai_event_detail(action=action, detail=detail)
+            suffix = f"；{summary}" if summary else ""
+            lines.append(f"- {event.get('time', '')} {message or action}{suffix}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_ai_event_detail(*, action: str, detail: dict[str, Any]) -> str:
+        keys_by_action = {
+            "telegram_library_scan_submitted": ("libraryName", "libraryId", "target"),
+            "telegram_library_scan_failed": ("libraryName", "libraryId", "target", "error"),
+            "telegram_library_scan_reply_sent": ("command",),
+            "telegram_library_scan_list_ready": ("keyword", "total", "matched", "displayed"),
+            "telegram_command_reply_failed": ("command", "error"),
+            "telegram_ai_success": ("model", "elapsedMs", "streaming"),
+            "telegram_ai_failed": ("model", "error"),
+            "telegram_callback_failed": ("callback", "error"),
+            "client_sync_event": ("description",),
+        }
+        parts: list[str] = []
+        for key in keys_by_action.get(action, ()):
+            value = detail.get(key)
+            if value in (None, ""):
+                continue
+            parts.append(f"{key}={str(value)[:160]}")
+        return "，".join(parts)
+
+    @staticmethod
+    def _limit_ai_context_text(text: str, *, ai_config: dict[str, Any] | None = None) -> str:
+        config = ai_config if isinstance(ai_config, dict) else {}
+        try:
+            context_tokens_k = int(config.get("contextTokensK") or 64)
+        except (TypeError, ValueError):
+            context_tokens_k = 64
+        context_tokens_k = max(4, min(1024, context_tokens_k))
+        max_chars = min(context_tokens_k * 1000 * 3, 120000)
+        value = str(text or "")
+        if len(value) <= max_chars:
+            return value
+        return value[-max_chars:]
 
     def _send_ai_markdown_message(self, *, token: str, chat_id: str, title: str, body: Any) -> int:
         reply = self._ai_markdown_reply(title, body)
@@ -1692,6 +1993,9 @@ class TelegramCommandService:
         query_intent = bool(re.search(r"列出|列出来|全部列|查询|查找|看看|看一下|有哪些|哪些|显示|统计|清单|列表|片单|多少|什么|是否|有没有", text, flags=re.IGNORECASE))
         if query_intent:
             return None
+        if self._is_library_scan_request(text):
+            keyword = self._extract_library_scan_keyword(text)
+            return self._cmd_scan_library(keyword)
         has_execute_intent = bool(re.search(r"执行|触发|启动|运行|生成|创建|新增|同步|开始.*任务|运行.*任务|执行.*任务|触发.*任务|run|start|generate|create|sync", text, flags=re.IGNORECASE))
         scan_execute_intent = bool(re.search(r"(开始|执行|运行|触发).{0,12}(媒体库)?扫描(任务)?", text, flags=re.IGNORECASE))
         refresh_execute_intent = bool(re.search(r"(刷新|执行|运行|触发).{0,12}(缺集|巡检|webhook|机器人.*状态)", text, flags=re.IGNORECASE))
@@ -1807,6 +2111,138 @@ class TelegramCommandService:
                 ]
             )
         raise RuntimeError("不支持的 AI 执行动作")
+
+    def _fetch_emby_libraries(self) -> list[dict[str, str]]:
+        candidates: list[dict[str, str]] = []
+        tried_errors: list[str] = []
+        for path in ("/Library/VirtualFolders", "/Library/MediaFolders", "/UserViews"):
+            try:
+                payload = self._emby_get(path)
+            except Exception as err:
+                tried_errors.append(f"{path}: {self._format_emby_error(err)}")
+                continue
+            rows = payload.get("Items") if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                library = self._normalize_emby_library(row)
+                if library and library["id"] not in {item["id"] for item in candidates}:
+                    candidates.append(library)
+            if candidates:
+                return candidates
+        if tried_errors:
+            raise RuntimeError("；".join(tried_errors[:3]))
+        return candidates
+
+    @staticmethod
+    def _normalize_emby_library(row: Any) -> dict[str, str]:
+        if not isinstance(row, dict):
+            return {}
+        library_id = str(row.get("ItemId") or row.get("Id") or row.get("CollectionId") or "").strip()
+        name = str(row.get("Name") or row.get("ItemName") or row.get("CollectionType") or "").strip()
+        options = row.get("LibraryOptions") if isinstance(row.get("LibraryOptions"), dict) else {}
+        lib_type = str(row.get("CollectionType") or row.get("Type") or options.get("ContentType") or "").strip()
+        if not library_id or not name:
+            return {}
+        return {"id": library_id, "name": name, "type": lib_type or "媒体库"}
+
+    @staticmethod
+    def _filter_emby_libraries(libraries: list[dict[str, str]], keyword: str) -> list[dict[str, str]]:
+        clean = str(keyword or "").strip().lower()
+        if not clean:
+            return libraries
+        tokens = [token.lower() for token in re.findall(r"[\w\u4e00-\u9fff]+", clean) if token.strip()]
+        if not tokens:
+            return libraries
+        matched: list[dict[str, str]] = []
+        for library in libraries:
+            haystack = f"{library.get('name', '')} {library.get('type', '')}".lower()
+            if any(token in haystack for token in tokens) or clean in haystack:
+                matched.append(library)
+        return matched
+
+    def _find_emby_library_by_id(self, library_id: str) -> dict[str, str]:
+        safe_id = str(library_id or "").strip()
+        if not safe_id:
+            return {}
+        for library in self._fetch_emby_libraries():
+            if str(library.get("id") or "") == safe_id:
+                return library
+        return {}
+
+    def _build_scan_library_keyboard(self, libraries: list[dict[str, str]]) -> dict[str, Any]:
+        rows: list[list[dict[str, str]]] = []
+        for library in libraries[:20]:
+            library_id = str(library.get("id") or "").strip()
+            name = str(library.get("name") or "未知媒体库").strip()
+            if not library_id:
+                continue
+            encoded_id = urllib.parse.quote(library_id, safe="")
+            rows.append([{"text": f"扫描：{name[:26]}", "callback_data": f"scan_library:one:{encoded_id}"}])
+        rows.append([{"text": "扫描全库", "callback_data": "scan_library:all"}])
+        return {"inline_keyboard": rows}
+
+    def _execute_single_library_scan(self, library: dict[str, str]) -> str:
+        library_id = str(library.get("id") or "").strip()
+        name = str(library.get("name") or library_id).strip()
+        if not library_id:
+            raise RuntimeError("缺少媒体库 ID")
+        query = urllib.parse.urlencode(
+            {
+                "Recursive": "true",
+                "MetadataRefreshMode": "Default",
+                "ImageRefreshMode": "Default",
+            }
+        )
+        self._emby_post(f"/Items/{urllib.parse.quote(library_id, safe='')}/Refresh?{query}")
+        return f"已提交单库扫描。\n目标：{name}\n结果：Emby 已收到刷新请求。"
+
+    def _execute_full_library_scan(self) -> str:
+        task = self._match_scheduled_task_for_question("运行 scan media library 媒体库扫描任务")
+        if task:
+            task_id = str(task.get("Id") or task.get("Key") or "").strip()
+            task_name = str(task.get("Name") or task.get("Key") or task_id).strip()
+            if task_id:
+                self._emby_post(f"/ScheduledTasks/Running/{urllib.parse.quote(task_id, safe='')}")
+                return f"已提交全库扫描。\n任务：{task_name}\n结果：Emby 已收到计划任务运行请求。"
+        self._emby_post("/Library/Refresh")
+        return "已提交全库扫描。\n方式：Library Refresh\n结果：Emby 已收到全库刷新请求。"
+
+    @staticmethod
+    def _is_library_scan_request(text: str) -> bool:
+        value = str(text or "")
+        if not re.search(r"扫描|刷新|scan|refresh", value, flags=re.IGNORECASE):
+            return False
+        if re.search(r"缺集|漏集|webhook|机器人.*状态", value, flags=re.IGNORECASE):
+            return False
+        return bool(re.search(r"媒体库|库|国产动漫|动漫|华语|剧集|电影|纪录片|library", value, flags=re.IGNORECASE))
+
+    @staticmethod
+    def _extract_library_scan_keyword(text: str) -> str:
+        value = str(text or "").strip()
+        replacements = [
+            r"^/ai\s*",
+            r"帮我",
+            r"请",
+            r"扫描一下",
+            r"扫描",
+            r"刷新一下",
+            r"刷新",
+            r"媒体库",
+            r"这个库",
+            r"这个",
+            r"一下",
+            r"吧",
+            r"please",
+            r"scan",
+            r"refresh",
+            r"library",
+        ]
+        for pattern in replacements:
+            value = re.sub(pattern, "", value, flags=re.IGNORECASE)
+        value = value.strip(" ，。！？?：:；;、|/\\[]()（）【】《》「」“”\"'")
+        value = re.sub(r"\s+", " ", value).strip()
+        return value[:80]
 
     def _build_ai_safety_reply(self, question: str) -> str:
         text = str(question or "").strip()
@@ -2747,26 +3183,79 @@ class TelegramCommandService:
     def _format_recent_playback_filename_with_status(self, row: dict[str, Any]) -> tuple[str, bool, bool]:
         raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
         if raw:
+            episode_filename = self._build_recent_playback_episode_filename(raw)
+            if episode_filename:
+                return episode_filename, True, False
             for key in ("ItemName", "Name", "FileName", "Filename"):
                 value = str(raw.get(key) or "").strip()
                 if value:
+                    parsed = self._parse_episode_from_text(value)
+                    if parsed:
+                        return self._build_recent_playback_episode_filename(parsed), True, False
                     return self._clean_recent_playback_filename(value), False, False
 
         unified_title = str(row.get("title") or "").strip()
         if unified_title:
             parsed = self._parse_episode_from_text(unified_title)
             if parsed:
-                return self._clean_recent_playback_filename(str(parsed.get("episodeTitle") or "")), True, False
+                return self._build_recent_playback_episode_filename(parsed), True, False
             return self._clean_recent_playback_filename(unified_title), False, True
 
         fallback = str(row.get("mediaName") or "").strip()
         if fallback:
             parsed = self._parse_episode_from_text(fallback)
             if parsed:
-                return self._clean_recent_playback_filename(str(parsed.get("episodeTitle") or "")), True, False
+                return self._build_recent_playback_episode_filename(parsed), True, False
             return self._clean_recent_playback_filename(fallback), False, True
 
         return "未知内容", False, True
+
+    @classmethod
+    def _build_recent_playback_episode_filename(cls, source: dict[str, Any]) -> str:
+        series_name = str(source.get("SeriesName") or source.get("series") or "").strip()
+        item_name = str(
+            source.get("Name")
+            or source.get("ItemName")
+            or source.get("episodeTitle")
+            or source.get("FileName")
+            or source.get("Filename")
+            or ""
+        ).strip()
+        season_number = cls._coerce_index_number(source.get("ParentIndexNumber") if "ParentIndexNumber" in source else source.get("season"))
+        episode_number = cls._coerce_index_number(source.get("IndexNumber") if "IndexNumber" in source else source.get("episode"))
+        item_type = str(source.get("Type") or "").strip().lower()
+        looks_like_episode = bool(series_name and (season_number or episode_number or item_type == "episode"))
+        if not looks_like_episode:
+            return ""
+        if not episode_number:
+            parsed = cls._parse_episode_from_text(item_name)
+            if parsed:
+                episode_number = cls._coerce_index_number(parsed.get("episode"))
+                season_number = season_number or cls._coerce_index_number(parsed.get("season"))
+                item_name = str(parsed.get("episodeTitle") or item_name).strip()
+        if not episode_number:
+            return ""
+        season_number = season_number or 1
+        clean_series = cls._clean_recent_playback_filename(series_name)
+        clean_title = cls._clean_recent_playback_episode_title(item_name, series_name=clean_series, season_number=season_number, episode_number=episode_number)
+        episode_code = f"S{season_number:02d}E{episode_number:02d}"
+        return f"{clean_series} - {episode_code} - {clean_title}"
+
+    @classmethod
+    def _clean_recent_playback_episode_title(cls, value: str, *, series_name: str, season_number: int, episode_number: int) -> str:
+        clean = cls._clean_recent_playback_filename(value)
+        if not clean or clean == "未知内容":
+            return f"第 {episode_number} 集"
+        code = f"S{season_number:02d}E{episode_number:02d}"
+        loose_code = rf"S0?{season_number}\s*[,，]?\s*Ep?0?{episode_number}"
+        compact_code = rf"S0?{season_number}E0?{episode_number}"
+        if series_name:
+            clean = re.sub(rf"^{re.escape(series_name)}\s*[-—–]\s*", "", clean, flags=re.IGNORECASE).strip()
+        clean = re.sub(rf"^{loose_code}\s*[-—–]\s*", "", clean, flags=re.IGNORECASE).strip()
+        clean = re.sub(rf"^{compact_code}\s*[-—–]\s*", "", clean, flags=re.IGNORECASE).strip()
+        if series_name:
+            clean = re.sub(rf"^{re.escape(series_name)}\s*[-—–]\s*", "", clean, flags=re.IGNORECASE).strip()
+        return clean or f"第 {episode_number} 集"
 
     @staticmethod
     def _clean_recent_playback_filename(value: str) -> str:

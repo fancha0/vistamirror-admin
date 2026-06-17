@@ -1066,6 +1066,10 @@
                         <span>最大回复长度</span>
                         <input id="ai-max-tokens" type="number" min="128" max="4000" step="64" placeholder="800">
                       </label>
+                      <label class="field">
+                        <span>LLM 最大上下文 Token 数量(K)</span>
+                        <input id="ai-context-tokens-k" type="number" min="4" max="1024" step="4" placeholder="64">
+                      </label>
                       <p id="ai-feedback" class="tmdb-token-hint field-span-2">AI 未启用，Telegram 不会触发媒体问答。</p>
                     </div>
                   </section>
@@ -1535,7 +1539,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260613-ai-config-feedback"></script>
+  <script src="script.js?v=20260614-ai-context"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";
