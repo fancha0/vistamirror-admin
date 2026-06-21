@@ -4,6 +4,7 @@ const STORAGE_KEYS = {
   renewals: "embyPulseRenewals",
   botConfig: "embyPulseBotConfig",
   aiConfig: "vistamirrorAiConfig",
+  drive115Config: "vistamirrorDrive115Config",
   activeView: "embyPulseActiveView",
   inviteSyncEndpoint: "embyPulseInviteSyncEndpoint",
   qualityLastScanAt: "embyPulseQualityLastScanAt"
@@ -44,6 +45,14 @@ const DEFAULT_AI_CONFIG = {
   contextTokensK: 64
 };
 
+const DEFAULT_DRIVE115_CONFIG = {
+  enabled: false,
+  cookie: "",
+  defaultCid: "0",
+  hasCookie: false,
+  cookieMasked: ""
+};
+
 const DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console";
 const MEDIA_SERVER_TYPES = ["emby", "jellyfin"];
 const MEDIA_SERVER_META = {
@@ -77,6 +86,12 @@ const appState = {
   renewals: loadJson(STORAGE_KEYS.renewals, {}),
   botConfig: loadJson(STORAGE_KEYS.botConfig, DEFAULT_BOT_CONFIG),
   aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
+  drive115Config: loadJson(STORAGE_KEYS.drive115Config, DEFAULT_DRIVE115_CONFIG),
+  drive115Records: [],
+  drive115LastParse: null,
+  drive115QrSessionId: "",
+  drive115QrTimer: null,
+  drive115QrStartedAt: 0,
   users: [],
   sessions: [],
   devices: [],
@@ -276,6 +291,17 @@ function normalizeAiConfig(rawConfig) {
   };
 }
 
+function normalizeDrive115Config(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  return {
+    enabled: Boolean(config.enabled ?? DEFAULT_DRIVE115_CONFIG.enabled),
+    cookie: String(config.cookie || "").trim(),
+    defaultCid: String(config.defaultCid || DEFAULT_DRIVE115_CONFIG.defaultCid || "0").trim() || "0",
+    hasCookie: Boolean(config.hasCookie || String(config.cookie || "").trim()),
+    cookieMasked: String(config.cookieMasked || "").trim()
+  };
+}
+
 function normalizeEnvControlledFields(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const normalizeList = (value) =>
@@ -298,7 +324,7 @@ function mergeEnvControlledFields(raw, groupHint = "") {
       : [];
 
   if (Array.isArray(raw)) {
-    if (groupHint === "embyConfig" || groupHint === "botConfig" || groupHint === "aiConfig" || groupHint === "adminAuth") {
+    if (groupHint === "embyConfig" || groupHint === "botConfig" || groupHint === "aiConfig" || groupHint === "drive115Config" || groupHint === "adminAuth") {
       current[groupHint] = normalizeList(raw);
     }
     return current;
@@ -313,6 +339,9 @@ function mergeEnvControlledFields(raw, groupHint = "") {
     }
     if (Object.prototype.hasOwnProperty.call(raw, "aiConfig")) {
       current.aiConfig = normalizeList(raw.aiConfig);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "drive115Config")) {
+      current.drive115Config = normalizeList(raw.drive115Config);
     }
     if (Object.prototype.hasOwnProperty.call(raw, "adminAuth")) {
       current.adminAuth = normalizeList(raw.adminAuth);
@@ -339,6 +368,7 @@ function renderEnvControlledState() {
   const embyManaged = appState?.envControlledFields?.embyConfig || [];
   const botManaged = appState?.envControlledFields?.botConfig || [];
   const aiManaged = appState?.envControlledFields?.aiConfig || [];
+  const drive115Managed = appState?.envControlledFields?.drive115Config || [];
   const activeServerType = getActiveMediaServerType();
 
   setFieldEnvControlled(elements.serverUrl, activeServerType === "emby" && embyManaged.includes("serverUrl"));
@@ -365,6 +395,11 @@ function renderEnvControlledState() {
   if (elements.aiApiKeyToggle) {
     elements.aiApiKeyToggle.disabled = aiManaged.includes("apiKey");
   }
+  setFieldEnvControlled(elements.drive115Cookie, drive115Managed.includes("cookie"));
+  setFieldEnvControlled(elements.drive115DefaultCid, drive115Managed.includes("defaultCid"));
+  if (document.getElementById("drive115-cookie-toggle")) {
+    document.getElementById("drive115-cookie-toggle").disabled = drive115Managed.includes("cookie");
+  }
   if (elements.botEnvManagedHint) {
     const hasManaged = botManaged.length > 0;
     elements.botEnvManagedHint.hidden = !hasManaged;
@@ -376,6 +411,8 @@ function renderEnvControlledState() {
 
 appState.config = normalizeAppConfig(appState.config);
 appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...appState.botConfig });
+appState.aiConfig = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...appState.aiConfig });
+appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...appState.drive115Config });
 appState.qualityResolutionFilters = normalizeQualityResolutionFilters(appState.qualityResolutionFilters);
 
 const elements = {
@@ -428,6 +465,7 @@ const elements = {
   tmdbRegion: document.getElementById("tmdb-region"),
   tmdbStatusTip: document.getElementById("tmdb-status-tip"),
   tmdbTokenHint: document.getElementById("tmdb-token-hint"),
+  tmdbTestBtn: document.getElementById("tmdb-test-btn"),
   aiEnabled: document.getElementById("ai-enabled"),
   aiBaseUrl: document.getElementById("ai-base-url"),
   aiApiKey: document.getElementById("ai-api-key"),
@@ -438,6 +476,28 @@ const elements = {
   aiContextTokensK: document.getElementById("ai-context-tokens-k"),
   aiTestBtn: document.getElementById("ai-test-btn"),
   aiFeedback: document.getElementById("ai-feedback"),
+  drive115Enabled: document.getElementById("drive115-enabled"),
+  drive115Cookie: document.getElementById("drive115-cookie"),
+  drive115DefaultCid: document.getElementById("drive115-default-cid"),
+  drive115SaveBtn: document.getElementById("drive115-save-btn"),
+  drive115TestBtn: document.getElementById("drive115-test-btn"),
+  drive115ConfigFeedback: document.getElementById("drive115-config-feedback"),
+  drive115LoginCollapseBtn: document.getElementById("drive115-login-collapse-btn"),
+  drive115LoginBody: document.getElementById("drive115-login-body"),
+  drive115QrClient: document.getElementById("drive115-qr-client"),
+  drive115QrStartBtn: document.getElementById("drive115-qr-start-btn"),
+  drive115QrStopBtn: document.getElementById("drive115-qr-stop-btn"),
+  drive115QrPanel: document.getElementById("drive115-qr-panel"),
+  drive115QrPlaceholder: document.getElementById("drive115-qr-placeholder"),
+  drive115QrImage: document.getElementById("drive115-qr-image"),
+  drive115QrStatus: document.getElementById("drive115-qr-status"),
+  drive115ShareUrl: document.getElementById("drive115-share-url"),
+  drive115ReceiveCode: document.getElementById("drive115-receive-code"),
+  drive115TargetCid: document.getElementById("drive115-target-cid"),
+  drive115ParseBtn: document.getElementById("drive115-parse-btn"),
+  drive115TransferBtn: document.getElementById("drive115-transfer-btn"),
+  drive115ParseResult: document.getElementById("drive115-parse-result"),
+  drive115Records: document.getElementById("drive115-records"),
   connectBtn: document.getElementById("connect-btn"),
   diagnoseBtn: document.getElementById("diagnose-btn"),
   disconnectBtn: document.getElementById("disconnect-btn"),
@@ -695,6 +755,11 @@ const VIEW_META = {
     icon: "🕘",
     title: "播放历史",
     subtitle: "回看 Emby 活动日志与播放行为轨迹"
+  },
+  "drive-115": {
+    icon: "📦",
+    title: "115网盘",
+    subtitle: "配置 115 账号、解析分享链接并确认转存"
   },
   invites: {
     icon: "🔗",
@@ -2050,7 +2115,11 @@ function buildInviteSyncPayload() {
   const embyConfig = {
     serverUrl: appState.config.serverUrl || "",
     apiKey: appState.config.apiKey || "",
-    clientName: appState.config.clientName || DEFAULT_EMBY_CLIENT_NAME
+    clientName: appState.config.clientName || DEFAULT_EMBY_CLIENT_NAME,
+    tmdbEnabled: Boolean(appState.config.tmdbEnabled),
+    tmdbToken: String(appState.config.tmdbToken || "").trim(),
+    tmdbLanguage: String(appState.config.tmdbLanguage || "zh-CN").trim() || "zh-CN",
+    tmdbRegion: String(appState.config.tmdbRegion || "CN").trim().toUpperCase() || "CN"
   };
   if (embyManaged.includes("serverUrl")) {
     delete embyConfig.serverUrl;
@@ -2060,6 +2129,9 @@ function buildInviteSyncPayload() {
   }
   if (embyManaged.includes("clientName")) {
     delete embyConfig.clientName;
+  }
+  if (embyManaged.includes("tmdbToken")) {
+    delete embyConfig.tmdbToken;
   }
 
   return {
@@ -2154,13 +2226,18 @@ async function refreshInviteSyncStatus(options = {}) {
   try {
     const result = await inviteApiFetch("/api/invite/sync-status");
     if (result?.embyConfig && typeof result.embyConfig === "object") {
+      const backendConfig = result.embyConfig;
       writeMediaServerConfig("emby", {
         ...getMediaServerConfig("emby"),
-        ...result.embyConfig
+        ...backendConfig
       });
       appState.config = normalizeAppConfig({
         ...appState.config,
-        mediaServers: appState.config.mediaServers
+        mediaServers: appState.config.mediaServers,
+        tmdbEnabled: Boolean(backendConfig.tmdbEnabled),
+        tmdbToken: String(backendConfig.tmdbToken || "").trim(),
+        tmdbLanguage: String(backendConfig.tmdbLanguage || "zh-CN").trim() || "zh-CN",
+        tmdbRegion: String(backendConfig.tmdbRegion || "CN").trim().toUpperCase() || "CN"
       });
     }
     appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "embyConfig");
@@ -3091,6 +3168,73 @@ function refreshTmdbUiState() {
     elements.tmdbTokenHint.classList.remove("is-off", "is-warning", "is-ok");
     elements.tmdbTokenHint.classList.add(meta.hintClass);
     elements.tmdbTokenHint.textContent = meta.hintText;
+  }
+}
+
+async function testTmdbConnection(options = {}) {
+  const { silent = false } = options;
+  const token = String(elements.tmdbToken?.value || appState.config.tmdbToken || "").trim();
+  if (!token) {
+    if (elements.tmdbTokenHint) {
+      elements.tmdbTokenHint.className = "tmdb-token-hint field-span-2 is-warning";
+      elements.tmdbTokenHint.textContent = "TMDB Token 尚未保存。";
+    }
+    if (!silent) {
+      showToast("请先填写 TMDB Token", 1200);
+    }
+    return false;
+  }
+
+  if (elements.tmdbTestBtn) {
+    elements.tmdbTestBtn.disabled = true;
+    elements.tmdbTestBtn.textContent = "测试中...";
+  }
+  if (elements.tmdbTokenHint) {
+    elements.tmdbTokenHint.className = "tmdb-token-hint field-span-2 is-warning";
+    elements.tmdbTokenHint.textContent = "正在验证 TMDB Token 与网络连接...";
+  }
+
+  try {
+    const result = await inviteApiFetch("/api/tmdb/test", {
+      method: "POST",
+      body: JSON.stringify({
+        tmdbConfig: {
+          tmdbToken: token,
+          tmdbLanguage: String(elements.tmdbLanguage?.value || appState.config.tmdbLanguage || "zh-CN").trim() || "zh-CN",
+          tmdbRegion: String(elements.tmdbRegion?.value || appState.config.tmdbRegion || "CN").trim().toUpperCase() || "CN"
+        }
+      })
+    });
+    if (elements.tmdbTokenHint) {
+      elements.tmdbTokenHint.className = "tmdb-token-hint field-span-2 is-ok";
+      elements.tmdbTokenHint.textContent = result?.message || "TMDB 连接正常，Token 已生效。";
+    }
+    if (elements.tmdbStatusTip) {
+      elements.tmdbStatusTip.className = "tmdb-status-badge is-on";
+      elements.tmdbStatusTip.textContent = "连接正常";
+    }
+    if (!silent) {
+      showToast("TMDB 连接正常", 1200);
+    }
+    return true;
+  } catch (error) {
+    if (elements.tmdbTokenHint) {
+      elements.tmdbTokenHint.className = "tmdb-token-hint field-span-2 is-warning";
+      elements.tmdbTokenHint.textContent = error.message || "TMDB 连接测试失败。";
+    }
+    if (elements.tmdbStatusTip) {
+      elements.tmdbStatusTip.className = "tmdb-status-badge is-pending";
+      elements.tmdbStatusTip.textContent = "连接失败";
+    }
+    if (!silent) {
+      showToast("TMDB 连接测试失败", 1200);
+    }
+    return false;
+  } finally {
+    if (elements.tmdbTestBtn) {
+      elements.tmdbTestBtn.disabled = false;
+      elements.tmdbTestBtn.textContent = "测试连接";
+    }
   }
 }
 
@@ -5996,6 +6140,7 @@ function persistLocalState() {
   saveJson(STORAGE_KEYS.renewals, appState.renewals);
   saveJson(STORAGE_KEYS.botConfig, appState.botConfig);
   saveJson(STORAGE_KEYS.aiConfig, appState.aiConfig);
+  saveJson(STORAGE_KEYS.drive115Config, appState.drive115Config);
 }
 
 function getCurrentSiteOriginForBot() {
@@ -6071,11 +6216,20 @@ async function saveSettingsConfig() {
     "success"
   );
   showToast(hasManaged ? "配置已保存（环境变量字段未覆盖）" : "配置已保存", 1200);
-  await syncInviteStore({
+  const synced = await syncInviteStore({
     silentSuccess: true,
     failureToast: "配置已保存，但服务端同步失败，邀请注册链接可能无法注册。",
     failureEventTitle: "配置同步失败"
   });
+  if (synced) {
+    await refreshInviteSyncStatus({ silent: true });
+    const backendTmdbToken = String(appState.config.tmdbToken || "").trim();
+    if (appState.config.tmdbEnabled && backendTmdbToken) {
+      await testTmdbConnection({ silent: true });
+    } else {
+      refreshTmdbUiState();
+    }
+  }
   try {
     await pushAiConfigToServer(aiConfig, { silent: true });
     await loadAiConfigFromServer({ silent: true });
@@ -6237,6 +6391,393 @@ async function pushAiConfigToServer(nextConfig, options = {}) {
       elements.aiFeedback.textContent = `保存 AI 配置失败：${error.message || "未知错误"}`;
     }
     throw error;
+  }
+}
+
+function readDrive115ConfigFromInputs() {
+  return normalizeDrive115Config({
+    enabled: Boolean(elements.drive115Enabled?.checked),
+    cookie: elements.drive115Cookie?.value.trim() || "",
+    defaultCid: elements.drive115DefaultCid?.value.trim() || DEFAULT_DRIVE115_CONFIG.defaultCid
+  });
+}
+
+function renderDrive115Config() {
+  const config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...appState.drive115Config });
+  if (elements.drive115Enabled) {
+    elements.drive115Enabled.checked = Boolean(config.enabled);
+  }
+  if (elements.drive115Cookie) {
+    elements.drive115Cookie.value = config.cookie || "";
+    elements.drive115Cookie.type = "password";
+    elements.drive115Cookie.placeholder = config.hasCookie ? "已保存 Cookie" : "粘贴 115 网页 Cookie";
+  }
+  const drive115CookieToggle = document.getElementById("drive115-cookie-toggle");
+  if (drive115CookieToggle) {
+    drive115CookieToggle.dataset.open = "false";
+    drive115CookieToggle.classList.remove("is-open");
+    drive115CookieToggle.innerHTML = EYE_CLOSED_SVG;
+  }
+  if (elements.drive115DefaultCid) {
+    elements.drive115DefaultCid.value = config.defaultCid || "0";
+  }
+  updateDrive115Feedback();
+  updateDrive115Completion();
+}
+
+function updateDrive115Feedback(message = "") {
+  if (!elements.drive115ConfigFeedback) {
+    return;
+  }
+  if (message) {
+    elements.drive115ConfigFeedback.textContent = message;
+    return;
+  }
+  const config = normalizeDrive115Config(appState.drive115Config);
+  if (!config.enabled) {
+    elements.drive115ConfigFeedback.textContent = "115 未启用，Telegram 不会处理 115 链接。";
+    return;
+  }
+  if (!config.hasCookie && !String(elements.drive115Cookie?.value || "").trim()) {
+    elements.drive115ConfigFeedback.textContent = "115 已开启，请填写 Cookie 后保存。";
+    return;
+  }
+  elements.drive115ConfigFeedback.textContent = "115 已启用，可解析链接并确认转存。";
+}
+
+function updateDrive115Completion() {
+  // 115 页面已移除顶部完整度徽标，保留函数避免输入监听分支扩散。
+}
+
+function setDrive115QrStatus(message, state = "") {
+  if (elements.drive115QrStatus) {
+    elements.drive115QrStatus.textContent = message || "";
+    elements.drive115QrStatus.dataset.state = state;
+  }
+}
+
+function stopDrive115QrPolling(options = {}) {
+  const { clearSession = false, notifyServer = false } = options;
+  if (appState.drive115QrTimer) {
+    clearInterval(appState.drive115QrTimer);
+    appState.drive115QrTimer = null;
+  }
+  if (notifyServer && appState.drive115QrSessionId) {
+    inviteApiFetch("/api/drive115/qrcode/stop", {
+      method: "POST",
+      body: JSON.stringify({ sessionId: appState.drive115QrSessionId })
+    }).catch(() => {
+      // 停止轮询失败不影响页面状态。
+    });
+  }
+  if (clearSession) {
+    appState.drive115QrSessionId = "";
+    appState.drive115QrStartedAt = 0;
+  }
+  if (elements.drive115QrStopBtn) {
+    elements.drive115QrStopBtn.disabled = true;
+  }
+  if (elements.drive115QrStartBtn) {
+    elements.drive115QrStartBtn.disabled = false;
+    elements.drive115QrStartBtn.textContent = "生成二维码";
+  }
+}
+
+async function pollDrive115QrStatus() {
+  const sessionId = String(appState.drive115QrSessionId || "").trim();
+  if (!sessionId) {
+    stopDrive115QrPolling({ clearSession: true });
+    return;
+  }
+  if (Date.now() - Number(appState.drive115QrStartedAt || 0) > 180000) {
+    setDrive115QrStatus("二维码已过期，请重新生成。", "expired");
+    stopDrive115QrPolling({ clearSession: true, notifyServer: true });
+    return;
+  }
+  try {
+    const result = await inviteApiFetch(`/api/drive115/qrcode/status?sessionId=${encodeURIComponent(sessionId)}`);
+    const status = String(result?.status || "").trim();
+    if (status === "waiting") {
+      setDrive115QrStatus(result?.message || "等待扫码。", "waiting");
+      return;
+    }
+    if (status === "scanned") {
+      setDrive115QrStatus(result?.message || "已扫码，请在 115 App 中确认登录。", "scanned");
+      return;
+    }
+    if (status === "success") {
+      appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...(result?.drive115Config || {}) });
+      persistLocalState();
+      renderDrive115Page();
+      setDrive115QrStatus(result?.message || "扫码登录成功，Cookie 已自动保存。", "success");
+      addDrive115Record("扫码登录成功", "Cookie 已自动保存。", "success");
+      stopDrive115QrPolling({ clearSession: true });
+      showToast("115 Cookie 已自动保存", 1400);
+      return;
+    }
+    setDrive115QrStatus(result?.message || "二维码状态未知。", status || "waiting");
+  } catch (error) {
+    const message = error.message || "二维码状态查询失败。";
+    setDrive115QrStatus(message, message.includes("过期") ? "expired" : "failed");
+    if (message.includes("过期") || message.includes("失败")) {
+      stopDrive115QrPolling({ clearSession: true });
+    }
+  }
+}
+
+async function startDrive115QrLogin() {
+  if (elements.drive115QrStartBtn) {
+    elements.drive115QrStartBtn.disabled = true;
+    elements.drive115QrStartBtn.textContent = "生成中...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/drive115/qrcode/start", {
+      method: "POST",
+      body: JSON.stringify({ client: elements.drive115QrClient?.value || "qandroid" })
+    });
+    appState.drive115QrSessionId = String(result?.sessionId || "");
+    appState.drive115QrStartedAt = Date.now();
+    if (elements.drive115QrImage && result?.imageUrl) {
+      elements.drive115QrImage.src = result.imageUrl;
+      elements.drive115QrImage.hidden = false;
+    }
+    if (elements.drive115QrPlaceholder) {
+      elements.drive115QrPlaceholder.hidden = true;
+    }
+    if (elements.drive115QrStopBtn) {
+      elements.drive115QrStopBtn.disabled = false;
+    }
+    if (elements.drive115QrStartBtn) {
+      elements.drive115QrStartBtn.textContent = "重新生成";
+      elements.drive115QrStartBtn.disabled = false;
+    }
+    setDrive115QrStatus(result?.message || "二维码已生成，请扫码。", "waiting");
+    stopDrive115QrPolling({ clearSession: false });
+    if (elements.drive115QrStopBtn) {
+      elements.drive115QrStopBtn.disabled = false;
+    }
+    appState.drive115QrTimer = setInterval(pollDrive115QrStatus, 2000);
+    setTimeout(pollDrive115QrStatus, 800);
+  } catch (error) {
+    setDrive115QrStatus(`生成二维码失败：${error.message || "未知错误"}`, "failed");
+    stopDrive115QrPolling({ clearSession: true });
+  }
+}
+
+function applyDrive115SearchFilter() {
+  // 115 页面已移除配置搜索框。
+}
+
+function addDrive115Record(title, detail, level = "info") {
+  const record = {
+    title: String(title || "115 操作"),
+    detail: String(detail || ""),
+    level,
+    time: new Date().toLocaleString("zh-CN", { hour12: false })
+  };
+  appState.drive115Records = [record, ...(appState.drive115Records || [])].slice(0, 8);
+  renderDrive115Records();
+}
+
+function renderDrive115Records() {
+  if (!elements.drive115Records) {
+    return;
+  }
+  const rows = Array.isArray(appState.drive115Records) ? appState.drive115Records : [];
+  if (!rows.length) {
+    elements.drive115Records.innerHTML = `<div class="empty-state">暂无 115 转存记录。</div>`;
+    return;
+  }
+  elements.drive115Records.innerHTML = rows
+    .map((row) => {
+      const badge = row.level === "error" ? "失败" : row.level === "success" ? "成功" : "记录";
+      return `
+        <div class="drive115-record">
+          <strong>${escapeHtml(row.title)} · ${escapeHtml(badge)}</strong>
+          <span>${escapeHtml(row.time)}</span>
+          <div>${escapeHtml(row.detail)}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderDrive115ParseResult(payload = undefined) {
+  if (!elements.drive115ParseResult) {
+    return;
+  }
+  const result = payload === undefined ? appState.drive115LastParse : payload;
+  if (!result) {
+    elements.drive115ParseResult.textContent = "尚未解析 115 分享链接。";
+    if (elements.drive115TransferBtn) {
+      elements.drive115TransferBtn.disabled = true;
+    }
+    return;
+  }
+  const files = Array.isArray(result.files) ? result.files.slice(0, 8) : [];
+  const lines = [
+    `资源：${result.title || "115 分享资源"}`,
+    `文件数：${result.fileCount ?? files.length}`,
+    `大小：${result.totalSizeText || "-"}`,
+    `分享码：${result.shareCode || "-"}`
+  ];
+  if (files.length) {
+    lines.push("", "前几项：");
+    files.forEach((file, index) => {
+      lines.push(`${index + 1}. ${file.name || "未命名"}${file.sizeText ? `｜${file.sizeText}` : ""}`);
+    });
+  }
+  elements.drive115ParseResult.textContent = lines.join("\n");
+  if (elements.drive115TransferBtn) {
+    elements.drive115TransferBtn.disabled = !result.shareCode;
+  }
+}
+
+function renderDrive115Page() {
+  renderDrive115Config();
+  renderDrive115ParseResult();
+  renderDrive115Records();
+}
+
+async function loadDrive115ConfigFromServer(options = {}) {
+  const { silent = false } = options;
+  try {
+    const result = await inviteApiFetch("/api/drive115/config");
+    appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...(result?.drive115Config || {}) });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "drive115Config");
+    persistLocalState();
+    renderDrive115Page();
+    renderEnvControlledState();
+    return true;
+  } catch (error) {
+    if (!silent) {
+      updateDrive115Feedback(`读取 115 配置失败：${error.message || "未知错误"}`);
+    }
+    return false;
+  }
+}
+
+async function saveDrive115Config() {
+  const nextConfig = readDrive115ConfigFromInputs();
+  if (elements.drive115SaveBtn) {
+    elements.drive115SaveBtn.disabled = true;
+    elements.drive115SaveBtn.textContent = "保存中...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/drive115/config", {
+      method: "POST",
+      body: JSON.stringify({ drive115Config: nextConfig })
+    });
+    appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...(result?.drive115Config || {}) });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "drive115Config");
+    persistLocalState();
+    renderDrive115Page();
+    updateDrive115Feedback("115 配置已保存。");
+    addDrive115Record("保存配置", "115 配置已保存。", "success");
+    showToast("115 配置已保存", 1200);
+  } catch (error) {
+    updateDrive115Feedback(`115 配置保存失败：${error.message || "未知错误"}`);
+    addDrive115Record("保存配置失败", error.message || "未知错误", "error");
+  } finally {
+    if (elements.drive115SaveBtn) {
+      elements.drive115SaveBtn.disabled = false;
+      elements.drive115SaveBtn.textContent = "保存配置";
+    }
+  }
+}
+
+async function testDrive115Config() {
+  if (elements.drive115TestBtn) {
+    elements.drive115TestBtn.disabled = true;
+    elements.drive115TestBtn.textContent = "测试中...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/drive115/test", {
+      method: "POST",
+      body: JSON.stringify({ drive115Config: readDrive115ConfigFromInputs() })
+    });
+    updateDrive115Feedback(result?.message || "115 Cookie 测试成功。");
+    addDrive115Record("测试连接", result?.message || "115 Cookie 测试成功。", "success");
+  } catch (error) {
+    updateDrive115Feedback(`115 测试失败：${error.message || "未知错误"}`);
+    addDrive115Record("测试连接失败", error.message || "未知错误", "error");
+  } finally {
+    if (elements.drive115TestBtn) {
+      elements.drive115TestBtn.disabled = false;
+      elements.drive115TestBtn.textContent = "测试连接";
+    }
+  }
+}
+
+async function parseDrive115Link() {
+  const shareUrl = String(elements.drive115ShareUrl?.value || "").trim();
+  const receiveCode = String(elements.drive115ReceiveCode?.value || "").trim();
+  if (!shareUrl) {
+    updateDrive115Feedback("请先粘贴 115 分享链接。");
+    return;
+  }
+  if (elements.drive115ParseBtn) {
+    elements.drive115ParseBtn.disabled = true;
+    elements.drive115ParseBtn.textContent = "解析中...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/drive115/parse", {
+      method: "POST",
+      body: JSON.stringify({ shareUrl, receiveCode })
+    });
+    appState.drive115LastParse = result;
+    renderDrive115ParseResult(result);
+    addDrive115Record("解析成功", `${result.title || "115 分享资源"}｜${result.fileCount ?? 0} 项`, "success");
+  } catch (error) {
+    appState.drive115LastParse = null;
+    renderDrive115ParseResult(null);
+    if (elements.drive115ParseResult) {
+      elements.drive115ParseResult.textContent = `解析失败：${error.message || "未知错误"}`;
+    }
+    addDrive115Record("解析失败", error.message || "未知错误", "error");
+  } finally {
+    if (elements.drive115ParseBtn) {
+      elements.drive115ParseBtn.disabled = false;
+      elements.drive115ParseBtn.textContent = "解析资源";
+    }
+  }
+}
+
+async function transferDrive115Link() {
+  const parsed = appState.drive115LastParse;
+  if (!parsed?.shareCode) {
+    updateDrive115Feedback("请先解析 115 分享链接。");
+    return;
+  }
+  const targetCid = String(elements.drive115TargetCid?.value || appState.drive115Config?.defaultCid || "0").trim() || "0";
+  if (elements.drive115TransferBtn) {
+    elements.drive115TransferBtn.disabled = true;
+    elements.drive115TransferBtn.textContent = "提交中...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/drive115/transfer", {
+      method: "POST",
+      body: JSON.stringify({
+        shareCode: parsed.shareCode,
+        receiveCode: parsed.receiveCode || String(elements.drive115ReceiveCode?.value || "").trim(),
+        targetCid,
+        fileIds: Array.isArray(parsed.files) ? parsed.files.map((file) => String(file?.id || "").trim()).filter(Boolean) : []
+      })
+    });
+    const message = result?.message || "115 已收到转存请求。";
+    updateDrive115Feedback(message);
+    addDrive115Record("转存已提交", `${parsed.title || parsed.shareCode}｜目录 ${targetCid}`, "success");
+    showToast("115 转存已提交", 1200);
+  } catch (error) {
+    updateDrive115Feedback(`115 转存失败：${error.message || "未知错误"}`);
+    addDrive115Record("转存失败", error.message || "未知错误", "error");
+    if (elements.drive115TransferBtn) {
+      elements.drive115TransferBtn.disabled = false;
+    }
+  } finally {
+    if (elements.drive115TransferBtn) {
+      elements.drive115TransferBtn.textContent = "确认转存";
+    }
   }
 }
 
@@ -6836,6 +7377,7 @@ function renderAll() {
   renderMissing();
   renderProjectLogs();
   renderBotAssistant();
+  renderDrive115Page();
 }
 
 function swapLogsActionBlocks(activeView) {
@@ -8667,6 +9209,7 @@ function initEvents() {
   elements.tmdbToken?.addEventListener("input", () => {
     refreshTmdbUiState();
   });
+  elements.tmdbTestBtn?.addEventListener("click", () => testTmdbConnection({ silent: false }));
   [
     elements.aiEnabled,
     elements.aiBaseUrl,
@@ -8680,6 +9223,39 @@ function initEvents() {
     input?.addEventListener("change", () => updateAiFeedbackFromInputs({ saved: false }));
   });
   elements.aiTestBtn?.addEventListener("click", testAiConfig);
+  [
+    elements.drive115Enabled,
+    elements.drive115Cookie,
+    elements.drive115DefaultCid
+  ].forEach((input) => {
+    input?.addEventListener("input", () => {
+      updateDrive115Feedback();
+      updateDrive115Completion();
+    });
+    input?.addEventListener("change", () => {
+      updateDrive115Feedback();
+      updateDrive115Completion();
+    });
+  });
+  elements.drive115SaveBtn?.addEventListener("click", saveDrive115Config);
+  elements.drive115TestBtn?.addEventListener("click", testDrive115Config);
+  elements.drive115QrStartBtn?.addEventListener("click", startDrive115QrLogin);
+  elements.drive115QrStopBtn?.addEventListener("click", () => {
+    stopDrive115QrPolling({ clearSession: true, notifyServer: true });
+    setDrive115QrStatus("已停止二维码轮询。", "stopped");
+  });
+  elements.drive115LoginCollapseBtn?.addEventListener("click", () => {
+    const collapsed = !elements.drive115LoginBody?.hidden;
+    if (elements.drive115LoginBody) {
+      elements.drive115LoginBody.hidden = collapsed;
+    }
+    if (elements.drive115LoginCollapseBtn) {
+      elements.drive115LoginCollapseBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      elements.drive115LoginCollapseBtn.textContent = collapsed ? "展开⌄" : "收起⌄";
+    }
+  });
+  elements.drive115ParseBtn?.addEventListener("click", parseDrive115Link);
+  elements.drive115TransferBtn?.addEventListener("click", transferDrive115Link);
 
   elements.ucInviteManageBtn?.addEventListener("click", () => {
     openUserCenterInviteManageModal();
@@ -8974,6 +9550,7 @@ async function startPostAuthBootstrap() {
         refreshInviteSyncStatus({ silent: true });
         loadBotConfigFromServer({ silent: true });
         loadAiConfigFromServer({ silent: true });
+        loadDrive115ConfigFromServer({ silent: true });
         refreshBotWebhookInfo({ silent: true });
         ensureBotWebhookStatusPolling();
       }, 80);

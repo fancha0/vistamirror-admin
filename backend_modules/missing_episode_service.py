@@ -18,11 +18,13 @@ class MissingEpisodeService:
         tmdb_token: str,
         tmdb_language: str = "zh-CN",
         tmdb_region: str = "CN",
+        identity_resolver: Callable[[dict[str, Any]], str] | None = None,
     ) -> None:
         self.emby_fetcher = emby_fetcher
         self.tmdb_token = str(tmdb_token or "").strip()
         self.tmdb_language = str(tmdb_language or "zh-CN").strip() or "zh-CN"
         self.tmdb_region = str(tmdb_region or "CN").strip().upper() or "CN"
+        self.identity_resolver = identity_resolver
         self._tmdb_detail_cache: dict[str, dict[str, Any]] = {}
 
     def scan(self, *, scan_limit: int = 1200) -> dict[str, Any]:
@@ -236,6 +238,14 @@ class MissingEpisodeService:
             direct_id = str(provider_ids.get("Tmdb") or provider_ids.get("tmdb") or "").strip()
             if direct_id.isdigit():
                 return direct_id
+
+        if self.identity_resolver:
+            try:
+                resolved_id = str(self.identity_resolver(series) or "").strip()
+            except Exception:
+                resolved_id = ""
+            if resolved_id.isdigit():
+                return resolved_id
 
         series_name = str(series.get("Name") or "").strip()
         if not series_name:

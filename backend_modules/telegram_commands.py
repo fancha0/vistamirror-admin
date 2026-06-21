@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import json
 import logging
@@ -17,6 +18,10 @@ import uuid
 from typing import Any, Callable, Union
 
 from .ai_assistant import apply_ai_env_overrides, chat_completion, normalize_ai_config, stream_chat_completion
+from .ai_conversation_store import AiConversationStore
+from .ai_intent_router import AiIntentRouter
+from .drive115_service import Drive115Service, apply_drive115_env_overrides, default_drive115_config, extract_115_share, normalize_drive115_config
+from .media_identity_service import MediaIdentityService
 from .missing_episode_service import MissingEpisodeService
 from .notification_config import normalize_bot_config
 from .playback_event_logger import read_recent_playback_events
@@ -34,6 +39,7 @@ COMMAND_MENU: list[dict[str, str]] = [
     {"command": "zuijinruku", "description": "🆕 最近入库"},
     {"command": "zuijinbofangjilu", "description": "📜 最近播放记录"},
     {"command": "saomiao", "description": "🔄 扫描媒体库"},
+    {"command": "zhuancun115", "description": "📦 115 链接转存"},
     {"command": "ai", "description": "🧠 AI 媒体问答"},
     {"command": "help", "description": "🤖 帮助菜单"},
     {"command": "start", "description": "🚀 启动机器人"},
@@ -45,6 +51,9 @@ CommandReply = Union[str, dict[str, Any]]
 DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console"
 MARKDOWN_V2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 AI_TOOL_REGISTRY: list[dict[str, Any]] = [
+    {"name": "media.identity", "kind": "read", "description": "通过 TMDB 与 Emby ProviderIds 确认作品身份。"},
+    {"name": "media.detail", "kind": "read", "description": "查询作品简介、演员、评分和本地入库状态。"},
+    {"name": "series.inventory", "kind": "read", "description": "查询 Emby 实际单集、最新集和缺失集。"},
     {"name": "library.search", "kind": "read", "description": "查询媒体库资源、简介、评分、季集数和分类列表。"},
     {"name": "playback.history", "kind": "read", "description": "查询最近播放、用户观看和播放排行。"},
     {"name": "library.latest", "kind": "read", "description": "查询最近入库资源。"},
@@ -69,12 +78,19 @@ EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
     "apiKey": "APP_EMBY_API_KEY",
     "clientName": "APP_EMBY_CLIENT_NAME",
+    "tmdbToken": "APP_TMDB_TOKEN",
 }
 
 
 def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
     if not store_path.exists():
-        return {"embyConfig": {}, "invites": [], "botConfig": normalize_bot_config({}), "aiConfig": normalize_ai_config({})}
+        return {
+            "embyConfig": {},
+            "invites": [],
+            "botConfig": normalize_bot_config({}),
+            "aiConfig": normalize_ai_config({}),
+            "drive115Config": default_drive115_config(),
+        }
     try:
         data = json.loads(store_path.read_text(encoding="utf-8"))
     except Exception:
@@ -86,6 +102,7 @@ def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
         "invites": data.get("invites") if isinstance(data.get("invites"), list) else [],
         "botConfig": normalize_bot_config(data.get("botConfig")),
         "aiConfig": normalize_ai_config(data.get("aiConfig")),
+        "drive115Config": normalize_drive115_config(data.get("drive115Config")),
     }
 
 
@@ -117,12 +134,21 @@ def _apply_emby_env_overrides(raw: Any) -> dict[str, Any]:
         "serverUrl": str(source.get("serverUrl") or "").strip(),
         "apiKey": str(source.get("apiKey") or "").strip(),
         "clientName": str(source.get("clientName") or "").strip() or DEFAULT_EMBY_CLIENT_NAME,
+        "tmdbEnabled": bool(source.get("tmdbEnabled")),
+        "tmdbToken": str(source.get("tmdbToken") or "").strip(),
+        "tmdbLanguage": str(source.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN",
+        "tmdbRegion": str(source.get("tmdbRegion") or "CN").strip().upper() or "CN",
         "updatedAt": str(source.get("updatedAt") or "").strip(),
     }
     for field, env_name in EMBY_ENV_FIELD_MAP.items():
         env_value = str(os.environ.get(env_name) or "").strip()
         if env_value:
             merged[field] = env_value
+    legacy_tmdb_token = str(os.environ.get("TMDB_TOKEN") or "").strip()
+    if legacy_tmdb_token and not str(os.environ.get("APP_TMDB_TOKEN") or "").strip():
+        merged["tmdbToken"] = legacy_tmdb_token
+    if merged["tmdbToken"] and (legacy_tmdb_token or str(os.environ.get("APP_TMDB_TOKEN") or "").strip()):
+        merged["tmdbEnabled"] = True
     return merged
 
 
@@ -145,10 +171,17 @@ class TelegramCommandService:
         self._last_token = ""
         self._commands_registered_token = ""
         self._pending_ai_actions: dict[str, dict[str, Any]] = {}
+        self._pending_drive115_transfers: dict[str, dict[str, Any]] = {}
+        self._pending_missing_searches: dict[str, dict[str, Any]] = {}
         self._ai_chat_history: dict[str, list[dict[str, str]]] = {}
+        self._ai_conversations = AiConversationStore(self.store_path.parent / "ai_conversations.json")
         self._telegram_dedupe_lock = threading.Lock()
         self._recent_update_ids: dict[str, float] = {}
         self._recent_ai_message_keys: dict[str, float] = {}
+        self._library_thread: threading.Thread | None = None
+        self._library_state_lock = threading.Lock()
+        self._library_notify_lock = threading.RLock()
+        self._library_state_path = self.store_path.parent / "library_notification_state.json"
 
     def _log_project_event(
         self,
@@ -177,12 +210,20 @@ class TelegramCommandService:
             return
         self._thread = threading.Thread(target=self._run_loop, name="TelegramCommandService", daemon=True)
         self._thread.start()
+        self._library_thread = threading.Thread(
+            target=self._run_library_notification_loop,
+            name="LibraryNotificationMonitor",
+            daemon=True,
+        )
+        self._library_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
         self._wakeup_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        if self._library_thread and self._library_thread.is_alive():
+            self._library_thread.join(timeout=2.0)
 
     def wakeup(self) -> None:
         self._wakeup_event.set()
@@ -223,6 +264,442 @@ class TelegramCommandService:
         self._wakeup_event.wait(timeout=max(0.2, seconds))
         self._wakeup_event.clear()
 
+    def _run_library_notification_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self._poll_library_notifications_once()
+            except Exception as err:
+                LOGGER.warning("Library notification poll failed: %s", err)
+                self._log_project_event(
+                    level="warning",
+                    module="webhook",
+                    action="library_notification_poll_failed",
+                    message="新入库定时检测失败，将在下一轮重试。",
+                    detail={"error": str(err)},
+                )
+            self._stop_event.wait(60.0)
+
+    def _library_notification_config(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        store = _read_store(self.store_path)
+        return normalize_bot_config(store.get("botConfig")), _apply_emby_env_overrides(store.get("embyConfig"))
+
+    def _read_library_notification_state(self) -> dict[str, Any]:
+        with self._library_state_lock:
+            try:
+                raw = json.loads(self._library_state_path.read_text(encoding="utf-8"))
+            except Exception:
+                raw = {}
+            seen = raw.get("seen") if isinstance(raw.get("seen"), dict) else {}
+            return {
+                "version": 1,
+                "active": bool(raw.get("active")),
+                "lastPollAt": str(raw.get("lastPollAt") or ""),
+                "seen": {str(key): str(value or "") for key, value in seen.items() if str(key).strip()},
+            }
+
+    def _write_library_notification_state(self, state: dict[str, Any]) -> None:
+        with self._library_state_lock:
+            self._library_state_path.parent.mkdir(parents=True, exist_ok=True)
+            seen = state.get("seen") if isinstance(state.get("seen"), dict) else {}
+            if len(seen) > 5000:
+                ordered = sorted(seen.items(), key=lambda row: str(row[1] or ""), reverse=True)[:5000]
+                state["seen"] = dict(ordered)
+            temp_path = self._library_state_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.replace(self._library_state_path)
+
+    def _set_library_monitor_active(self, active: bool) -> None:
+        state = self._read_library_notification_state()
+        if bool(state.get("active")) == bool(active):
+            return
+        state["active"] = bool(active)
+        state["lastPollAt"] = datetime.now().isoformat(timespec="seconds")
+        self._write_library_notification_state(state)
+
+    def _fetch_library_latest_rows(self, limit: int = 200) -> list[dict[str, Any]]:
+        fields = ",".join(
+            (
+                "Name",
+                "Type",
+                "SeriesName",
+                "SeriesId",
+                "ParentIndexNumber",
+                "IndexNumber",
+                "DateCreated",
+                "ProductionYear",
+                "CommunityRating",
+                "Overview",
+                "ImageTags",
+                "PrimaryImageItemId",
+            )
+        )
+        query = urllib.parse.urlencode(
+            {
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Episode",
+                "SortBy": "DateCreated",
+                "SortOrder": "Descending",
+                "Limit": str(max(1, min(500, int(limit or 200)))),
+                "Fields": fields,
+            }
+        )
+        payload = self._emby_get(f"/Items?{query}")
+        rows = payload.get("Items") if isinstance(payload, dict) else payload
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    def _poll_library_notifications_once(self) -> None:
+        with self._library_notify_lock:
+            self._poll_library_notifications_unlocked()
+
+    def _poll_library_notifications_unlocked(self) -> None:
+        bot, emby = self._library_notification_config()
+        enabled = bool(bot.get("enableCore", True) and bot.get("enableLibrary", True))
+        configured = bool(
+            str(bot.get("telegramToken") or "").strip()
+            and str(bot.get("telegramChatId") or "").strip()
+            and str(emby.get("serverUrl") or "").strip()
+            and str(emby.get("apiKey") or "").strip()
+        )
+        if not enabled or not configured:
+            self._set_library_monitor_active(False)
+            return
+
+        rows = self._fetch_library_latest_rows(limit=500)
+        state = self._read_library_notification_state()
+        now = datetime.now().isoformat(timespec="seconds")
+        if not state.get("active"):
+            for row in rows:
+                item_id = str(row.get("Id") or "").strip()
+                if item_id:
+                    state["seen"][item_id] = now
+            state["active"] = True
+            state["lastPollAt"] = now
+            self._write_library_notification_state(state)
+            self._log_project_event(
+                level="info",
+                module="webhook",
+                action="library_notification_baseline_created",
+                message="新入库自动检测基线已建立。",
+                detail={"baselineItems": len(state["seen"]), "intervalSeconds": 60},
+            )
+            return
+
+        pending = [row for row in rows if str(row.get("Id") or "").strip() not in state["seen"]]
+        pending.sort(key=lambda row: str(row.get("DateCreated") or ""))
+        batch = pending[:20]
+        if pending:
+            self._log_project_event(
+                level="info",
+                module="webhook",
+                action="library_notification_poll_completed",
+                message="新入库定时检测发现新增资源。",
+                detail={"scanned": len(rows), "newItems": len(pending), "batchItems": len(batch), "intervalSeconds": 60},
+            )
+        success_count = 0
+        failure_count = 0
+        for index, row in enumerate(batch):
+            item_id = str(row.get("Id") or "").strip()
+            try:
+                result = self.notify_library_item(
+                    item_id=item_id,
+                    payload=row,
+                    source="poll",
+                )
+                if bool(result.get("ok")) and str(result.get("status") or "") in {"sent", "duplicate", "filtered"}:
+                    success_count += 1
+                else:
+                    failure_count += 1
+            except Exception as err:
+                failure_count += 1
+                self._log_project_event(
+                    level="warning",
+                    module="webhook",
+                    action="library_notification_item_failed",
+                    message="单个新入库资源通知失败，其他资源将继续处理。",
+                    detail={"itemId": item_id, "itemType": str(row.get("Type") or ""), "error": str(err)},
+                )
+            if index + 1 < len(batch):
+                self._stop_event.wait(0.75)
+        state = self._read_library_notification_state()
+        state["lastPollAt"] = now
+        self._write_library_notification_state(state)
+        if batch:
+            self._log_project_event(
+                level="info" if failure_count == 0 else "warning",
+                module="webhook",
+                action="library_notification_batch_finished",
+                message="新入库通知批次处理完成。",
+                detail={
+                    "detected": len(pending),
+                    "processed": len(batch),
+                    "success": success_count,
+                    "failed": failure_count,
+                    "remaining": max(0, len(pending) - success_count),
+                },
+            )
+
+    def notify_library_item(self, *, item_id: str, payload: dict[str, Any] | None = None, source: str = "webhook") -> dict[str, Any]:
+        with self._library_notify_lock:
+            return self._notify_library_item_unlocked(item_id=item_id, payload=payload, source=source)
+
+    def _notify_library_item_unlocked(self, *, item_id: str, payload: dict[str, Any] | None = None, source: str = "webhook") -> dict[str, Any]:
+        safe_item_id = str(item_id or "").strip()
+        if not safe_item_id:
+            return {"ok": False, "status": "missing_item_id"}
+        bot, emby = self._library_notification_config()
+        if not bool(bot.get("enableCore", True) and bot.get("enableLibrary", True)):
+            return {"ok": True, "status": "disabled"}
+        token = str(bot.get("telegramToken") or "").strip()
+        chat_id = str(bot.get("telegramChatId") or "").strip()
+        if not token or not chat_id:
+            return {"ok": False, "status": "telegram_not_configured"}
+
+        state = self._read_library_notification_state()
+        if safe_item_id in state["seen"]:
+            self._log_project_event(
+                level="info",
+                module="webhook",
+                action="library_notification_duplicate_skipped",
+                message="重复入库资源通知已跳过。",
+                detail={"itemId": safe_item_id, "source": source},
+            )
+            return {"ok": True, "status": "duplicate"}
+
+        try:
+            detail = self._fetch_library_item_detail(safe_item_id)
+        except Exception as err:
+            detail = {}
+            self._log_project_event(
+                level="warning",
+                module="webhook",
+                action="library_notification_detail_fallback",
+                message="入库资源详情读取失败，使用事件基础资料继续发送。",
+                detail={"itemId": safe_item_id, "source": source, "error": str(err)},
+            )
+        if isinstance(payload, dict):
+            merged = dict(payload)
+            merged.update(detail)
+            detail = merged
+        item_type = str(detail.get("Type") or "").strip().lower()
+        if item_type not in {"movie", "episode"}:
+            return {"ok": True, "status": "filtered", "itemType": item_type}
+
+        series_detail: dict[str, Any] = {}
+        if item_type == "episode":
+            series_id = str(detail.get("SeriesId") or "").strip()
+            if series_id:
+                try:
+                    series_detail = self._fetch_library_item_detail(series_id)
+                except Exception as err:
+                    self._log_project_event(
+                        level="warning",
+                        module="webhook",
+                        action="library_notification_series_detail_fallback",
+                        message="所属剧集资料读取失败，继续发送单集通知。",
+                        detail={"itemId": safe_item_id, "seriesId": series_id, "source": source, "error": str(err)},
+                    )
+        caption = self._format_library_notification_caption(detail, series_detail)
+        image_item_ids = self._library_notification_image_ids(detail, series_detail)
+        photo_sent = False
+        for image_item_id in image_item_ids:
+            try:
+                photo_bytes = self._fetch_emby_primary_image(image_item_id)
+                if not photo_bytes:
+                    continue
+                self.sender.send_photo_file(
+                    token=token,
+                    chat_id=chat_id,
+                    photo_bytes=photo_bytes,
+                    caption=caption,
+                    filename=f"{image_item_id}.jpg",
+                    content_type="image/jpeg",
+                )
+                photo_sent = True
+                break
+            except Exception as err:
+                self._log_project_event(
+                    level="warning",
+                    module="webhook",
+                    action="library_notification_photo_fallback",
+                    message="入库海报发送失败，尝试文字通知。",
+                    detail={"itemId": safe_item_id, "source": source, "error": str(err)},
+                )
+        if not photo_sent:
+            self.sender.send_text(token=token, chat_id=chat_id, text=caption)
+
+        state = self._read_library_notification_state()
+        state["active"] = True
+        state["seen"][safe_item_id] = datetime.now().isoformat(timespec="seconds")
+        self._write_library_notification_state(state)
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="library_notification_sent",
+            message="Telegram 新入库海报通知已发送。",
+            detail={
+                "itemId": safe_item_id,
+                "itemType": item_type,
+                "source": source,
+                "photo": photo_sent,
+                "detailSource": str(detail.get("_detailSource") or "event_payload"),
+                "seriesDetailSource": str(series_detail.get("_detailSource") or ""),
+            },
+        )
+        return {"ok": True, "status": "sent", "photo": photo_sent, "itemType": item_type}
+
+    def _fetch_library_item_detail(self, item_id: str) -> dict[str, Any]:
+        safe_item_id = str(item_id or "").strip()
+        if not safe_item_id:
+            return {}
+        fields = ",".join(
+            (
+                "Overview",
+                "CommunityRating",
+                "Type",
+                "SeriesName",
+                "SeriesId",
+                "ParentIndexNumber",
+                "IndexNumber",
+                "ProductionYear",
+                "PremiereDate",
+                "DateCreated",
+                "ImageTags",
+                "PrimaryImageItemId",
+            )
+        )
+        query = urllib.parse.urlencode({"Ids": safe_item_id, "Fields": fields})
+        collection_error = ""
+        try:
+            payload = self._emby_get(f"/Items?{query}")
+            rows = payload.get("Items") if isinstance(payload, dict) else payload
+            if isinstance(rows, list):
+                match = next((row for row in rows if isinstance(row, dict) and str(row.get("Id") or "") == safe_item_id), None)
+                if isinstance(match, dict):
+                    result = dict(match)
+                    result["_detailSource"] = "items_by_id"
+                    return result
+        except Exception as err:
+            collection_error = str(err)
+
+        user_error = ""
+        try:
+            user_id = self._resolve_emby_user_id()
+            if user_id:
+                user_query = urllib.parse.urlencode({"Fields": fields})
+                payload = self._emby_get(
+                    f"/Users/{urllib.parse.quote(user_id, safe='')}/Items/{urllib.parse.quote(safe_item_id, safe='')}?{user_query}"
+                )
+                if isinstance(payload, dict) and str(payload.get("Id") or safe_item_id) == safe_item_id:
+                    result = dict(payload)
+                    result["_detailSource"] = "user_item"
+                    return result
+        except Exception as err:
+            user_error = str(err)
+
+        if collection_error or user_error:
+            self._log_project_event(
+                level="warning",
+                module="webhook",
+                action="library_notification_detail_unavailable",
+                message="Emby 详情兼容接口均不可用，将使用已有基础资料。",
+                detail={
+                    "itemId": safe_item_id,
+                    "itemsByIdError": collection_error,
+                    "userItemError": user_error,
+                },
+            )
+        return {}
+
+    def _fetch_emby_primary_image(self, item_id: str) -> bytes:
+        base_url, api_key = self._emby_context()
+        if not base_url or not api_key or not str(item_id or "").strip():
+            return b""
+        query = urllib.parse.urlencode({"maxWidth": "1000", "quality": "90"})
+        request = urllib.request.Request(
+            f"{base_url}/Items/{urllib.parse.quote(str(item_id), safe='')}/Images/Primary?{query}",
+            method="GET",
+            headers={"X-Emby-Token": api_key},
+        )
+        ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(request, context=ctx, timeout=20) as response:
+            return response.read()
+
+    @staticmethod
+    def _library_notification_image_ids(detail: dict[str, Any], series_detail: dict[str, Any]) -> list[str]:
+        candidates = []
+        if str(detail.get("Type") or "").strip().lower() == "episode":
+            candidates.extend((detail.get("SeriesId"), series_detail.get("Id"), detail.get("PrimaryImageItemId"), detail.get("Id")))
+        else:
+            candidates.extend((detail.get("PrimaryImageItemId"), detail.get("Id")))
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in candidates:
+            item_id = str(value or "").strip()
+            if item_id and item_id not in seen:
+                seen.add(item_id)
+                result.append(item_id)
+        return result
+
+    @staticmethod
+    def _library_notification_datetime(raw: Any) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            return datetime.now().strftime("%Y-%m-%d %H:%M")
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return value[:16].replace("T", " ")
+
+    @classmethod
+    def _format_library_notification_caption(cls, detail: dict[str, Any], series_detail: dict[str, Any]) -> str:
+        item_type = str(detail.get("Type") or "").strip().lower()
+        fallback = series_detail if isinstance(series_detail, dict) else {}
+        name = str(detail.get("Name") or "未命名内容").strip()
+        series_name = str(detail.get("SeriesName") or fallback.get("Name") or "未命名剧集").strip()
+        if item_type == "episode":
+            title = f"📺 新入库 剧集 {series_name}"
+            if name and name != series_name:
+                title += f" {name}"
+            try:
+                season = int(detail.get("ParentIndexNumber"))
+                episode = int(detail.get("IndexNumber"))
+                episode_label = f"S{season:02d}E{episode:02d}"
+            except (TypeError, ValueError):
+                episode_label = ""
+        else:
+            title = f"🎬 新入库 电影 {name}"
+            episode_label = ""
+
+        year = detail.get("ProductionYear") or fallback.get("ProductionYear")
+        if not year:
+            premiere = str(detail.get("PremiereDate") or fallback.get("PremiereDate") or "").strip()
+            year = premiere[:4] if re.match(r"^\d{4}", premiere) else "未知"
+        rating_raw = detail.get("CommunityRating") or fallback.get("CommunityRating")
+        try:
+            rating = f"{float(rating_raw):.1f}".rstrip("0").rstrip(".")
+        except (TypeError, ValueError):
+            rating = "暂无"
+        created_at = cls._library_notification_datetime(detail.get("DateCreated"))
+        overview = str(detail.get("Overview") or fallback.get("Overview") or "暂无剧情简介").replace("\n", " ").strip()
+        overview = re.sub(r"\s+", " ", overview)
+        if len(overview) > 360:
+            overview = overview[:357].rstrip() + "..."
+        lines = [title]
+        if episode_label:
+            lines.append(episode_label)
+        lines.extend(
+            [
+                "",
+                f"📌 年份：{year} | ⭐ 评分：{rating}",
+                f"🕘 时间：{created_at}",
+                "",
+                "📝 剧情简介：",
+                overview,
+            ]
+        )
+        caption = "\n".join(lines)
+        return caption if len(caption) <= 1000 else caption[:997].rstrip() + "..."
+
     def _handle_update(self, update: dict[str, Any], token: str) -> None:
         update_id = str(update.get("update_id") or "").strip()
         if update_id and not self._claim_recent_key(self._recent_update_ids, update_id, limit=1000):
@@ -249,22 +726,60 @@ class TelegramCommandService:
             return
         message_id = message.get("message_id")
         chat_type = str(chat.get("type") or "").strip().lower()
-        text = str(message.get("text") or "").strip()
-        if not text:
+        sender = message.get("from") if isinstance(message.get("from"), dict) else {}
+        conversation_key = self._build_ai_conversation_key(
+            chat_id=chat_id,
+            user_id=sender.get("id"),
+            chat_type=chat_type,
+        )
+        own_text_candidates = self._message_text_candidates(message, include_reply=False)
+        text = str(message.get("text") or message.get("caption") or "").strip()
+        if not text and not own_text_candidates:
             return
         is_private = not chat_type or chat_type == "private"
         is_command = text.startswith("/")
         cmd_name = ""
         args = text
+        drive115_reply_message_id = int(message_id) if isinstance(message_id, int) else 0
         if is_command:
             cmd_text, _, args = text.partition(" ")
             cmd_name = cmd_text.split("@", 1)[0].lower().strip("/")
         elif not is_private:
             return
         if not is_command and is_private:
-            cmd_name = "ai"
-        if not is_private and cmd_name != "ai":
+            drive115_candidate = self._find_115_share_candidate(own_text_candidates)
+            if drive115_candidate:
+                cmd_name = "zhuancun115"
+                args = str(drive115_candidate.get("text") or text).strip()
+            else:
+                cmd_name = "ai"
+                args = text
+        if not is_private and cmd_name not in {"ai", "zhuancun115"}:
             return
+        if cmd_name == "zhuancun115" and not str(args or "").strip():
+            all_candidates = self._message_text_candidates(message, include_reply=True)
+            drive115_candidate = self._find_115_share_candidate(all_candidates)
+            if drive115_candidate:
+                args = str(drive115_candidate.get("text") or "").strip()
+                if str(drive115_candidate.get("source") or "").startswith("reply."):
+                    replied = message.get("reply_to_message") if isinstance(message.get("reply_to_message"), dict) else {}
+                    replied_id = replied.get("message_id")
+                    if isinstance(replied_id, int):
+                        drive115_reply_message_id = replied_id
+        if cmd_name == "zhuancun115" and self._looks_like_115_share(str(args or "")):
+            share = extract_115_share(str(args or ""))
+            self._log_project_event(
+                level="info",
+                module="drive115",
+                action="telegram_drive115_link_detected",
+                message="Telegram 消息中识别到 115 分享链接。",
+                detail={
+                    "chatType": chat_type or "private",
+                    "command": cmd_name,
+                    "shareCode": self._mask_share_code(share.get("shareCode")),
+                    "hasReceiveCode": bool(share.get("receiveCode")),
+                },
+            )
         ai_message_key = ""
         if cmd_name == "ai":
             ai_message_key = self._build_ai_message_key(chat_id=chat_id, message_id=message_id)
@@ -287,7 +802,17 @@ class TelegramCommandService:
         typing_stop = self._start_typing_indicator(token=token, chat_id=str(chat_id))
         try:
             if cmd_name == "ai":
-                reply = self._dispatch_ai_streaming(args.strip(), token=token, chat_id=str(chat_id))
+                reply = self._dispatch_ai_streaming(
+                    args.strip(),
+                    token=token,
+                    chat_id=str(chat_id),
+                    conversation_key=conversation_key,
+                )
+            elif cmd_name == "zhuancun115":
+                reply = self._cmd_drive115_transfer(
+                    args.strip(),
+                    reply_to_message_id=drive115_reply_message_id,
+                )
             else:
                 reply = self._dispatch_command(cmd_name, args.strip())
         except Exception as err:
@@ -347,6 +872,15 @@ class TelegramCommandService:
             return ""
         return f"{safe_chat_id}:{safe_message_id}"
 
+    @staticmethod
+    def _build_ai_conversation_key(*, chat_id: Any, user_id: Any, chat_type: str) -> str:
+        safe_chat_id = str(chat_id or "").strip()
+        if not safe_chat_id:
+            return ""
+        if str(chat_type or "").strip().lower() in {"group", "supergroup"}:
+            return f"chat:{safe_chat_id}:user:{str(user_id or 'unknown').strip()}"
+        return f"chat:{safe_chat_id}"
+
     def _start_typing_indicator(self, *, token: str, chat_id: str) -> Callable[[], None]:
         stopped = threading.Event()
 
@@ -396,6 +930,23 @@ class TelegramCommandService:
                 callback_id=callback_id,
                 chat_id=str(chat_id) if chat_id not in (None, "") else "",
                 message_id=message_id if isinstance(message_id, int) else 0,
+            )
+            return
+        if data.startswith("drive115:"):
+            self._handle_drive115_callback(
+                data=data,
+                token=token,
+                callback_id=callback_id,
+                chat_id=str(chat_id) if chat_id not in (None, "") else "",
+                message_id=message_id if isinstance(message_id, int) else 0,
+            )
+            return
+        if data.startswith("missing_search:"):
+            self._handle_missing_search_callback(
+                data=data,
+                token=token,
+                callback_id=callback_id,
+                chat_id=str(chat_id) if chat_id not in (None, "") else "",
             )
             return
         if data != "recent_playback:refresh":
@@ -492,6 +1043,50 @@ class TelegramCommandService:
             except Exception:
                 pass
 
+    def _handle_missing_search_callback(self, *, data: str, token: str, callback_id: str, chat_id: str) -> None:
+        action_id = str(data or "").split(":", 1)[1] if ":" in str(data or "") else ""
+        self._cleanup_pending_missing_searches()
+        pending = self._pending_missing_searches.get(action_id)
+        if not isinstance(pending, dict) or (pending.get("chatId") and str(pending.get("chatId")) != str(chat_id)):
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="搜索清单已过期，请重新查询缺集")
+            except Exception:
+                pass
+            return
+        title = str(pending.get("title") or "未知作品").strip()
+        labels = [str(value or "").strip() for value in pending.get("labels", []) if str(value or "").strip()]
+        visible = labels[:50]
+        lines = [f"{title} {label}" for label in visible]
+        if len(labels) > len(visible):
+            lines.append(f"还有 {len(labels) - len(visible)} 集未展示，请缩小范围后重新查询。")
+        reply = self._ai_markdown_reply("🔍 缺集搜索清单", "\n".join(lines) or "当前没有缺失集。")
+        try:
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已生成搜索清单")
+            self._send_command_reply(token=token, chat_id=chat_id, reply=reply)
+            self._log_project_event(
+                level="info",
+                module="webhook",
+                action="telegram_missing_search_list_generated",
+                message="Telegram 缺集搜索清单已生成。",
+                detail={"title": title, "count": len(visible), "remaining": max(0, len(labels) - len(visible))},
+            )
+        except Exception as err:
+            LOGGER.warning("Telegram missing search list callback failed: %s", err)
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="生成失败，请稍后重试")
+            except Exception:
+                pass
+
+    def _cleanup_pending_missing_searches(self) -> None:
+        now = time.time()
+        expired = [key for key, value in self._pending_missing_searches.items() if now - float(value.get("createdAt") or 0) > 900]
+        for key in expired:
+            self._pending_missing_searches.pop(key, None)
+        overflow = len(self._pending_missing_searches) - 100
+        if overflow > 0:
+            for key in list(self._pending_missing_searches.keys())[:overflow]:
+                self._pending_missing_searches.pop(key, None)
+
     def _handle_library_scan_callback(self, *, data: str, token: str, callback_id: str, chat_id: str, message_id: int) -> None:
         parts = str(data or "").split(":", 2)
         target = parts[1] if len(parts) >= 2 else ""
@@ -545,6 +1140,82 @@ class TelegramCommandService:
                         chat_id=chat_id,
                         message_id=message_id,
                         title="🔄 媒体库扫描失败",
+                        body=str(err),
+                    )
+            except Exception:
+                pass
+
+    def _handle_drive115_callback(self, *, data: str, token: str, callback_id: str, chat_id: str, message_id: int) -> None:
+        parts = str(data or "").split(":", 2)
+        decision = parts[1] if len(parts) >= 2 else ""
+        transfer_id = parts[2] if len(parts) >= 3 else ""
+        pending = self._pending_drive115_transfers.pop(transfer_id, None)
+        if decision == "cancel":
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已取消")
+                if chat_id and message_id:
+                    self._edit_ai_markdown_message(
+                        token=token,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        title="📦 115 转存已取消",
+                        body="已取消，本次没有提交 115 转存。",
+                    )
+            except Exception:
+                pass
+            return
+        if decision != "ok" or not isinstance(pending, dict):
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="操作已过期，请重新发送链接")
+            except Exception:
+                pass
+            return
+        detail = {
+            "shareCode": pending.get("shareCode"),
+            "targetCid": pending.get("targetCid"),
+            "title": pending.get("title"),
+        }
+        try:
+            result = self._drive115_service().transfer_share(
+                share_code=str(pending.get("shareCode") or ""),
+                receive_code=str(pending.get("receiveCode") or ""),
+                target_cid=str(pending.get("targetCid") or ""),
+                file_ids=pending.get("fileIds") if isinstance(pending.get("fileIds"), list) else [],
+            )
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已提交转存")
+            self._log_project_event(
+                level="info",
+                module="drive115",
+                action="telegram_drive115_transfer_submitted",
+                message="Telegram 115 转存已提交。",
+                detail=detail,
+            )
+            if chat_id and message_id:
+                self._edit_ai_markdown_message(
+                    token=token,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    title="📦 115 转存",
+                    body=f"已提交 115 转存。\n资源：{pending.get('title') or pending.get('shareCode')}\n目录：{result.get('targetCid') or pending.get('targetCid') or '0'}\n结果：115 已收到转存请求。",
+                )
+        except Exception as err:
+            LOGGER.exception("Telegram 115 transfer callback failed: %s", err)
+            detail["error"] = str(err)
+            self._log_project_event(
+                level="error",
+                module="drive115",
+                action="telegram_drive115_transfer_failed",
+                message="Telegram 115 转存失败。",
+                detail=detail,
+            )
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="转存失败")
+                if chat_id and message_id:
+                    self._edit_ai_markdown_message(
+                        token=token,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        title="📦 115 转存失败",
                         body=str(err),
                     )
             except Exception:
@@ -605,6 +1276,7 @@ class TelegramCommandService:
         reply_markup = reply.get("reply_markup") if isinstance(reply.get("reply_markup"), dict) else None
         parse_mode = str(reply.get("parse_mode") or "").strip()
         fallback_text = str(reply.get("fallback_text") or text).strip()
+        reply_to_message_id = int(reply.get("reply_to_message_id") or 0)
         if photo_bytes:
             try:
                 self.sender.send_photo_file(
@@ -647,12 +1319,39 @@ class TelegramCommandService:
                     text = f"{photo_caption}\n\n{text}" if text else photo_caption
         if text:
             try:
-                self.sender.send_text(token=token, chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+                self.sender.send_text(
+                    token=token,
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    reply_to_message_id=reply_to_message_id,
+                )
             except Exception as err:
-                if parse_mode != "MarkdownV2":
+                if parse_mode == "MarkdownV2":
+                    LOGGER.warning("Telegram MarkdownV2 send failed, fallback to plain text: %s", err)
+                    try:
+                        self.sender.send_text(
+                            token=token,
+                            chat_id=chat_id,
+                            text=fallback_text or text,
+                            reply_markup=reply_markup,
+                            reply_to_message_id=reply_to_message_id,
+                        )
+                        return
+                    except Exception:
+                        if not reply_to_message_id:
+                            raise
+                elif not reply_to_message_id:
                     raise
-                LOGGER.warning("Telegram MarkdownV2 send failed, fallback to plain text: %s", err)
-                self.sender.send_text(token=token, chat_id=chat_id, text=fallback_text or text, reply_markup=reply_markup)
+                LOGGER.warning("Telegram referenced reply failed, fallback to standalone message: %s", err)
+                self.sender.send_text(
+                    token=token,
+                    chat_id=chat_id,
+                    text=fallback_text or text,
+                    reply_markup=reply_markup,
+                    parse_mode="" if parse_mode == "MarkdownV2" else parse_mode,
+                )
 
     def _dispatch_command(self, cmd: str, args: str) -> CommandReply:
         if cmd in {"start", "help"}:
@@ -667,6 +1366,8 @@ class TelegramCommandService:
             return self._cmd_recent_library()
         if cmd == "saomiao":
             return self._cmd_scan_library(args)
+        if cmd == "zhuancun115":
+            return self._cmd_drive115_transfer(args)
         if cmd == "ai":
             return self._cmd_ai(args)
         if cmd == "sousuo":
@@ -721,6 +1422,20 @@ class TelegramCommandService:
         if not content.strip():
             return None
         return json.loads(content)
+
+    def _media_identity_service(self) -> MediaIdentityService:
+        token, language, region = self._tmdb_context()
+
+        def tmdb_fetcher(path: str) -> dict[str, Any] | list[Any] | None:
+            return self._tmdb_get_json(path, token=token)
+
+        return MediaIdentityService(
+            emby_fetcher=self._emby_get,
+            tmdb_fetcher=tmdb_fetcher if token else None,
+            cache_path=self.store_path.parent / "media_identity_cache.json",
+            language=language,
+            region=region,
+        )
 
     def _emby_fetch_bytes(self, path: str, *, max_bytes: int = 10 * 1024 * 1024) -> tuple[bytes, str]:
         base_url, api_key = self._emby_context()
@@ -1303,6 +2018,208 @@ class TelegramCommandService:
             reply_markup=self._build_scan_library_keyboard(visible_rows),
         )
 
+    @staticmethod
+    def _looks_like_115_share(text: str) -> bool:
+        value = str(text or "").strip()
+        return bool(re.search(r"(115\.com/s/|115cdn\.com/s/|anxia\.com/s/|share_code=)", value, flags=re.IGNORECASE))
+
+    def _message_text_candidates(self, message: dict[str, Any], *, include_reply: bool = False) -> list[dict[str, str]]:
+        candidates: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def add(value: Any, source: str) -> None:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                return
+            seen.add(text)
+            candidates.append({"text": text, "source": source})
+
+        def collect(current: dict[str, Any], prefix: str) -> None:
+            body = str(current.get("text") or "").strip()
+            caption = str(current.get("caption") or "").strip()
+            add(body, f"{prefix}.text")
+            add(caption, f"{prefix}.caption")
+            self._collect_entity_urls(body, current.get("entities"), candidates, seen, f"{prefix}.text_entity")
+            self._collect_entity_urls(caption, current.get("caption_entities"), candidates, seen, f"{prefix}.caption_entity")
+
+        collect(message, "message")
+        if include_reply:
+            reply = message.get("reply_to_message")
+            if isinstance(reply, dict):
+                collect(reply, "reply")
+        return candidates
+
+    @staticmethod
+    def _collect_entity_urls(
+        text: str,
+        entities: Any,
+        candidates: list[dict[str, str]],
+        seen: set[str],
+        source: str,
+    ) -> None:
+        if not isinstance(entities, list):
+            return
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            entity_type = str(entity.get("type") or "").strip()
+            value = ""
+            if entity_type == "text_link":
+                value = str(entity.get("url") or "").strip()
+            elif entity_type == "url":
+                try:
+                    offset = int(entity.get("offset") or 0)
+                    length = int(entity.get("length") or 0)
+                    value = text[offset : offset + length].strip()
+                except Exception:
+                    value = ""
+            if value and value not in seen:
+                seen.add(value)
+                candidates.append({"text": value, "source": source})
+
+    def _find_115_share_candidate(self, candidates: list[dict[str, str]]) -> dict[str, str] | None:
+        for candidate in candidates:
+            text = str(candidate.get("text") or "").strip()
+            if self._looks_like_115_share(text) and extract_115_share(text).get("shareCode"):
+                return candidate
+        return None
+
+    @staticmethod
+    def _mask_share_code(value: Any) -> str:
+        text = str(value or "").strip()
+        if len(text) <= 4:
+            return text
+        return f"{text[:3]}***{text[-2:]}"
+
+    def _drive115_service(self) -> Drive115Service:
+        store = _read_store(self.store_path)
+        config = apply_drive115_env_overrides(store.get("drive115Config"))
+        return Drive115Service(config)
+
+    def _cmd_drive115_transfer(self, args: str = "", *, reply_to_message_id: int = 0) -> CommandReply:
+        text = str(args or "").strip()
+        if not text:
+            return self._ai_markdown_reply(
+                "📦 115 链接转存",
+                "用法：/zhuancun115 115分享链接\n\n私聊也可以直接发送包含 115 链接的资源消息，机器人识别后会立即转存。",
+            )
+        store = _read_store(self.store_path)
+        config = apply_drive115_env_overrides(store.get("drive115Config"))
+        if not bool(config.get("enabled")):
+            return self._drive115_transfer_result(
+                success=False,
+                reason="请先在后台“115网盘”页面启用并保存配置",
+                reply_to_message_id=reply_to_message_id,
+            )
+        if not str(config.get("cookie") or "").strip():
+            return self._drive115_transfer_result(
+                success=False,
+                reason="请先在后台“115网盘”页面填写并保存 115 Cookie",
+                reply_to_message_id=reply_to_message_id,
+            )
+        share = extract_115_share(text)
+        if not share.get("shareCode"):
+            return self._drive115_transfer_result(
+                success=False,
+                reason="未在当前消息或回复消息中识别到 115 分享链接",
+                reply_to_message_id=reply_to_message_id,
+            )
+        masked_share_code = self._mask_share_code(share.get("shareCode"))
+        service = Drive115Service(config)
+        try:
+            parsed = service.parse_share(
+                share_url=text,
+                receive_code=str(share.get("receiveCode") or ""),
+            )
+        except Exception as err:
+            self._log_project_event(
+                level="error",
+                module="drive115",
+                action="telegram_drive115_parse_failed",
+                message="Telegram 115 分享解析失败。",
+                detail={
+                    "shareCode": masked_share_code,
+                    "error": str(err),
+                    "successCount": 0,
+                    "failureCount": 1,
+                    "replyToMessage": bool(reply_to_message_id),
+                },
+            )
+            return self._drive115_transfer_result(
+                success=False,
+                reason=str(err),
+                reply_to_message_id=reply_to_message_id,
+            )
+
+        file_ids = [str(row.get("id") or "").strip() for row in parsed.get("files", []) if str(row.get("id") or "").strip()]
+        target_cid = str(config.get("defaultCid") or "0").strip() or "0"
+        detail = {
+            "shareCode": self._mask_share_code(parsed.get("shareCode") or share.get("shareCode")),
+            "targetCid": target_cid,
+            "title": str(parsed.get("title") or "").strip(),
+            "fileCount": int(parsed.get("fileCount") or len(file_ids) or 0),
+            "replyToMessage": bool(reply_to_message_id),
+        }
+        try:
+            result = service.transfer_share(
+                share_code=str(parsed.get("shareCode") or share.get("shareCode") or ""),
+                receive_code=str(parsed.get("receiveCode") or share.get("receiveCode") or ""),
+                target_cid=target_cid,
+                file_ids=file_ids,
+            )
+            if not bool(result.get("ok", True)):
+                raise RuntimeError(str(result.get("message") or "115 未接受转存请求"))
+            detail.update({"successCount": 1, "failureCount": 0})
+            self._log_project_event(
+                level="info",
+                module="drive115",
+                action="telegram_drive115_transfer_submitted",
+                message="Telegram 115 转存已提交。",
+                detail=detail,
+            )
+            return self._drive115_transfer_result(
+                success=True,
+                reply_to_message_id=reply_to_message_id,
+            )
+        except Exception as err:
+            LOGGER.warning("Telegram 115 direct transfer failed: %s", err)
+            detail.update({"successCount": 0, "failureCount": 1, "error": str(err)})
+            self._log_project_event(
+                level="error",
+                module="drive115",
+                action="telegram_drive115_transfer_failed",
+                message="Telegram 115 转存失败。",
+                detail=detail,
+            )
+            return self._drive115_transfer_result(
+                success=False,
+                reason=str(err),
+                reply_to_message_id=reply_to_message_id,
+            )
+
+    @staticmethod
+    def _drive115_transfer_result(*, success: bool, reason: str = "", reply_to_message_id: int = 0) -> dict[str, Any]:
+        if success:
+            text = "转存完成：成功 1 个，失败 0 个"
+        else:
+            safe_reason = str(reason or "115 未接受转存请求").strip()
+            text = f"转存完成：成功 0 个，失败 1 个\n原因：{safe_reason}"
+        return {
+            "text": text,
+            "fallback_text": text,
+            "reply_to_message_id": int(reply_to_message_id or 0),
+        }
+
+    def _cleanup_pending_drive115_transfers(self) -> None:
+        now = time.time()
+        expired = [key for key, value in self._pending_drive115_transfers.items() if now - float(value.get("createdAt") or 0) > 900]
+        for key in expired:
+            self._pending_drive115_transfers.pop(key, None)
+        overflow = len(self._pending_drive115_transfers) - 100
+        if overflow > 0:
+            for key in list(self._pending_drive115_transfers.keys())[:overflow]:
+                self._pending_drive115_transfers.pop(key, None)
+
     def _cmd_ai(self, args: str) -> CommandReply:
         question = str(args or "").strip()
         if not question:
@@ -1318,9 +2235,21 @@ class TelegramCommandService:
         if safety_reply:
             return self._ai_markdown_reply("🧠 AI 安全限制", safety_reply)
 
+        question, route_reply = self._prepare_ai_routed_question(
+            question,
+            ai_config=ai_config,
+            conversation_key="",
+        )
+        if route_reply:
+            return self._ai_markdown_reply("🧠 AI 媒体问答", route_reply)
+
         execution_reply = self._build_ai_execution_proposal(question)
         if execution_reply:
             return execution_reply
+
+        episode_reply = self._build_ai_episode_query_reply(question)
+        if episode_reply:
+            return self._ai_markdown_reply("🧠 AI 媒体问答", episode_reply)
 
         messages = self._build_ai_messages(question, ai_config=ai_config)
         try:
@@ -1328,26 +2257,49 @@ class TelegramCommandService:
             answer = chat_completion(config=ai_config, messages=messages, timeout_seconds=45)
             elapsed_ms = int((time.time() - started) * 1000)
         except Exception as err:
-            self._log_project_event(
-                level="warning",
-                module="webhook",
-                action="telegram_ai_failed",
-                message="Telegram AI 问答失败。",
-                detail={"model": str(ai_config.get("model") or ""), "error": str(err)},
-            )
-            return self._ai_markdown_reply("🧠 AI 问答失败", str(err))
+            if self._is_ai_context_limit_error(err):
+                try:
+                    messages = self._shrink_ai_messages(messages)
+                    answer = chat_completion(config=ai_config, messages=messages, timeout_seconds=45)
+                    elapsed_ms = int((time.time() - started) * 1000)
+                except Exception as retry_err:
+                    err = retry_err
+                else:
+                    err = None
+            if err is None:
+                pass
+            else:
+                self._log_project_event(
+                    level="warning",
+                    module="webhook",
+                    action="telegram_ai_failed",
+                    message="Telegram AI 问答失败。",
+                    detail={"model": str(ai_config.get("model") or ""), "error": str(err)},
+                )
+                return self._ai_markdown_reply("🧠 AI 问答失败", str(err))
 
         self._log_project_event(
             level="info",
             module="webhook",
             action="telegram_ai_success",
             message="Telegram AI 问答已返回。",
-            detail={"model": str(ai_config.get("model") or ""), "elapsedMs": elapsed_ms},
+            detail={
+                "model": str(ai_config.get("model") or ""),
+                "elapsedMs": elapsed_ms,
+                "estimatedContextTokens": sum(self._estimate_ai_tokens(str(row.get("content") or "")) for row in messages),
+            },
         )
         self._remember_ai_exchange(chat_id="", question=question, answer=answer)
         return self._ai_markdown_reply("🧠 AI 媒体问答", self._truncate_text(answer, 3400))
 
-    def _dispatch_ai_streaming(self, args: str, *, token: str, chat_id: str) -> CommandReply | None:
+    def _dispatch_ai_streaming(
+        self,
+        args: str,
+        *,
+        token: str,
+        chat_id: str,
+        conversation_key: str = "",
+    ) -> CommandReply | None:
         question = str(args or "").strip()
         if not question:
             return self._ai_markdown_reply("🧠 AI 媒体问答", "用法：/ai 推荐一部最近入库的动漫")
@@ -1358,15 +2310,52 @@ class TelegramCommandService:
         if not str(ai_config.get("apiKey") or "").strip() or not str(ai_config.get("baseUrl") or "").strip():
             return self._ai_markdown_reply("🧠 AI 配置不完整", "请先填写 Base URL、API Key 和模型名称。")
 
+        if self._is_ai_context_status_request(question):
+            return self._ai_markdown_reply("🧠 AI 当前上下文", self._format_ai_context_status(conversation_key, ai_config=ai_config))
+        if self._is_ai_context_reset_request(question):
+            existed = self._ai_conversations.clear(conversation_key)
+            self._ai_chat_history.pop(chat_id, None)
+            message = "已清除当前聊天的 AI 上下文。" if existed else "当前聊天没有可清除的 AI 上下文。"
+            return self._ai_markdown_reply("🧠 AI 上下文", message)
+
         safety_reply = self._build_ai_safety_reply(question)
         if safety_reply:
             return self._ai_markdown_reply("🧠 AI 安全限制", safety_reply)
+
+        question, route_reply = self._prepare_ai_routed_question(
+            question,
+            ai_config=ai_config,
+            conversation_key=conversation_key,
+        )
+        if route_reply:
+            self._remember_ai_exchange(chat_id=chat_id, question=str(args or "").strip(), answer=route_reply)
+            self._ai_conversations.remember(conversation_key, question=str(args or "").strip(), answer=route_reply)
+            return self._ai_markdown_reply("🧠 AI 媒体问答", route_reply)
 
         execution_reply = self._build_ai_execution_proposal(question)
         if execution_reply:
             return execution_reply
 
-        messages = self._build_ai_messages(question, chat_id=chat_id, ai_config=ai_config)
+        media_detail_reply = self._build_ai_media_detail_reply(question, conversation_key=conversation_key)
+        if media_detail_reply:
+            self._remember_ai_exchange(chat_id=chat_id, question=question, answer=media_detail_reply)
+            self._ai_conversations.remember(conversation_key, question=question, answer=media_detail_reply)
+            return self._ai_markdown_reply("🧠 AI 媒体问答", media_detail_reply)
+
+        missing_reply = self._build_ai_missing_episode_reply(question, conversation_key=conversation_key, rich=True, chat_id=chat_id)
+        if missing_reply:
+            memory_text = str(missing_reply.get("memory_text") or missing_reply.get("fallback_text") or "") if isinstance(missing_reply, dict) else str(missing_reply)
+            self._remember_ai_exchange(chat_id=chat_id, question=question, answer=memory_text)
+            self._ai_conversations.remember(conversation_key, question=question, answer=memory_text)
+            return missing_reply if isinstance(missing_reply, dict) else self._ai_markdown_reply("🧠 AI 媒体问答", missing_reply)
+
+        episode_reply = self._build_ai_episode_query_reply(question, conversation_key=conversation_key)
+        if episode_reply:
+            self._remember_ai_exchange(chat_id=chat_id, question=question, answer=episode_reply)
+            self._ai_conversations.remember(conversation_key, question=question, answer=episode_reply)
+            return self._ai_markdown_reply("🧠 AI 媒体问答", episode_reply)
+
+        messages = self._build_ai_messages(question, chat_id=chat_id, conversation_key=conversation_key, ai_config=ai_config)
         message_id = self._send_ai_markdown_message(
             token=token,
             chat_id=chat_id,
@@ -1387,7 +2376,8 @@ class TelegramCommandService:
         except Exception as stream_err:
             LOGGER.warning("Telegram AI streaming failed, fallback to plain completion: %s", stream_err)
             try:
-                answer = chat_completion(config=ai_config, messages=messages, timeout_seconds=45)
+                fallback_messages = self._shrink_ai_messages(messages) if self._is_ai_context_limit_error(stream_err) else messages
+                answer = chat_completion(config=ai_config, messages=fallback_messages, timeout_seconds=45)
                 self._edit_ai_markdown_message(
                     token=token,
                     chat_id=chat_id,
@@ -1396,6 +2386,7 @@ class TelegramCommandService:
                     body=self._truncate_text(answer, 3400),
                 )
                 self._remember_ai_exchange(chat_id=chat_id, question=question, answer=answer)
+                self._ai_conversations.remember(conversation_key, question=question, answer=answer)
             except Exception as err:
                 self._log_project_event(
                     level="warning",
@@ -1419,19 +2410,160 @@ class TelegramCommandService:
             module="webhook",
             action="telegram_ai_success",
             message="Telegram AI 问答已返回。",
-            detail={"model": str(ai_config.get("model") or ""), "elapsedMs": elapsed_ms, "streaming": True},
+            detail={
+                "model": str(ai_config.get("model") or ""),
+                "elapsedMs": elapsed_ms,
+                "streaming": True,
+                "estimatedContextTokens": sum(self._estimate_ai_tokens(str(row.get("content") or "")) for row in messages),
+            },
         )
         self._remember_ai_exchange(chat_id=chat_id, question=question, answer=answer)
+        self._ai_conversations.remember(conversation_key, question=question, answer=answer)
         return None
 
-    def _build_ai_messages(self, question: str, *, chat_id: str = "", ai_config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    def _prepare_ai_routed_question(
+        self,
+        question: str,
+        *,
+        ai_config: dict[str, Any],
+        conversation_key: str,
+    ) -> tuple[str, str]:
+        original = str(question or "").strip()
+        active = self._get_ai_active_media(conversation_key)
+        router = AiIntentRouter(chat_completion)
+        route = router.route(original, config=ai_config, active_media=active)
+        intent = str(route.get("intent") or "general_chat")
+        media_intents = {
+            "media_missing_episodes",
+            "media_episode_progress",
+            "media_detail",
+            "media_search",
+            "media_correction",
+        }
+        immediate = ""
+        if intent in media_intents:
+            route, immediate = self._validate_ai_media_route(
+                original,
+                route=route,
+                conversation_key=conversation_key,
+            )
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="telegram_ai_intent_routed",
+            message="Telegram AI 意图识别完成。",
+            detail={
+                "intent": intent,
+                "mediaTitle": str(route.get("mediaTitle") or ""),
+                "useActiveMedia": bool(route.get("useActiveMedia")),
+                "isCorrection": bool(route.get("isCorrection")),
+                "confidence": route.get("confidence"),
+                "source": str(route.get("source") or "fallback"),
+                "validated": bool(route.get("validated")),
+                "routerError": str(route.get("routerError") or ""),
+            },
+        )
+        if immediate:
+            return original, immediate
+
+        title = str(route.get("mediaTitle") or "").strip()
+        if bool(route.get("useActiveMedia")) and not title:
+            title = str(active.get("title") or "").strip()
+        if intent == "media_missing_episodes":
+            return (f"查看一下{title}的缺失集" if title else "查看一下缺失的集"), ""
+        if intent == "media_episode_progress":
+            return (f"{title}现在最新多少集" if title else "它现在最新多少集"), ""
+        if intent == "media_detail":
+            return (f"{title}的简介详情" if title else "它的简介详情"), ""
+        if intent == "media_search" and title:
+            return f"媒体库里有没有{title}", ""
+        if intent == "media_correction" and title:
+            return original, f"已确认，你要查询的是《{title}》。"
+        return original, ""
+
+    def _validate_ai_media_route(
+        self,
+        question: str,
+        *,
+        route: dict[str, Any],
+        conversation_key: str,
+    ) -> tuple[dict[str, Any], str]:
+        output = dict(route)
+        active = self._get_ai_active_media(conversation_key)
+        if bool(output.get("useActiveMedia")):
+            active_title = str(active.get("title") or "").strip()
+            if not active_title:
+                return output, "当前没有记住正在讨论的作品，请带上片名再查询。"
+            output["mediaTitle"] = active_title
+            output["validated"] = True
+            return output, ""
+
+        llm_title = str(output.get("mediaTitle") or "").strip()
+        rule_title = self._extract_ai_media_keyword(question)
+        candidates = AiIntentRouter.title_candidates(
+            question=question,
+            llm_title=llm_title,
+            rule_title=rule_title,
+        )
+        if not candidates:
+            if bool(output.get("isCorrection")):
+                return output, "我知道刚才理解错了，但还没识别出你要查询的片名。请直接发送作品名称。"
+            return output, "请带上要查询的影视名称。"
+
+        service = self._media_identity_service()
+        preferred_type = "series" if str(output.get("mediaType") or "") == "tv" else str(output.get("mediaType") or "")
+        ambiguous_candidates: list[dict[str, Any]] = []
+        for candidate in candidates:
+            try:
+                resolution = service.resolve(candidate, preferred_type=preferred_type)
+            except Exception:
+                continue
+            rows = resolution.get("candidates") if isinstance(resolution.get("candidates"), list) else []
+            if resolution.get("ambiguous") and rows:
+                ambiguous_candidates = rows
+                continue
+            identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
+            emby_item = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
+            resolved_title = str(identity.get("title") or emby_item.get("Name") or "").strip()
+            if not resolved_title:
+                continue
+            output["mediaTitle"] = resolved_title
+            output["mediaType"] = "tv" if str(identity.get("type") or emby_item.get("Type") or "").lower() in {"series", "tv"} else "movie"
+            output["validated"] = True
+            output["resolvedIdentity"] = {
+                "title": resolved_title,
+                "year": identity.get("year") or emby_item.get("ProductionYear"),
+                "type": str(identity.get("type") or "series"),
+                "tmdbId": str(identity.get("tmdbId") or ""),
+                "embySeriesId": str(emby_item.get("Id") or identity.get("embyId") or ""),
+            }
+            if bool(output.get("isCorrection")) or str(output.get("intent")) == "media_correction":
+                self._ai_conversations.set_active_media(conversation_key, output["resolvedIdentity"])
+            return output, ""
+
+        if ambiguous_candidates:
+            return output, self._format_ai_identity_candidates(candidates[0], ambiguous_candidates)
+        shown = candidates[-1] if len(candidates) > 1 else candidates[0]
+        return output, f"没有在 Emby 或 TMDB 中确认《{shown}》。请检查片名，或用书名号明确输入，例如《仙逆》。"
+
+    def _build_ai_messages(
+        self,
+        question: str,
+        *,
+        chat_id: str = "",
+        conversation_key: str = "",
+        ai_config: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
         context_parts = [
             self._build_ai_media_context(question=question),
             self._build_ai_recent_operations_context(),
         ]
-        conversation_context = self._build_ai_conversation_context(chat_id=chat_id)
+        active_context = self._build_ai_active_media_context(conversation_key)
+        conversation_context = self._build_ai_conversation_context(chat_id=chat_id, conversation_key=conversation_key)
         if conversation_context:
             context_parts.append(conversation_context)
+        if active_context:
+            context_parts.append(active_context)
         context = self._limit_ai_context_text("\n\n".join(part for part in context_parts if part), ai_config=ai_config)
         return [
             {
@@ -1440,6 +2572,7 @@ class TelegramCommandService:
                     "你是镜界 Vistamirror 的媒体库 AI 助手。"
                     "请用简洁中文回答，优先依据提供的媒体库上下文。"
                     "如果上下文里有“当前媒体库统计”或“命中资源详情”，必须直接使用这些准确数字回答；"
+                    "如果上下文里有“最终判断”，必须按最终判断回答，并可简短说明冲突来源；"
                     "如果上下文里包含任务、日志、缺集或播放历史摘要，也要优先引用这些项目资料。"
                     "如果用户问“刚才”“执行了吗”“扫描了吗”“上一个操作怎么样”，必须优先查看最近项目操作和会话历史。"
                     "如果最近操作显示已提交扫描或任务，直接说明目标、时间和结果。"
@@ -1469,7 +2602,21 @@ class TelegramCommandService:
         )
         self._ai_chat_history[safe_chat_id] = rows[-10:]
 
-    def _build_ai_conversation_context(self, *, chat_id: str) -> str:
+    def _build_ai_conversation_context(self, *, chat_id: str, conversation_key: str = "") -> str:
+        persistent = self._ai_conversations.get(conversation_key)
+        persistent_rows = persistent.get("recent") if isinstance(persistent.get("recent"), list) else []
+        if persistent_rows:
+            lines = ["最近 Telegram 对话上下文："]
+            summary = str(persistent.get("summary") or "").strip()
+            if summary:
+                lines.append("长期摘要：")
+                lines.append(summary)
+            for row in persistent_rows:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(f"- {row.get('time', '')} 用户：{row.get('user', '')}")
+                lines.append(f"  AI：{row.get('assistant', '')}")
+            return "\n".join(lines)
         safe_chat_id = str(chat_id or "").strip()
         rows = self._ai_chat_history.get(safe_chat_id) if safe_chat_id else []
         if not rows:
@@ -1481,6 +2628,25 @@ class TelegramCommandService:
             lines.append(f"- {row.get('time', '')} 用户：{row.get('user', '')}")
             lines.append(f"  AI：{row.get('assistant', '')}")
         return "\n".join(lines)
+
+    def _build_ai_active_media_context(self, conversation_key: str) -> str:
+        session = self._ai_conversations.get(conversation_key)
+        media = session.get("activeMedia") if isinstance(session.get("activeMedia"), dict) else {}
+        if not media:
+            return ""
+        return "\n".join(
+            [
+                "当前对话媒体：",
+                f"- 标题：{media.get('title') or '未知'}",
+                f"- Emby Series ID：{media.get('embySeriesId') or '未知'}",
+                f"- TMDB ID：{media.get('tmdbId') or '未知'}",
+                f"- 最新单集：{media.get('latestEpisode') or '未知'}",
+                f"- 实际可读取：{media.get('actualEpisodeCount') or 0} 集",
+                f"- TMDB 应有：{media.get('expectedEpisodeCount') or 0} 集",
+                f"- 当前缺失：{media.get('missingEpisodeCount') or 0} 集",
+                "- 规则：用户说“它/这部/这个/缺失的集”时指向该媒体。",
+            ]
+        )
 
     def _build_ai_recent_operations_context(self) -> str:
         try:
@@ -1532,19 +2698,87 @@ class TelegramCommandService:
             parts.append(f"{key}={str(value)[:160]}")
         return "，".join(parts)
 
-    @staticmethod
-    def _limit_ai_context_text(text: str, *, ai_config: dict[str, Any] | None = None) -> str:
+    @classmethod
+    def _limit_ai_context_text(cls, text: str, *, ai_config: dict[str, Any] | None = None) -> str:
         config = ai_config if isinstance(ai_config, dict) else {}
         try:
             context_tokens_k = int(config.get("contextTokensK") or 64)
         except (TypeError, ValueError):
             context_tokens_k = 64
         context_tokens_k = max(4, min(1024, context_tokens_k))
-        max_chars = min(context_tokens_k * 1000 * 3, 120000)
+        reserved_tokens = max(2048, int(config.get("maxTokens") or 800) + 1200)
+        max_tokens = max(2000, context_tokens_k * 1000 - reserved_tokens)
         value = str(text or "")
-        if len(value) <= max_chars:
+        if cls._estimate_ai_tokens(value) <= max_tokens:
             return value
-        return value[-max_chars:]
+        low = 0
+        high = len(value)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if cls._estimate_ai_tokens(value[-middle:]) <= max_tokens:
+                low = middle
+            else:
+                high = middle - 1
+        tail = value[-low:] if low > 0 else ""
+        return "[较早上下文已按 Token 预算压缩]\n" + tail
+
+    @staticmethod
+    def _estimate_ai_tokens(text: str) -> int:
+        value = str(text or "")
+        cjk = len(re.findall(r"[\u3400-\u9fff\uf900-\ufaff]", value))
+        other = max(0, len(value) - cjk)
+        return cjk + (other + 3) // 4
+
+    @staticmethod
+    def _is_ai_context_limit_error(error: Any) -> bool:
+        text = str(error or "").lower()
+        return any(
+            marker in text
+            for marker in (
+                "context length",
+                "context_length",
+                "maximum context",
+                "too many tokens",
+                "token limit",
+                "上下文超限",
+            )
+        )
+
+    @classmethod
+    def _shrink_ai_messages(cls, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        output: list[dict[str, str]] = []
+        for message in messages:
+            row = dict(message)
+            content = str(row.get("content") or "")
+            if row.get("role") == "user" and len(content) > 2000:
+                keep = max(1000, len(content) // 2)
+                row["content"] = "[较早上下文已因模型限制缩减]\n" + content[-keep:]
+            output.append(row)
+        return output
+
+    @staticmethod
+    def _is_ai_context_status_request(question: str) -> bool:
+        return bool(re.fullmatch(r"(?:/ai\s*)?(?:当前上下文|查看上下文|上下文状态)", str(question or "").strip()))
+
+    @staticmethod
+    def _is_ai_context_reset_request(question: str) -> bool:
+        return bool(re.fullmatch(r"(?:/ai\s*)?(?:重置上下文|清除上下文|忘记当前话题)", str(question or "").strip()))
+
+    def _format_ai_context_status(self, conversation_key: str, *, ai_config: dict[str, Any]) -> str:
+        session = self._ai_conversations.get(conversation_key)
+        media = session.get("activeMedia") if isinstance(session.get("activeMedia"), dict) else {}
+        recent = session.get("recent") if isinstance(session.get("recent"), list) else []
+        summary = str(session.get("summary") or "")
+        context_text = self._build_ai_conversation_context(chat_id="", conversation_key=conversation_key)
+        return "\n".join(
+            [
+                f"当前作品：{media.get('title') or '未设置'}",
+                f"已保存问答：{len(recent)} 轮",
+                f"长期摘要：{'已生成' if summary else '暂无'}",
+                f"当前记忆估算：{self._estimate_ai_tokens(context_text)} Token",
+                f"配置上限：{int(ai_config.get('contextTokensK') or 64)}K Token",
+            ]
+        )
 
     def _send_ai_markdown_message(self, *, token: str, chat_id: str, title: str, body: Any) -> int:
         reply = self._ai_markdown_reply(title, body)
@@ -1613,6 +2847,59 @@ class TelegramCommandService:
             "parse_mode": "MarkdownV2",
             "fallback_text": plain,
             "reply_markup": reply_markup if isinstance(reply_markup, dict) else None,
+        }
+
+    def _missing_episode_report_reply(self, report: dict[str, Any], *, chat_id: str = "") -> dict[str, Any]:
+        title = str(report.get("title") or "未知作品").strip()
+        year = str(report.get("year") or "年份未知").strip()
+        missing_text = str(report.get("missingText") or "无").strip()
+        future_text = str(report.get("futureText") or "").strip()
+        unknown_text = str(report.get("unknownText") or "").strip()
+        search_count = max(0, int(report.get("searchCount") or 0))
+        data_query_count = max(0, int(report.get("dataQueryCount") or 0))
+        table = "\n".join(
+            [
+                "项目       | 详情",
+                "-----------+----------------",
+                f"TMDB ID    | {report.get('tmdbId') or '-'}",
+                f"登记       | {int(report.get('registeredCount') or 0)} 集",
+                f"已播出     | {int(report.get('airedCount') or 0)} 集",
+                f"Emby 已有  | {int(report.get('localCount') or 0)} 集",
+                f"缺失       | {missing_text}",
+                f"最后播出   | {report.get('lastAiredDate') or '-'}",
+            ]
+        )
+        intro = _escape_markdown_v2(f"（执行 {search_count} 次搜索，查询 {data_query_count} 次数据）")
+        heading = _escape_markdown_v2(f"《{title}》（{year}）缺集情况：")
+        outside = [f"缺失的剧集：{missing_text if report.get('missingLabels') else '无'}"]
+        if future_text:
+            outside.append(f"未来未播：{future_text}（不计入缺失）")
+        if unknown_text:
+            outside.append(f"播出日期未知：{unknown_text}（暂不计入缺失）")
+        if report.get("missingLabels"):
+            outside.extend(["", "需要生成这些缺失集的搜索清单吗？"])
+        markdown = f"{intro}\n\n*{heading}*\n\n```text\n{_escape_markdown_v2_code(table)}\n```"
+        if outside:
+            markdown += "\n" + "\n".join(_escape_markdown_v2(line) for line in outside)
+        fallback = f"（执行 {search_count} 次搜索，查询 {data_query_count} 次数据）\n\n《{title}》（{year}）缺集情况：\n\n{table}\n\n" + "\n".join(outside)
+        reply_markup = None
+        labels = [str(value or "").strip() for value in report.get("missingLabels", []) if str(value or "").strip()]
+        if labels:
+            action_id = secrets.token_urlsafe(8)
+            self._pending_missing_searches[action_id] = {
+                "title": title,
+                "labels": labels,
+                "chatId": str(chat_id or ""),
+                "createdAt": time.time(),
+            }
+            self._cleanup_pending_missing_searches()
+            reply_markup = {"inline_keyboard": [[{"text": "生成搜索清单", "callback_data": f"missing_search:{action_id}"}]]}
+        return {
+            "text": markdown,
+            "parse_mode": "MarkdownV2",
+            "fallback_text": fallback,
+            "reply_markup": reply_markup,
+            "memory_text": str(report.get("memoryText") or fallback),
         }
 
     def _build_ai_media_context(self, *, question: str = "") -> str:
@@ -2373,11 +3660,13 @@ class TelegramCommandService:
         ).strip()
         if not tmdb_token:
             raise RuntimeError("缺少 TMDB Token，请先在系统设置里填写并保存。")
+        identity_service = self._media_identity_service()
         service = MissingEpisodeService(
             emby_fetcher=self._emby_get,
             tmdb_token=tmdb_token,
             tmdb_language=str(emby.get("tmdbLanguage") or "zh-CN"),
             tmdb_region=str(emby.get("tmdbRegion") or "CN"),
+            identity_resolver=lambda item: str(identity_service.identity_from_emby_item(item).get("tmdbId") or ""),
         )
         result = service.scan(scan_limit=1200)
         output = {
@@ -2432,14 +3721,570 @@ class TelegramCommandService:
             rows.append(f"- 可统计资源合计：{total} 个")
         return "\n".join(rows)
 
-    def _build_ai_focus_media_context(self, question: str) -> str:
-        keyword = self._extract_ai_media_keyword(question)
-        if not keyword:
+    def _build_ai_media_detail_reply(self, question: str, *, conversation_key: str = "") -> str:
+        text = str(question or "").strip()
+        if not re.search(r"简介|剧情|详情|演员|主演|评分", text):
             return ""
+        active = self._get_ai_active_media(conversation_key)
+        if self._is_ai_reference_question(text) and active.get("title"):
+            keywords = [str(active.get("title") or "").strip()]
+            preferred_type = str(active.get("type") or "")
+        else:
+            keywords = self._extract_ai_media_keywords(text)
+            preferred_type = ""
+        if not keywords:
+            return "当前没有记住正在讨论的作品，请带上片名再查询。"
+        keyword = keywords[0]
         try:
-            items = self._search_emby_items(keyword=keyword, limit=8)
+            service = self._media_identity_service()
+            resolution = service.resolve(keyword, preferred_type=preferred_type)
         except Exception as err:
-            return f"命中资源详情：搜索“{keyword}”失败（{self._format_emby_error(err)}）。"
+            return f"查询《{keyword}》详情失败：{self._format_emby_error(err)}"
+        if resolution.get("ambiguous") and not resolution.get("embyItem"):
+            return self._format_ai_identity_candidates(keyword, resolution.get("candidates"))
+        identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
+        emby_item = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
+        if not identity and not emby_item:
+            return f"当前 TMDB 和 Emby 都没有找到《{keyword}》。"
+        tmdb_detail: dict[str, Any] = {}
+        try:
+            tmdb_detail = service.get_media_detail(str(identity.get("tmdbId") or ""), str(identity.get("type") or ""))
+        except Exception as err:
+            LOGGER.warning("TG AI TMDB detail fallback: title=%s err=%s", keyword, err)
+        title = str(identity.get("title") or emby_item.get("Name") or keyword).strip()
+        year = str(identity.get("year") or emby_item.get("ProductionYear") or "").strip()
+        overview = str(tmdb_detail.get("overview") or emby_item.get("Overview") or identity.get("overview") or "").strip()
+        rating = tmdb_detail.get("vote_average")
+        if rating in (None, ""):
+            rating = emby_item.get("CommunityRating") or identity.get("rating")
+        credits = tmdb_detail.get("credits") if isinstance(tmdb_detail.get("credits"), dict) else {}
+        cast = credits.get("cast") if isinstance(credits.get("cast"), list) else []
+        cast_names = [str(row.get("name") or "").strip() for row in cast[:8] if isinstance(row, dict) and str(row.get("name") or "").strip()]
+        type_label = "剧集" if str(identity.get("type") or "") == "series" else "电影"
+        lines = [f"《{title}》详情：", f"- 年份：{year or '未知'}", f"- 类型：{type_label}"]
+        if rating not in (None, ""):
+            try:
+                lines.append(f"- 评分：{float(rating):.1f}")
+            except Exception:
+                lines.append(f"- 评分：{rating}")
+        if cast_names:
+            lines.append(f"- 主演：{'、'.join(cast_names)}")
+        lines.append(f"- 简介：{overview[:900] if overview else '暂无简介'}")
+        lines.append(f"- 本地状态：{'已入库' if emby_item else '未入库'}")
+        self._ai_conversations.set_active_media(
+            conversation_key,
+            {
+                "title": title,
+                "year": year,
+                "type": identity.get("type"),
+                "embySeriesId": emby_item.get("Id") if str(identity.get("type") or "") == "series" else "",
+                "tmdbId": identity.get("tmdbId"),
+            },
+        )
+        return "\n".join(lines)
+
+    def _build_ai_episode_query_reply(self, question: str, *, conversation_key: str = "") -> str:
+        text = str(question or "").strip()
+        if not self._is_ai_episode_count_question(text):
+            return ""
+        keywords = self._extract_ai_media_keywords(text)
+        active_media = self._get_ai_active_media(conversation_key)
+        if self._is_ai_reference_question(text) and active_media.get("title"):
+            keywords = [str(active_media.get("title") or "").strip()]
+        if not keywords:
+            return "没有识别到要查询的剧集名称，请带上片名再试。"
+
+        keyword = keywords[0]
+        try:
+            resolution = self._media_identity_service().resolve(keyword, preferred_type="series")
+        except Exception as err:
+            return f"查询《{keyword}》失败：{self._format_emby_error(err)}"
+        if resolution.get("ambiguous") and not resolution.get("embyItem"):
+            return self._format_ai_identity_candidates(keyword, resolution.get("candidates"))
+        series = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
+        identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
+        if not series:
+            self._log_ai_media_query_diagnostic(
+                question=text,
+                keyword=keyword,
+                candidates=keywords,
+                detail={"result": "not_found"},
+            )
+            return f"当前 Emby 可读范围内没有找到《{keyword}》。"
+        if str(series.get("Type") or "").strip().lower() == "episode":
+            series = self._resolve_ai_series_search_item(series, items=[series], keyword=keyword)
+        if str(series.get("Type") or "").strip().lower() != "series":
+            title = str(series.get("Name") or keyword).strip()
+            return f"媒体库中找到了《{title}》，但它不是可统计单集的剧集资源。"
+
+        item_id = str(series.get("Id") or "").strip()
+        detail = dict(series)
+        if item_id:
+            try:
+                payload = self._emby_get(
+                    f"/Items/{urllib.parse.quote(item_id, safe='')}?Fields=Name,Type,ProductionYear,PremiereDate,ChildCount,RecursiveItemCount,Status,ProviderIds"
+                )
+                if isinstance(payload, dict):
+                    detail.update(payload)
+            except Exception as err:
+                LOGGER.warning("TG AI series detail fallback: item_id=%s err=%s", item_id, err)
+
+        title = str(detail.get("Name") or keyword).strip()
+        identity = identity or self._resolve_ai_media_identity(keyword=keyword, detail=detail)
+        season_count, actual_count, _season_lines, latest_text, source_note = self._resolve_ai_series_counts(
+            item_id=item_id,
+            detail=detail,
+            keyword=keyword,
+            title=title,
+            identity=identity,
+        )
+        latest_label = self._format_ai_latest_episode_label(latest_text)
+        lines = [f"《{title}》媒体库查询结果："]
+        if latest_label:
+            lines.append(f"- 本地最新已入库：{latest_label}")
+        else:
+            lines.append("- 本地最新已入库：未读取到有效季集编号")
+        lines.append(f"- 实际可读取单集：{actual_count} 集")
+        if season_count > 1:
+            lines.append(f"- 可读取季数：{season_count} 季")
+        if source_note:
+            lines.append(f"- 核对说明：{source_note}")
+        self._log_ai_media_query_diagnostic(
+            question=text,
+            keyword=keyword,
+            candidates=keywords,
+            detail={
+                "result": "matched",
+                "title": title,
+                "embySeriesId": item_id,
+                "actualEpisodeCount": actual_count,
+                "latestEpisode": latest_text,
+            },
+        )
+        self._ai_conversations.set_active_media(
+            conversation_key,
+            {
+                "title": title,
+                "year": identity.get("year"),
+                "type": "series",
+                "embySeriesId": item_id,
+                "tmdbId": identity.get("tmdbId"),
+                "latestEpisode": latest_text,
+                "actualEpisodeCount": actual_count,
+                "seasonCount": season_count,
+            },
+        )
+        return "\n".join(lines)
+
+    def _build_ai_missing_episode_reply(
+        self,
+        question: str,
+        *,
+        conversation_key: str = "",
+        rich: bool = False,
+        chat_id: str = "",
+    ) -> CommandReply:
+        text = str(question or "").strip()
+        request = self._parse_ai_missing_episode_request(text)
+        if not request:
+            return ""
+
+        started = time.time()
+        active = self._get_ai_active_media(conversation_key)
+        use_active = request.get("mode") == "context"
+        keyword = str(active.get("title") if use_active else request.get("title") or "").strip()
+        if not keyword:
+            return "当前没有记住正在讨论的剧集，请带上片名。"
+
+        service = self._media_identity_service()
+        search_count = 0
+        identity: dict[str, Any] = {}
+        if use_active and active.get("tmdbId"):
+            identity = {
+                "title": keyword,
+                "year": active.get("year"),
+                "type": "series",
+                "tmdbId": str(active.get("tmdbId") or ""),
+                "embyId": str(active.get("embySeriesId") or ""),
+            }
+        else:
+            try:
+                search_count = 1
+                candidates = service.search_media(keyword, media_type="tv")
+            except Exception as err:
+                return f"TMDB 搜索《{keyword}》失败：{self._format_emby_error(err)}"
+            if not candidates:
+                return f"TMDB 没有找到《{keyword}》，无法计算预期缺集。"
+            if len(candidates) > 1 and int(candidates[0].get("score") or 0) == int(candidates[1].get("score") or 0) and candidates[0].get("year") != candidates[1].get("year"):
+                return self._format_ai_identity_candidates(keyword, candidates)
+            identity = dict(candidates[0])
+
+        try:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="MediaInventory") as executor:
+                detail_future = executor.submit(service.query_media_detail, str(identity.get("tmdbId") or ""), "tv")
+                library_future = executor.submit(service.query_library_exists, identity)
+                expected = detail_future.result()
+                existing = library_future.result()
+        except Exception as err:
+            return f"查询《{keyword}》集数失败：{self._format_emby_error(err)}"
+
+        if not existing.get("exists"):
+            return f"TMDB 已识别《{identity.get('title') or keyword}》，但 Emby 媒体库中未找到该剧集。"
+        emby_item = existing.get("embyItem") if isinstance(existing.get("embyItem"), dict) else {}
+        series_id = str(emby_item.get("Id") or identity.get("embyId") or "").strip()
+        title = str(identity.get("title") or emby_item.get("Name") or keyword).strip()
+
+        if expected.get("ok"):
+            comparison = service.compare_episode_inventory(expected, existing)
+            missing = comparison.get("missing") if isinstance(comparison.get("missing"), list) else []
+            missing_text = self._format_inventory_episode_labels(comparison.get("missingLabels"), fallback=missing)
+            future = comparison.get("future") if isinstance(comparison.get("future"), list) else []
+            future_text = self._format_inventory_episode_labels(comparison.get("futureLabels"), fallback=future)
+            unknown_air_date = comparison.get("unknownAirDate") if isinstance(comparison.get("unknownAirDate"), list) else []
+            unknown_text = self._format_inventory_episode_labels(comparison.get("unknownAirDateLabels"), fallback=unknown_air_date)
+            lines = [
+                f"《{title}》缺集查询结果：",
+                f"- TMDB：已播出 {comparison.get('expectedCount', 0)} 集，登记 {comparison.get('registeredCount', 0)} 集",
+                f"- Emby：已有 {comparison.get('localEpisodeCount', comparison.get('existingCount', 0))} 集",
+                f"- 缺失：{missing_text if missing else '无'}",
+                f"- 编号模式：{'全局连续编号' if comparison.get('mode') == 'global' else '标准分季编号'}",
+            ]
+            if future:
+                lines.append(f"- 未来未播：{future_text}（不计入缺失）")
+            if unknown_air_date:
+                lines.append(f"- 播出日期未知：{unknown_text}（暂不计入缺失）")
+            extras = comparison.get("extras") if isinstance(comparison.get("extras"), list) else []
+            if extras:
+                lines.append(
+                    f"- 超出 TMDB 范围：{self._format_inventory_episode_labels(comparison.get('extraLabels'), fallback=extras)}"
+                )
+            unmapped = comparison.get("unmapped") if isinstance(comparison.get("unmapped"), list) else []
+            if unmapped:
+                lines.append(f"- 无法映射：{len(unmapped)} 集（Emby 与 TMDB 季集编号不一致）")
+            if comparison.get("specials"):
+                lines.append(f"- 特别篇：{len(comparison.get('specials') or [])} 集（不参与缺集计算）")
+            expected_count = int(comparison.get("expectedCount") or 0)
+            existing_count = int(comparison.get("existingCount") or 0)
+            missing_count = len(missing)
+            numbering_mode = str(comparison.get("mode") or "")
+        else:
+            episodes = self._fetch_ai_series_episodes(item_id=series_id)
+            fallback = self._analyze_ai_local_episode_gaps(episodes)
+            local_count = sum(len(values) for values in fallback["seasonMap"].values())
+            lines = [
+                f"《{title}》缺集查询结果：",
+                "- TMDB：详情不可用，无法计算预期差集",
+                f"- Emby：已有 {local_count} 集",
+                f"- 本地内部断档：{self._format_missing_episode_map(fallback['missing']) if fallback['missing'] else '无'}",
+            ]
+            expected_count = 0
+            existing_count = local_count
+            missing_count = sum(len(values) for values in fallback["missing"].values())
+            numbering_mode = str(fallback["mode"])
+
+        self._log_ai_missing_query_diagnostic(
+            question=text,
+            keyword=keyword,
+            used_context=bool(use_active),
+            series_id=series_id,
+            result="matched",
+            numbering_mode=numbering_mode,
+            tmdb_id=str(identity.get("tmdbId") or ""),
+            expected_count=expected_count,
+            existing_count=existing_count,
+            missing_count=missing_count,
+            elapsed_ms=int((time.time() - started) * 1000),
+        )
+
+        data_query_count = int(expected.get("tmdbQueryCount") or 0) + int(existing.get("embyQueryCount") or 0)
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="telegram_missing_report_ready",
+            message="Telegram 缺集富文本报告已生成。",
+            detail={
+                "title": title,
+                "tmdbId": str(identity.get("tmdbId") or ""),
+                "searchCount": search_count,
+                "tmdbQueryCount": int(expected.get("tmdbQueryCount") or 0),
+                "embyQueryCount": int(existing.get("embyQueryCount") or 0),
+                "dataQueryCount": data_query_count,
+                "missingCount": missing_count,
+            },
+        )
+
+        self._ai_conversations.set_active_media(
+            conversation_key,
+            {
+                "title": title,
+                "year": identity.get("year"),
+                "type": "series",
+                "embySeriesId": series_id,
+                "tmdbId": identity.get("tmdbId"),
+                "actualEpisodeCount": existing_count,
+                "expectedEpisodeCount": expected_count,
+                "missingEpisodeCount": missing_count,
+                "seasonCount": len(existing.get("seasonMap") or {}),
+            },
+        )
+        memory_text = "\n".join(lines)
+        if rich and expected.get("ok"):
+            return self._missing_episode_report_reply(
+                {
+                    "title": title,
+                    "year": identity.get("year"),
+                    "tmdbId": identity.get("tmdbId"),
+                    "registeredCount": comparison.get("registeredCount", 0),
+                    "airedCount": comparison.get("expectedCount", 0),
+                    "localCount": comparison.get("localEpisodeCount", comparison.get("existingCount", 0)),
+                    "missingText": missing_text if missing else "无",
+                    "missingLabels": comparison.get("missingLabels") if missing else [],
+                    "futureText": future_text if future else "",
+                    "unknownText": unknown_text if unknown_air_date else "",
+                    "lastAiredDate": expected.get("lastAiredDate"),
+                    "searchCount": search_count,
+                    "dataQueryCount": data_query_count,
+                    "memoryText": memory_text,
+                },
+                chat_id=chat_id,
+            )
+        return memory_text
+
+    @staticmethod
+    def _parse_ai_missing_episode_request(question: str) -> dict[str, str]:
+        text = re.sub(r"^/ai(?:@\w+)?\s*", "", str(question or "").strip(), flags=re.IGNORECASE)
+        if not re.search(r"缺失.*集|缺少.*集|缺哪.*集|漏.*集|缺集", text):
+            return {}
+        value = re.sub(
+            r"^(?:帮我|请|麻烦你|你帮我)?\s*(?:查看一下|看一下|查一下|看下|查下|看看|继续查)?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if re.match(r"^(?:它|这个|这部|那个|那部)?\s*(?:的)?(?:缺失|缺少|缺哪|漏掉|漏)(?:的|哪几|哪些)?集", value):
+            return {"mode": "context", "title": ""}
+        match = re.match(
+            r"^(?P<title>.+?)(?:的)?(?:缺失|缺少|缺哪|漏掉|漏)(?:的|哪几|哪些)?集",
+            value,
+        )
+        if not match:
+            return {}
+        title = str(match.group("title") or "").strip().strip("，。！？?：:；;、《》「」“”\"'")
+        title = re.sub(r"的$", "", title).strip()
+        return {"mode": "explicit", "title": title} if title else {"mode": "context", "title": ""}
+
+    @classmethod
+    def _analyze_ai_local_episode_gaps(cls, episodes: list[dict[str, Any]]) -> dict[str, Any]:
+        season_map: dict[int, set[int]] = {}
+        for row in episodes:
+            if not isinstance(row, dict):
+                continue
+            season = cls._coerce_index_number(row.get("ParentIndexNumber"))
+            episode = cls._coerce_index_number(row.get("IndexNumber"))
+            if season is None or episode is None or season <= 0 or episode <= 0:
+                continue
+            season_map.setdefault(season, set()).add(episode)
+        blocks = sorted(
+            ((season, min(values), max(values)) for season, values in season_map.items() if values),
+            key=lambda row: (row[1], row[2], row[0]),
+        )
+        global_mode = False
+        if len(blocks) >= 2 and blocks[0][1] == 1:
+            global_mode = all(current[1] > previous[2] for previous, current in zip(blocks, blocks[1:]))
+        elif len(blocks) == 1 and blocks[0][1] > 1:
+            global_mode = True
+
+        missing: dict[int, list[int]] = {}
+        if global_mode:
+            present = set().union(*season_map.values()) if season_map else set()
+            if present:
+                gaps = sorted(set(range(min(present), max(present) + 1)).difference(present))
+                if gaps:
+                    missing[0] = gaps
+        else:
+            for season, present in season_map.items():
+                if not present:
+                    continue
+                gaps = sorted(set(range(min(present), max(present) + 1)).difference(present))
+                if gaps:
+                    missing[season] = gaps
+        return {"mode": "global" if global_mode else "seasonal", "seasonMap": season_map, "missing": missing}
+
+    def _log_ai_missing_query_diagnostic(
+        self,
+        *,
+        question: str,
+        keyword: str,
+        used_context: bool,
+        series_id: str,
+        result: str,
+        numbering_mode: str = "",
+        tmdb_id: str = "",
+        expected_count: int = 0,
+        existing_count: int = 0,
+        missing_count: int = 0,
+        elapsed_ms: int = 0,
+    ) -> None:
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="ai_missing_query_diagnostic",
+            message="AI 单剧缺集查询已完成。",
+            detail={
+                "question": self._truncate_text(str(question or ""), 160),
+                "keyword": keyword,
+                "usedContext": used_context,
+                "embySeriesId": series_id,
+                "result": result,
+                "numberingMode": numbering_mode,
+                "tmdbId": tmdb_id,
+                "expectedCount": expected_count,
+                "existingCount": existing_count,
+                "missingCount": missing_count,
+                "elapsedMs": elapsed_ms,
+            },
+        )
+
+    @classmethod
+    def _format_missing_episode_map(cls, missing_map: dict[int, list[int]]) -> str:
+        parts: list[str] = []
+        for season in sorted(missing_map):
+            label = "全局" if season == 0 else f"S{season:02d}"
+            parts.append(f"{label} " + cls._compress_number_ranges(missing_map[season]))
+        return "；".join(parts) if parts else "无"
+
+    @staticmethod
+    def _compress_number_ranges(values: list[int]) -> str:
+        numbers = sorted({int(value) for value in values if int(value) > 0})
+        if not numbers:
+            return "无"
+        ranges: list[str] = []
+        start = previous = numbers[0]
+        for number in numbers[1:]:
+            if number == previous + 1:
+                previous = number
+                continue
+            ranges.append(f"E{start:02d}" if start == previous else f"E{start:02d}-E{previous:02d}")
+            start = previous = number
+        ranges.append(f"E{start:02d}" if start == previous else f"E{start:02d}-E{previous:02d}")
+        return "、".join(ranges)
+
+    @classmethod
+    def _format_inventory_episode_labels(cls, labels: Any, *, fallback: list[int] | None = None) -> str:
+        rows = [str(value or "").strip() for value in labels] if isinstance(labels, list) else []
+        rows = [value for value in rows if value]
+        if not rows:
+            return cls._compress_number_ranges(fallback or [])
+        global_values: list[int] = []
+        seasonal: dict[int, list[int]] = {}
+        for value in rows:
+            global_match = re.fullmatch(r"E(\d+)", value, flags=re.IGNORECASE)
+            season_match = re.fullmatch(r"S(\d+)E(\d+)", value, flags=re.IGNORECASE)
+            if global_match:
+                global_values.append(int(global_match.group(1)))
+            elif season_match:
+                seasonal.setdefault(int(season_match.group(1)), []).append(int(season_match.group(2)))
+        if global_values and not seasonal:
+            return cls._compress_number_ranges(global_values)
+        if seasonal and not global_values:
+            parts: list[str] = []
+            for season in sorted(seasonal):
+                ranges = cls._compress_number_ranges(seasonal[season])
+                parts.append(f"S{season:02d}{ranges}")
+            return "、".join(parts)
+        return "、".join(rows)
+
+    @staticmethod
+    def _is_ai_episode_count_question(question: str) -> bool:
+        text = str(question or "").strip()
+        return bool(re.search(r"多少集|几集|第几集|哪一集|哪集|更新到|最新.*集|缺.*集", text))
+
+    def _get_ai_active_media(self, conversation_key: str) -> dict[str, Any]:
+        session = self._ai_conversations.get(conversation_key)
+        media = session.get("activeMedia") if isinstance(session.get("activeMedia"), dict) else {}
+        return media
+
+    @staticmethod
+    def _is_ai_reference_question(question: str) -> bool:
+        text = str(question or "").strip()
+        return bool(
+            re.search(r"^(?:帮我|请|看一下|查一下|查看一下|继续查)?(?:它|这个|这部|那个|那部)", text)
+            or re.search(r"^(?:查看一下|看一下|查一下|继续查)?(?:缺失|缺少|漏掉|漏)的?集", text)
+        )
+
+    def _resolve_ai_series_search_item(
+        self,
+        matched: dict[str, Any],
+        *,
+        items: list[dict[str, Any]],
+        keyword: str,
+    ) -> dict[str, Any]:
+        if str(matched.get("Type") or "").strip().lower() == "series":
+            return matched
+        if str(matched.get("Type") or "").strip().lower() == "episode":
+            series_id = str(matched.get("SeriesId") or "").strip()
+            if series_id:
+                try:
+                    payload = self._emby_get(
+                        f"/Items/{urllib.parse.quote(series_id, safe='')}?Fields=Name,Type,ProductionYear,ProviderIds,Status"
+                    )
+                    if isinstance(payload, dict) and str(payload.get("Type") or "").strip().lower() == "series":
+                        return payload
+                except Exception as err:
+                    LOGGER.warning("TG AI episode parent series lookup failed: series_id=%s err=%s", series_id, err)
+        normalized_keyword = self._normalize_ai_title(keyword)
+        series_rows = [row for row in items if str(row.get("Type") or "").strip().lower() == "series"]
+        exact = [row for row in series_rows if self._normalize_ai_title(str(row.get("Name") or "")) == normalized_keyword]
+        return exact[0] if exact else (series_rows[0] if series_rows else {})
+
+    @staticmethod
+    def _format_ai_identity_candidates(keyword: str, candidates: Any) -> str:
+        rows = [row for row in candidates if isinstance(row, dict)] if isinstance(candidates, list) else []
+        lines = [f"《{keyword}》有多个同名候选，请带上年份重新查询："]
+        for row in rows[:5]:
+            type_label = "剧集" if str(row.get("type") or "") == "series" else "电影"
+            lines.append(f"- {row.get('title') or keyword}（{row.get('year') or '年份未知'}，{type_label}，TMDB {row.get('tmdbId') or '-'}）")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_ai_latest_episode_label(latest_text: str) -> str:
+        text = str(latest_text or "").strip()
+        match = re.search(r"S(?P<season>\d{1,2})E(?P<episode>\d{1,4})", text, flags=re.IGNORECASE)
+        if not match:
+            return text
+        season = int(match.group("season") or 0)
+        episode = int(match.group("episode") or 0)
+        return f"S{season:02d}E{episode:02d}（第{episode}集）"
+
+    def _log_ai_media_query_diagnostic(
+        self,
+        *,
+        question: str,
+        keyword: str,
+        candidates: list[str],
+        detail: dict[str, Any],
+    ) -> None:
+        payload = {
+            "question": self._truncate_text(str(question or ""), 160),
+            "keyword": keyword,
+            "candidates": candidates[:5],
+        }
+        payload.update(detail)
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="ai_media_query_diagnostic",
+            message="AI 媒体库片名识别与集数查询已完成。",
+            detail=payload,
+        )
+
+    def _build_ai_focus_media_context(self, question: str) -> str:
+        keywords = self._extract_ai_media_keywords(question)
+        if not keywords:
+            return ""
+        keyword, items, search_error = self._search_emby_media_candidates(keywords)
+        if search_error:
+            return f"命中资源详情：搜索“{keyword}”失败（{search_error}）。"
         if not items:
             return f"命中资源详情：媒体库里没有搜索到“{keyword}”。"
 
@@ -2462,13 +4307,30 @@ class TelegramCommandService:
                 matched_lines.append(f"其他可能匹配：{'、'.join(other_names[:5])}")
         return "\n".join(matched_lines)
 
+    def _search_emby_media_candidates(self, keywords: list[str]) -> tuple[str, list[dict[str, Any]], str]:
+        last_keyword = str(keywords[0] if keywords else "").strip()
+        last_error = ""
+        for candidate in keywords:
+            keyword = str(candidate or "").strip()
+            if not keyword:
+                continue
+            last_keyword = keyword
+            try:
+                items = self._search_emby_items(keyword=keyword, limit=12)
+            except Exception as err:
+                last_error = self._format_emby_error(err)
+                continue
+            if items:
+                return keyword, items, ""
+        return last_keyword, [], last_error
+
     def _search_emby_items(self, *, keyword: str, limit: int = 8) -> list[dict[str, Any]]:
         query = urllib.parse.urlencode(
             {
                 "Recursive": "true",
                 "SearchTerm": keyword,
                 "IncludeItemTypes": "Series,Movie,Episode",
-                "Fields": "Name,Type,ProductionYear,Overview,Genres,PremiereDate,ChildCount,RecursiveItemCount,ParentIndexNumber,IndexNumber,SeriesName,Status,CommunityRating,CriticRating,RunTimeTicks",
+                "Fields": "Name,Type,ProductionYear,Overview,Genres,PremiereDate,ChildCount,RecursiveItemCount,ParentIndexNumber,IndexNumber,SeriesName,SeriesId,ProviderIds,Status,CommunityRating,CriticRating,RunTimeTicks",
                 "Limit": str(max(1, min(50, int(limit or 8)))),
             }
         )
@@ -2482,7 +4344,7 @@ class TelegramCommandService:
         if item_id:
             try:
                 payload = self._emby_get(
-                    f"/Items/{urllib.parse.quote(item_id, safe='')}?Fields=Name,Type,ProductionYear,PremiereDate,ChildCount,RecursiveItemCount,ParentIndexNumber,IndexNumber,SeriesName,Status,CommunityRating,CriticRating,Overview"
+                    f"/Items/{urllib.parse.quote(item_id, safe='')}?Fields=Name,Type,ProductionYear,PremiereDate,ChildCount,RecursiveItemCount,ParentIndexNumber,IndexNumber,SeriesName,SeriesId,ProviderIds,Status,CommunityRating,CriticRating,Overview"
                 )
                 detail = payload if isinstance(payload, dict) else {}
             except Exception as err:
@@ -2500,7 +4362,16 @@ class TelegramCommandService:
         ]
 
         if item_type == "series" and item_id:
-            season_count, episode_count, season_lines, latest_episode, source_note = self._resolve_ai_series_counts(item_id=item_id, detail=joined)
+            identity = self._resolve_ai_media_identity(keyword=keyword, detail=joined)
+            season_count, episode_count, season_lines, latest_episode, source_note = self._resolve_ai_series_counts(
+                item_id=item_id,
+                detail=joined,
+                keyword=keyword,
+                title=title,
+                identity=identity,
+            )
+            identity_lines = self._format_ai_identity_lines(identity)
+            lines.extend(identity_lines)
             lines.append(f"- 剧集统计：共 {season_count} 季 / {episode_count} 集")
             if source_note:
                 lines.append(f"- 统计来源：{source_note}")
@@ -2691,62 +4562,395 @@ class TelegramCommandService:
             return self._format_recent_library_row(row)
         return ""
 
-    def _resolve_ai_series_counts(self, *, item_id: str, detail: dict[str, Any]) -> tuple[int, int, list[str], str, str]:
-        season_meta = self._fetch_ai_series_season_meta(item_id=item_id)
+    def _resolve_ai_media_identity(self, *, keyword: str, detail: dict[str, Any]) -> dict[str, Any]:
         try:
-            episodes_payload = self._emby_get(
-                f"/Shows/{urllib.parse.quote(item_id, safe='')}/Episodes?Fields=Name,SeasonId,ParentId,SeriesId,ParentIndexNumber,IndexNumber&Limit=2000"
-            )
+            identity = self._media_identity_service().identity_from_emby_item(detail)
+        except Exception as err:
+            LOGGER.warning("TG AI media identity fallback: title=%s err=%s", keyword, err)
+            identity = {}
+        if identity:
+            return identity
+        return {
+            "title": str(detail.get("Name") or keyword or "").strip(),
+            "year": self._resolve_year(detail),
+            "type": str(detail.get("Type") or "series").strip().lower(),
+            "tmdbId": "",
+            "embyId": str(detail.get("Id") or "").strip(),
+            "source": "emby_fallback",
+            "confidence": "Emby 本地匹配",
+        }
+
+    def _format_ai_identity_lines(self, identity: dict[str, Any]) -> list[str]:
+        if not identity:
+            return []
+        tmdb_id = str(identity.get("tmdbId") or "").strip() or "未识别"
+        emby_id = str(identity.get("embyId") or "").strip() or "未识别"
+        title = str(identity.get("title") or "未知作品").strip()
+        year = str(identity.get("year") or "未知").strip()
+        confidence = str(identity.get("confidence") or "本地匹配").strip()
+        return [
+            f"- 作品身份：{title}（{year}）/ TMDB {tmdb_id} / Emby {emby_id}",
+            f"- 身份来源：{confidence}",
+        ]
+
+    def _search_tmdb_identity(self, *, title: str, item_type: str, year: str = "") -> dict[str, Any]:
+        token, language, region = self._tmdb_context()
+        if not token:
+            return {"error": "TMDB Token 未配置"}
+        media_type = "tv" if item_type in {"series", "episode"} else "movie"
+        params: dict[str, str] = {"query": title, "language": language}
+        if year and year.isdigit():
+            if media_type == "tv":
+                params["first_air_date_year"] = year
+            else:
+                params["year"] = year
+        if region:
+            params["region"] = region
+        payload = self._tmdb_get_json(f"/search/{media_type}?{urllib.parse.urlencode(params)}", token=token)
+        rows = payload.get("results") if isinstance(payload, dict) else []
+        if not isinstance(rows, list) or not rows:
+            return {}
+        target = self._normalize_ai_title(title)
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for row in rows[:8]:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or row.get("title") or "").strip()
+            norm = self._normalize_ai_title(name)
+            score = 0
+            if target and norm == target:
+                score += 20
+            elif target and (target in norm or norm in target):
+                score += 10
+            row_year = str(row.get("first_air_date") or row.get("release_date") or "")[:4]
+            if year and row_year == year:
+                score += 5
+            scored.append((score, row))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        best = scored[0][1]
+        best_name = str(best.get("name") or best.get("title") or title).strip()
+        best_year = str(best.get("first_air_date") or best.get("release_date") or "")[:4]
+        return {
+            "id": str(best.get("id") or "").strip(),
+            "name": best_name,
+            "year": best_year or year,
+            "confidence": "TMDB 标题搜索匹配" if scored[0][0] >= 10 else "TMDB 候选匹配",
+        }
+
+    def _tmdb_context(self) -> tuple[str, str, str]:
+        store = _read_store(self.store_path)
+        emby = _apply_emby_env_overrides(store.get("embyConfig"))
+        token = str(emby.get("tmdbToken") or os.environ.get("APP_TMDB_TOKEN") or os.environ.get("TMDB_TOKEN") or "").strip()
+        language = str(emby.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN"
+        region = str(emby.get("tmdbRegion") or "CN").strip().upper() or "CN"
+        return token, language, region
+
+    def _tmdb_get_json(self, path_with_query: str, *, token: str) -> dict[str, Any]:
+        target = f"https://api.themoviedb.org/3{path_with_query}"
+        request = urllib.request.Request(
+            target,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "VistamirrorAI/1.0",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+
+    @staticmethod
+    def _normalize_ai_title(value: str) -> str:
+        text = str(value or "").strip().lower()
+        text = re.sub(r"[\s·._:：,，。!！?？'\"《》「」“”\-—–]+", "", text)
+        return text
+
+    def _resolve_ai_series_counts(
+        self,
+        *,
+        item_id: str,
+        detail: dict[str, Any],
+        keyword: str = "",
+        title: str = "",
+        identity: dict[str, Any] | None = None,
+    ) -> tuple[int, int, list[str], str, str]:
+        season_meta = self._fetch_ai_series_season_meta(item_id=item_id)
+        sources: list[str] = []
+        episode_count = 0
+        season_count = 0
+        season_lines: list[str] = []
+        latest_text = ""
+        try:
+            episodes = self._fetch_ai_series_episodes(item_id=item_id)
         except Exception as err:
             LOGGER.warning("TG AI series episodes failed: item_id=%s err=%s", item_id, err)
-            season_count, episode_count, season_lines = self._resolve_ai_series_counts_from_seasons(
+            status = getattr(err, "code", "")
+            if str(status) in {"401", "403"}:
+                sources.append("Episodes 单集列表读取失败：可能是 API Key 权限不足")
+            else:
+                sources.append(f"Episodes 单集列表读取失败：{self._format_emby_error(err)}")
+            episodes = []
+
+        if episodes:
+            season_count, episode_count, season_lines, latest_text = self._summarize_ai_episode_rows(episodes, season_meta=season_meta)
+            sources.append(f"Episodes 实际列表：{episode_count} 集{f'，最新 {latest_text}' if latest_text else ''}")
+
+        direct_rows = self._search_ai_series_episode_rows(keyword=keyword or title, series_name=title or str(detail.get("Name") or ""))
+        direct_summary = self._summarize_ai_episode_rows(direct_rows, season_meta=season_meta) if direct_rows else (0, 0, [], "")
+        direct_season_count, direct_episode_count, direct_lines, direct_latest = direct_summary
+        if direct_episode_count:
+            sources.append(f"直接单集搜索：{direct_episode_count} 集{f'，最新 {direct_latest}' if direct_latest else ''}")
+
+        recent = self._resolve_ai_recent_library_highest_episode(title or keyword)
+        if recent.get("latestEpisodeNumber"):
+            recent_latest = str(recent.get("latestText") or "")
+            recent_suffix = f"，最新 {recent_latest}" if recent_latest else ""
+            sources.append(f"最近入库：最高集号 {recent.get('latestEpisodeNumber')}{recent_suffix}（不作为实际单集总数）")
+
+        tmdb_expected = self._fetch_ai_tmdb_expected_counts(identity or {}, local_title=title or keyword)
+        if tmdb_expected.get("episodeCount"):
+            tmdb_season_count = int(tmdb_expected.get("seasonCount") or 0)
+            tmdb_suffix = f"，共 {tmdb_season_count} 季" if tmdb_season_count else ""
+            sources.append(f"TMDB 公开总集数：{tmdb_expected.get('episodeCount')} 集{tmdb_suffix}")
+
+        candidates = [
+            ("Episodes", episode_count, season_count, season_lines, latest_text),
+            ("直接单集搜索", direct_episode_count, direct_season_count, direct_lines, direct_latest),
+        ]
+        best_source, best_count, best_seasons, best_lines, best_latest = max(candidates, key=lambda row: row[1])
+        if best_count > episode_count and best_lines:
+            season_lines = best_lines
+        elif not season_lines and best_lines:
+            season_lines = best_lines
+        final_episode_count = max(episode_count, direct_episode_count)
+        final_season_count = max(season_count, direct_season_count, 1 if final_episode_count else 0)
+        final_latest = self._pick_latest_episode_text(latest_text, direct_latest, str(recent.get("latestText") or ""))
+
+        if final_episode_count <= 0:
+            fallback_season_count, fallback_episode_count, fallback_lines = self._resolve_ai_series_counts_from_seasons(
                 detail=detail,
                 season_meta=season_meta,
             )
-            status = getattr(err, "code", "")
-            if str(status) in {"401", "403"}:
-                note = "无法读取 Episodes 单集列表，可能是 API Key 权限不足；已回退季字段统计。"
-            else:
-                note = f"无法读取 Episodes 单集列表（{self._format_emby_error(err)}），已回退季字段统计。"
-            return season_count, episode_count, season_lines, "", note
+            final_episode_count = fallback_episode_count
+            final_season_count = fallback_season_count
+            season_lines = season_lines or fallback_lines
+            sources.append("最终判断回退：使用季字段统计")
 
-        episodes = episodes_payload.get("Items") if isinstance(episodes_payload, dict) else episodes_payload
-        if isinstance(episodes, list) and episodes:
-            season_counts: dict[int, int] = {}
-            latest: tuple[int, int, str] | None = None
-            for row in episodes:
-                if not isinstance(row, dict):
-                    continue
-                season_no = self._coerce_index_number(row.get("ParentIndexNumber")) or 0
-                episode_no = self._coerce_index_number(row.get("IndexNumber")) or 0
-                season_key = season_no if season_no > 0 else 1
-                season_counts[season_key] = int(season_counts.get(season_key) or 0) + 1
-                if episode_no > 0:
-                    name = str(row.get("Name") or "").strip()
-                    current = (season_key, episode_no, name)
-                    if latest is None or (current[0], current[1]) > (latest[0], latest[1]):
-                        latest = current
+        missing_text = ""
+        expected_count = int(tmdb_expected.get("episodeCount") or 0)
+        if expected_count and final_episode_count:
+            missing = max(0, expected_count - final_episode_count)
+            missing_text = f"；TMDB 对照缺失 {missing} 集" if missing else "；TMDB 对照已齐"
 
-            season_lines = []
-            for season_no in sorted(season_counts):
-                count = int(season_counts.get(season_no) or 0)
-                label = season_meta.get(season_no) or f"S{season_no}"
-                season_lines.append(f"{label} {count}集")
-            episode_count = len([row for row in episodes if isinstance(row, dict)])
-            season_count = len(season_counts) if season_counts else max(1, int(detail.get("ChildCount") or 0))
-            latest_text = ""
-            if latest:
-                latest_text = f"S{latest[0]:02d}E{latest[1]:02d}"
-                if latest[2]:
-                    latest_text = f"{latest_text}「{latest[2]}」"
-            return max(0, season_count), max(0, episode_count), season_lines, latest_text, "以 Episodes 实际单集列表为准。"
+        final_line = f"最终判断：实际可读取单集 {final_episode_count} 集"
+        if final_latest:
+            final_line = f"{final_line}，最新已到 {final_latest}"
+        final_line = f"{final_line}{missing_text}"
+        sources.append(final_line)
+        if best_count > 0 and best_source != "Episodes":
+            sources.append(f"冲突处理：{best_source} 高于 Episodes 聚合时，按更高的本地入库集数判断")
 
-        season_count, episode_count, season_lines = self._resolve_ai_series_counts_from_seasons(
-            detail=detail,
-            season_meta=season_meta,
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="ai_media_query_reconciled",
+            message="AI 媒体库剧集查询已完成多来源合并。",
+            detail={
+                "title": title or keyword,
+                "embySeriesId": item_id,
+                "tmdbId": (identity or {}).get("tmdbId"),
+                "episodesCount": episode_count,
+                "directEpisodeCount": direct_episode_count,
+                "recentLatestEpisodeNumber": recent.get("latestEpisodeNumber"),
+                "tmdbExpectedCount": tmdb_expected.get("episodeCount"),
+                "finalEpisodeCount": final_episode_count,
+            },
         )
-        note = "Episodes 单集列表为空；未把季字段里的 0 当作准确集数。"
-        return season_count, episode_count, season_lines, "", note
+        return max(0, final_season_count), max(0, final_episode_count), season_lines, final_latest, "；".join(sources)
+
+    def _fetch_ai_series_episodes(self, *, item_id: str, page_size: int = 1000) -> list[dict[str, Any]]:
+        safe_id = urllib.parse.quote(str(item_id or "").strip(), safe="")
+        if not safe_id:
+            return []
+        rows: list[dict[str, Any]] = []
+        start = 0
+        safe_page_size = max(50, min(2000, int(page_size or 1000)))
+        while start < 10000:
+            query = urllib.parse.urlencode(
+                {
+                    "Fields": "Name,SeasonId,ParentId,SeriesId,ParentIndexNumber,IndexNumber",
+                    "StartIndex": str(start),
+                    "Limit": str(safe_page_size),
+                }
+            )
+            payload = self._emby_get(f"/Shows/{safe_id}/Episodes?{query}")
+            items = payload.get("Items") if isinstance(payload, dict) else payload
+            page = [row for row in items if isinstance(row, dict)] if isinstance(items, list) else []
+            rows.extend(page)
+            total = payload.get("TotalRecordCount") if isinstance(payload, dict) else None
+            if isinstance(total, int) and len(rows) >= total:
+                break
+            if len(page) < safe_page_size:
+                break
+            start += safe_page_size
+        return rows
+
+    def _summarize_ai_episode_rows(self, rows: list[dict[str, Any]], *, season_meta: dict[int, str]) -> tuple[int, int, list[str], str]:
+        season_counts: dict[int, int] = {}
+        latest: tuple[int, int, str] | None = None
+        unique_rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            season_no = self._coerce_index_number(row.get("ParentIndexNumber")) or 0
+            episode_no = self._coerce_index_number(row.get("IndexNumber")) or 0
+            item_id = str(row.get("Id") or "").strip()
+            series_id = str(row.get("SeriesId") or "").strip()
+            if episode_no > 0:
+                dedupe_key = f"index:{series_id}:{season_no}:{episode_no}"
+            elif item_id:
+                dedupe_key = f"id:{item_id}"
+            else:
+                dedupe_key = f"fallback:{series_id}:{season_no}:{episode_no}:{str(row.get('Name') or '').strip()}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            unique_rows.append(row)
+            season_key = season_no if season_no > 0 else 1
+            season_counts[season_key] = int(season_counts.get(season_key) or 0) + 1
+            if episode_no > 0:
+                name = str(row.get("Name") or "").strip()
+                current = (season_key, episode_no, name)
+                if latest is None or (current[0], current[1]) > (latest[0], latest[1]):
+                    latest = current
+        lines: list[str] = []
+        for season_no in sorted(season_counts):
+            count = int(season_counts.get(season_no) or 0)
+            label = season_meta.get(season_no) or f"S{season_no}"
+            lines.append(f"{label} {count}集")
+        latest_text = ""
+        if latest:
+            latest_text = f"S{latest[0]:02d}E{latest[1]:02d}"
+            if latest[2]:
+                latest_text = f"{latest_text}「{latest[2]}」"
+        return len(season_counts), len(unique_rows), lines, latest_text
+
+    def _search_ai_series_episode_rows(self, *, keyword: str, series_name: str) -> list[dict[str, Any]]:
+        keyword = str(keyword or series_name or "").strip()
+        if not keyword:
+            return []
+        query = urllib.parse.urlencode(
+            {
+                "Recursive": "true",
+                "SearchTerm": keyword,
+                "IncludeItemTypes": "Episode",
+                "Fields": "Name,Type,SeriesName,ParentIndexNumber,IndexNumber,SeriesId",
+                "Limit": "1000",
+            }
+        )
+        try:
+            payload = self._emby_get(f"/Items?{query}")
+        except Exception as err:
+            LOGGER.warning("TG AI direct episode search failed: keyword=%s err=%s", keyword, err)
+            return []
+        items = payload.get("Items") if isinstance(payload, dict) else payload
+        rows = [row for row in items if isinstance(row, dict)] if isinstance(items, list) else []
+        target = self._normalize_ai_title(series_name or keyword)
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            row_series = str(row.get("SeriesName") or "").strip()
+            row_title = self._normalize_ai_title(row_series)
+            if not target or row_title == target or target in row_title or row_title in target:
+                filtered.append(row)
+        return filtered
+
+    def _resolve_ai_recent_library_highest_episode(self, title: str) -> dict[str, Any]:
+        safe_title = str(title or "").strip()
+        if not safe_title:
+            return {}
+        try:
+            latest, _tried, _err = self._fetch_latest_items_with_fallback(limit=40)
+        except Exception:
+            return {}
+        rows = latest if isinstance(latest, list) else []
+        target = self._normalize_ai_title(safe_title)
+        best: tuple[int, int, str] | None = None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item_type = str(row.get("Type") or "").strip().lower()
+            if item_type != "episode":
+                continue
+            series_name = str(row.get("SeriesName") or "").strip()
+            if not series_name:
+                continue
+            row_target = self._normalize_ai_title(series_name)
+            if target and target != row_target:
+                continue
+            season = self._coerce_index_number(row.get("ParentIndexNumber")) or 1
+            episode = self._coerce_index_number(row.get("IndexNumber")) or 0
+            if episode <= 0:
+                continue
+            name = str(row.get("Name") or "").strip()
+            current = (season, episode, name)
+            if best is None or (current[0], current[1]) > (best[0], best[1]):
+                best = current
+        if not best:
+            return {}
+        latest_text = f"S{best[0]:02d}E{best[1]:02d}"
+        if best[2]:
+            latest_text = f"{latest_text}「{best[2]}」"
+        return {"seasonCount": best[0], "latestEpisodeNumber": best[1], "latestText": latest_text}
+
+    def _fetch_ai_tmdb_expected_counts(self, identity: dict[str, Any], *, local_title: str = "") -> dict[str, Any]:
+        tmdb_id = str(identity.get("tmdbId") or "").strip()
+        if not tmdb_id:
+            return {}
+        token, language, _region = self._tmdb_context()
+        if not token:
+            return {}
+        try:
+            detail = self._tmdb_get_json(f"/tv/{urllib.parse.quote(tmdb_id, safe='')}?{urllib.parse.urlencode({'language': language})}", token=token)
+        except Exception as err:
+            LOGGER.warning("TG AI TMDB expected count failed: title=%s tmdb=%s err=%s", local_title, tmdb_id, err)
+            return {"error": self._format_emby_error(err)}
+        seasons = detail.get("seasons") if isinstance(detail.get("seasons"), list) else []
+        season_count = 0
+        episode_count = 0
+        season_lines: list[str] = []
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            season_no = self._coerce_index_number(season.get("season_number"))
+            if season_no is None or season_no <= 0:
+                continue
+            count = self._coerce_index_number(season.get("episode_count")) or 0
+            season_count += 1
+            episode_count += max(0, count)
+            season_lines.append(f"S{season_no} {count}集")
+        return {
+            "tmdbId": tmdb_id,
+            "title": str(detail.get("name") or local_title or "").strip(),
+            "seasonCount": season_count,
+            "episodeCount": episode_count,
+            "seasonLines": season_lines,
+        }
+
+    def _pick_latest_episode_text(self, *values: str) -> str:
+        best: tuple[int, int, str] | None = None
+        for value in values:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            match = re.search(r"S(?P<season>\d{1,2})E(?P<episode>\d{1,4})", text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            season = int(match.group("season") or 0)
+            episode = int(match.group("episode") or 0)
+            current = (season, episode, text)
+            if best is None or (season, episode) > (best[0], best[1]):
+                best = current
+        return best[2] if best else ""
 
     def _fetch_ai_series_season_meta(self, *, item_id: str) -> dict[int, str]:
         meta: dict[int, str] = {}
@@ -2792,12 +4996,17 @@ class TelegramCommandService:
         return max(0, season_count), max(0, episode_count), lines
 
     def _extract_ai_media_keyword(self, question: str) -> str:
+        keywords = self._extract_ai_media_keywords(question)
+        return keywords[0] if keywords else ""
+
+    def _extract_ai_media_keywords(self, question: str) -> list[str]:
         text = str(question or "").strip()
         if not text:
-            return ""
+            return []
         quoted = re.search(r"[《「“\"]([^》」”\"]{1,80})[》」”\"]", text)
         if quoted:
-            return self._clean_ai_keyword(str(quoted.group(1) or ""))
+            keyword = self._clean_ai_keyword(str(quoted.group(1) or ""))
+            return [keyword] if keyword else []
 
         general_patterns = (
             r"一共.*(多少|几).*(影视|资源|电影|剧集|影片|媒体)",
@@ -2806,55 +5015,70 @@ class TelegramCommandService:
             r"(媒体库|资源库).*(总数|总量|数量|统计)",
         )
         if any(re.search(pattern, text) for pattern in general_patterns):
-            return ""
+            return []
         if self._parse_ai_category_listing_request(text):
-            return ""
+            return []
 
-        value = text
-        replacements = [
-            r"^/ai\s*",
-            r"帮我",
-            r"请",
-            r"看一下",
-            r"查一下",
-            r"查查",
-            r"搜索",
-            r"找一下",
-            r"我的",
-            r"媒体库里",
-            r"媒体库",
-            r"资源库里",
-            r"资源库",
-            r"里面",
-            r"现在",
-            r"目前",
-            r"一共",
-            r"总共",
-            r"已经",
-            r"有多少集了?",
-            r"有多少集",
-            r"多少集了?",
-            r"多少集",
-            r"更新到第几集了?",
-            r"更新到第几集",
-            r"更新到多少集了?",
-            r"更新到多少集",
-            r"有没有",
-            r"是否有",
-            r"有吗",
-            r"吗",
-            r"？",
-            r"\?",
-        ]
-        for pattern in replacements:
-            value = re.sub(pattern, "", value, flags=re.IGNORECASE)
-        return self._clean_ai_keyword(value)
+        value = re.sub(r"^/ai(?:@\w+)?\s*", "", text, flags=re.IGNORECASE).strip()
+        value = re.sub(
+            r"^(?:帮我|请|麻烦你|你帮我)?\s*(?:查看一下|看一下|查一下|看下|查下|查查|搜索一下|搜索|找一下|看看)?\s*",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(
+            r"^(?:我(?:的)?|[咱俺](?:的)?)?(?:媒体库|资源库|库)(?:里|中|里面)?\s*(?:的)?\s*",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+
+        tail_patterns = (
+            r"(?:我(?:的)?|[咱俺](?:的)?)?(?:媒体库|资源库|库)(?:里|中|里面)?",
+            r"(?:现在|目前)?(?:最新的?|已经)?(?:更新到)?(?:第几集|哪一集|哪集|多少集|几集)",
+            r"(?:一共有?|总共有?|共有|现在有|目前有|有)(?:多少集|几集)",
+            r"更新到",
+            r"最新(?:的)?(?:是)?",
+            r"(?:缺失|缺少|缺哪|漏掉|漏)(?:的)?集",
+            r"(?:的)?(?:简介|剧情|详情|演员|主演|评分)",
+            r"有没有|是否有",
+        )
+        split_at = len(value)
+        for pattern in tail_patterns:
+            match = re.search(pattern, value, flags=re.IGNORECASE)
+            if match and match.start() >= 2:
+                split_at = min(split_at, match.start())
+        primary_text = value[:split_at].strip()
+        if split_at < len(value):
+            primary_text = re.sub(r"的$", "", primary_text).strip()
+        primary = self._clean_ai_keyword(primary_text)
+
+        fallback = value
+        fallback = re.sub(
+            r"(?:我(?:的)?|[咱俺](?:的)?)?(?:媒体库|资源库|库)(?:里|中|里面)?",
+            " ",
+            fallback,
+            flags=re.IGNORECASE,
+        )
+        fallback = re.sub(
+            r"(?:现在|目前|最新的?|已经|一共有?|总共有?|共有|更新到|第几集|哪一集|哪集|有多少集|多少集|有几集|几集|缺失的?集|缺少的?集|缺哪几集|漏掉的?集|的?简介|的?剧情|的?详情|的?演员|的?主演|的?评分|有没有|是否有|有吗|吗)",
+            " ",
+            fallback,
+            flags=re.IGNORECASE,
+        )
+        fallback = self._clean_ai_keyword(fallback)
+        keywords: list[str] = []
+        for candidate in (primary, fallback):
+            if candidate and candidate not in keywords:
+                keywords.append(candidate)
+        return keywords
 
     @staticmethod
     def _clean_ai_keyword(value: str) -> str:
         clean = str(value or "").strip()
         clean = clean.strip(" ，。！？?：:；;、|/\\[]()（）【】《》「」“”\"'")
         clean = re.sub(r"\s+", " ", clean).strip()
+        clean = re.sub(r"(?:了|呢|啊|呀)$", "", clean).strip()
         if len(clean) < 2:
             return ""
         if clean in {"影视资源", "资源", "媒体", "电影", "剧集", "影片", "数量", "总数"}:
@@ -2862,14 +5086,14 @@ class TelegramCommandService:
         return clean[:80]
 
     def _pick_best_search_item(self, *, items: list[Any], keyword: str) -> dict[str, Any]:
-        normalized_keyword = str(keyword or "").strip().lower()
+        normalized_keyword = self._normalize_ai_title(keyword)
         candidates = [row for row in items if isinstance(row, dict)]
         if not candidates:
             return {}
 
         def _score(row: dict[str, Any]) -> tuple[int, int, int]:
             row_type = str(row.get("Type") or "").strip().lower()
-            name = str(row.get("Name") or "").strip().lower()
+            name = self._normalize_ai_title(str(row.get("Name") or row.get("SeriesName") or ""))
             is_exact = 2 if normalized_keyword and name == normalized_keyword else 0
             is_contains = 1 if normalized_keyword and normalized_keyword in name else 0
             type_priority = {"series": 4, "movie": 3, "episode": 2}.get(row_type, 1)

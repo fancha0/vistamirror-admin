@@ -16,6 +16,9 @@ venv/
 # Runtime logs / temp
 *.log
 *.tmp
+data/ai_conversations.json
+data/media_identity_cache.json
+data/library_notification_state.json
 
 # Optional local editor junk
 .vscode/

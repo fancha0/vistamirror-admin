@@ -7,7 +7,7 @@
   <meta name="description" content="镜界Vistamirror 风格的 Emby 用户管理控制台，支持 Emby API 接入、邀请管理、到期续费与登录日志。">
   <link rel="icon" type="image/png" href="logo.png?v=20260408-2030">
   <link rel="apple-touch-icon" href="logo.png?v=20260408-2030">
-  <link rel="stylesheet" href="styles.css?v=20260606-settings-save-autoconnect">
+  <link rel="stylesheet" href="styles.css?v=20260617-drive115-layout">
 </head>
 <body class="auth-pending">
   <section id="admin-auth-loading" class="admin-auth-loading" aria-live="polite">
@@ -66,6 +66,8 @@
         <button class="nav-item" data-view="missing" type="button"><span class="nav-icon nav-icon-svg" aria-hidden="true"><svg class="missing-nav-svg" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" focusable="false"><path d="M512 0c282.760533 0 512 229.239467 512 512 0 282.760533-229.239467 512-512 512-282.760533 0-512-229.239467-512-512C0 229.239467 229.239467 0 512 0z" fill="#8460D8" opacity=".1"></path><path d="M645.9392 521.1136a123.733333 123.733333 0 0 1 122.0608 123.426133 123.733333 123.733333 0 0 1-122.0608 123.460267 124.177067 124.177067 0 0 1-109.090133-61.1328 122.914133 122.914133 0 0 1 0-124.586667 124.177067 124.177067 0 0 1 109.090133-61.166933z m-43.793067 52.599467a20.48 20.48 0 0 0-28.9792 28.945066l41.028267 41.0624-45.841067 45.841067a20.48 20.48 0 0 0 28.945067 28.9792l45.8752-45.8752 45.841067 45.8752a20.48 20.48 0 0 0 28.9792-28.9792L672.085333 643.754667l41.028267-41.0624a20.48 20.48 0 0 0-28.945067-28.945067l-41.028266 41.028267z" fill="#8460D8" opacity=".6"></path><path d="M617.8816 238.933333a79.189333 79.189333 0 0 1 79.189333 79.189334l0.034134 178.244266a144.110933 144.110933 0 0 0-68.334934-17.237333c-83.831467 0-151.790933 72.123733-151.790933 161.0752 0 34.440533 10.205867 66.321067 27.5456 92.501333H386.389333A79.189333 79.189333 0 0 1 307.2 653.5168V318.122667A79.189333 79.189333 0 0 1 386.389333 238.933333h231.492267z m-129.467733 186.845867h-104.584534a20.002133 20.002133 0 1 0 0 40.004267h104.584534a20.002133 20.002133 0 1 0 0-40.004267z m100.625066-100.113067h-205.2096a20.002133 20.002133 0 0 0 0 40.0384h205.2096a20.002133 20.002133 0 1 0 0-40.0384z" fill="#8460D8"></path></svg></span>缺集管理</button>
         <button class="nav-item" data-view="dedup" type="button"><span class="nav-icon">🗂</span>去重管理</button>
         <button class="nav-item" data-view="logs" type="button"><span class="nav-icon">🕘</span>播放历史</button>
+        <p class="nav-group-title">网盘</p>
+        <button class="nav-item" data-view="drive-115" type="button"><span class="nav-icon">📦</span>115网盘</button>
         <p class="nav-group-title">互动与维护</p>
         <button class="nav-item" data-view="workorders" type="button"><span class="nav-icon">🎬</span>工单大厅</button>
         <button class="nav-item" data-view="user-center" type="button"><span class="nav-icon">👥</span>用户管理</button>
@@ -812,7 +814,7 @@
                 <label class="toggle-row">
                   <div>
                     <strong>新资源入库通知</strong>
-                    <p class="toggle-desc">需配合 Emby Webhook 使用</p>
+                    <p class="toggle-desc">Webhook 实时通知 + 每 60 秒定时检测兜底</p>
                   </div>
                   <input id="bot-enable-library" type="checkbox">
                 </label>
@@ -934,6 +936,136 @@
         </div>
       </section>
 
+      <section id="view-drive-115" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="config-shell drive115-shell">
+              <div class="config-main">
+                <div class="drive115-page-head">
+                  <div>
+                    <p class="section-label">115网盘</p>
+                    <h3>115网盘 - 115账号配置</h3>
+                  </div>
+                </div>
+                <div class="drive115-workbench-grid">
+                  <section class="settings-card drive115-card drive115-login-card">
+                    <div class="settings-card-head drive115-card-head">
+                      <div class="drive115-login-title">
+                        <span class="drive115-login-icon">🍪</span>
+                        <div>
+                          <h4>115 登录凭证</h4>
+                          <p>填写 115 Cookie，并设置默认转存目录。</p>
+                        </div>
+                      </div>
+                      <button id="drive115-login-collapse-btn" class="ghost-btn" type="button" aria-expanded="true">收起⌄</button>
+                    </div>
+                    <div id="drive115-login-body" class="drive115-login-body">
+                      <div class="tmdb-switch-row">
+                        <label for="drive115-enabled" class="tmdb-switch" aria-label="启用 115 网盘">
+                          <input id="drive115-enabled" type="checkbox">
+                          <span class="tmdb-switch-slider"></span>
+                        </label>
+                        <div class="tmdb-switch-copy">
+                          <strong>启用 115 链接转存</strong>
+                          <p>启用后 Telegram 私聊可直接发送 115 链接，群聊使用 /zhuancun115。</p>
+                        </div>
+                      </div>
+
+                      <div class="settings-subgrid">
+                        <label class="field field-span-2">
+                          <span>登录 Cookie</span>
+                          <p class="drive115-field-desc">请从浏览器开发者工具中获取完整的 Cookie 字符串</p>
+                          <div class="password-field">
+                            <input id="drive115-cookie" type="password" placeholder="粘贴 115 网页 Cookie">
+                            <button id="drive115-cookie-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 115 Cookie" data-target="drive115-cookie" data-open="false">🙈</button>
+                          </div>
+                        </label>
+                        <label class="field">
+                          <span>默认保存目录 ID</span>
+                          <input id="drive115-default-cid" type="text" placeholder="默认 0">
+                        </label>
+                        <div class="drive115-actions-row">
+                          <button id="drive115-test-btn" class="ghost-btn" type="button">测试连接</button>
+                          <button id="drive115-save-btn" class="primary-btn" type="button">保存配置</button>
+                        </div>
+                        <p id="drive115-config-feedback" class="tmdb-token-hint field-span-2">115 未配置。</p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="settings-card drive115-card drive115-qr-card">
+                    <div class="settings-card-head">
+                      <h4>扫码获取 Cookie</h4>
+                      <p>生成二维码后，用 115 App 扫码确认登录。</p>
+                    </div>
+                    <div class="drive115-qr-box">
+                      <div class="drive115-qr-controls">
+                        <select id="drive115-qr-client">
+                          <option value="qandroid" selected>115生活(Android端)</option>
+                          <option value="android">115网盘(Android端)</option>
+                          <option value="ios">115网盘(iPad/iPhone端)</option>
+                          <option value="web">网页版</option>
+                          <option value="tv">115网盘(Android电视端)</option>
+                        </select>
+                        <button id="drive115-qr-start-btn" class="primary-btn" type="button">生成二维码</button>
+                        <button id="drive115-qr-stop-btn" class="ghost-btn" type="button" disabled>停止轮询</button>
+                      </div>
+                      <div class="drive115-warning is-tip">
+                        提示：网页登录、Linux 端、macOS 端、TV 端和部分小程序 Cookie 可能受限；推荐优先使用 115生活(Android端)。
+                      </div>
+                      <div class="drive115-warning is-danger">
+                        警告：扫码登录属于非官方接口，若二维码无法登录，请改用手动 Cookie。
+                      </div>
+                      <div id="drive115-qr-panel" class="drive115-qr-panel">
+                        <div id="drive115-qr-placeholder" class="drive115-qr-placeholder">点击“生成二维码”后在 115 App 内扫码</div>
+                        <img id="drive115-qr-image" alt="115 登录二维码" hidden>
+                        <p id="drive115-qr-status">未生成二维码。</p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="settings-card drive115-card">
+                    <div class="settings-card-head">
+                      <h4>链接转存</h4>
+                      <p>先解析分享资源，确认无误后再提交转存。</p>
+                    </div>
+                    <div class="settings-subgrid">
+                      <label class="field field-span-2">
+                        <span>115 分享链接</span>
+                        <textarea id="drive115-share-url" rows="3" placeholder="粘贴 https://115.com/s/... 或包含访问码的完整文本"></textarea>
+                      </label>
+                      <label class="field">
+                        <span>访问码</span>
+                        <input id="drive115-receive-code" type="text" placeholder="可选">
+                      </label>
+                      <label class="field">
+                        <span>目标目录 ID</span>
+                        <input id="drive115-target-cid" type="text" placeholder="留空使用默认目录">
+                      </label>
+                      <div class="drive115-actions-row field-span-2">
+                        <button id="drive115-parse-btn" class="ghost-btn" type="button">解析资源</button>
+                        <button id="drive115-transfer-btn" class="primary-btn" type="button" disabled>确认转存</button>
+                      </div>
+                      <div id="drive115-parse-result" class="drive115-result field-span-2">尚未解析 115 分享链接。</div>
+                    </div>
+                  </section>
+
+                  <section class="settings-card drive115-card">
+                    <div class="settings-card-head">
+                      <h4>转存记录</h4>
+                      <p>保留最近解析和转存状态，方便排查失败原因。</p>
+                    </div>
+                    <div id="drive115-records" class="drive115-records">
+                      <div class="empty-state">暂无 115 转存记录。</div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section id="view-workshop" class="view-section">
         <div class="dashboard-grid logs-grid">
           <section class="panel">
@@ -992,7 +1124,10 @@
                   <section class="settings-card settings-card-tmdb field-span-2">
                     <div class="settings-card-head">
                       <h4>TMDB 海报兜底</h4>
-                      <span id="tmdb-status-tip" class="tmdb-status-badge is-off">已关闭</span>
+                      <div class="settings-card-actions">
+                        <span id="tmdb-status-tip" class="tmdb-status-badge is-off">已关闭</span>
+                        <button id="tmdb-test-btn" class="ghost-btn" type="button">测试连接</button>
+                      </div>
                     </div>
                     <div class="tmdb-switch-row">
                       <label for="tmdb-enabled" class="tmdb-switch" aria-label="启用 TMDB 海报兜底">
@@ -1539,7 +1674,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260614-ai-context"></script>
+  <script src="script.js?v=20260619-tmdb-config-fix"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

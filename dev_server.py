@@ -46,6 +46,19 @@ from backend_modules.ai_assistant import (
     normalize_ai_config as module_normalize_ai_config,
     validate_ai_config as module_validate_ai_config,
 )
+from backend_modules.drive115_service import (
+    Drive115Service,
+    apply_drive115_env_overrides,
+    default_drive115_config as module_default_drive115_config,
+    drive115_qrcode_clients,
+    env_managed_drive115_fields,
+    extract_115_share,
+    admin_drive115_config,
+    merge_drive115_config_for_save,
+    normalize_drive115_config as module_normalize_drive115_config,
+    public_drive115_config,
+    redact_drive115_payload,
+)
 from backend_modules.ip_locator import build_ip_display
 from backend_modules.message_formatter import compose_playback_message, normalize_content_type, ticks_to_seconds
 from backend_modules.missing_episode_service import MissingEpisodeService
@@ -107,11 +120,14 @@ ANNUAL_RANKING_CACHE_TTL_SECONDS = max(
 TELEGRAM_SENDER = TelegramSender()
 TELEGRAM_COMMAND_SERVICE: TelegramCommandService | None = None
 ADMIN_AUTH_SERVICE: AdminAuthService | None = None
+DRIVE115_QRCODE_LOCK = threading.Lock()
+DRIVE115_QRCODE_SESSIONS: dict[str, dict[str, Any]] = {}
 
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
     "apiKey": "APP_EMBY_API_KEY",
     "clientName": "APP_EMBY_CLIENT_NAME",
+    "tmdbToken": "APP_TMDB_TOKEN",
 }
 BOT_ENV_FIELD_MAP: dict[str, str] = {
     "telegramToken": "APP_BOT_TELEGRAM_TOKEN",
@@ -484,6 +500,10 @@ def _env_managed_ai_fields() -> list[str]:
     return env_managed_ai_fields()
 
 
+def _env_managed_drive115_fields() -> list[str]:
+    return env_managed_drive115_fields()
+
+
 def _env_managed_admin_auth_fields() -> list[str]:
     managed: list[str] = []
     for field, env_name in ADMIN_AUTH_ENV_FIELD_MAP.items():
@@ -498,13 +518,38 @@ def _apply_emby_env_overrides(raw: Any) -> dict[str, Any]:
         "serverUrl": str(source.get("serverUrl") or "").strip(),
         "apiKey": str(source.get("apiKey") or "").strip(),
         "clientName": str(source.get("clientName") or "").strip() or DEFAULT_EMBY_CLIENT_NAME,
+        "tmdbEnabled": bool(source.get("tmdbEnabled")),
+        "tmdbToken": str(source.get("tmdbToken") or "").strip(),
+        "tmdbLanguage": str(source.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN",
+        "tmdbRegion": str(source.get("tmdbRegion") or "CN").strip().upper() or "CN",
         "updatedAt": str(source.get("updatedAt") or "").strip(),
     }
     for field, env_name in EMBY_ENV_FIELD_MAP.items():
         env_value = _env_override_value(env_name)
         if env_value:
             merged[field] = env_value
+    legacy_tmdb_token = _env_override_value("TMDB_TOKEN")
+    if legacy_tmdb_token and not _env_override_value("APP_TMDB_TOKEN"):
+        merged["tmdbToken"] = legacy_tmdb_token
+    if merged["tmdbToken"] and (legacy_tmdb_token or _env_override_value("APP_TMDB_TOKEN")):
+        merged["tmdbEnabled"] = True
     return merged
+
+
+def _merge_emby_config_for_save(current: Any, submitted: Any) -> dict[str, Any]:
+    existing = current if isinstance(current, dict) else {}
+    incoming = submitted if isinstance(submitted, dict) else {}
+    submitted_tmdb_token = str(incoming.get("tmdbToken") or "").strip()
+    return {
+        "serverUrl": str(incoming.get("serverUrl") or "").strip(),
+        "apiKey": str(incoming.get("apiKey") or "").strip(),
+        "clientName": str(incoming.get("clientName") or "").strip(),
+        "tmdbEnabled": bool(incoming.get("tmdbEnabled")),
+        "tmdbToken": submitted_tmdb_token or str(existing.get("tmdbToken") or "").strip(),
+        "tmdbLanguage": str(incoming.get("tmdbLanguage") or existing.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN",
+        "tmdbRegion": str(incoming.get("tmdbRegion") or existing.get("tmdbRegion") or "CN").strip().upper() or "CN",
+        "updatedAt": _now_iso(),
+    }
 
 
 def _apply_bot_env_overrides(raw: Any) -> dict[str, Any]:
@@ -521,11 +566,24 @@ def _apply_ai_env_overrides(raw: Any) -> dict[str, Any]:
     return apply_ai_env_overrides(raw)
 
 
+def _default_drive115_config() -> dict[str, Any]:
+    return module_default_drive115_config()
+
+
+def _normalize_drive115_config(raw: Any) -> dict[str, Any]:
+    return module_normalize_drive115_config(raw)
+
+
+def _apply_drive115_env_overrides(raw: Any) -> dict[str, Any]:
+    return apply_drive115_env_overrides(raw)
+
+
 def _env_controlled_fields_payload() -> dict[str, list[str]]:
     return {
         "embyConfig": _env_managed_emby_fields(),
         "botConfig": _env_managed_bot_fields(),
         "aiConfig": _env_managed_ai_fields(),
+        "drive115Config": _env_managed_drive115_fields(),
         "adminAuth": _env_managed_admin_auth_fields(),
     }
 
@@ -604,17 +662,30 @@ def _store_path() -> pathlib.Path:
 def _read_store_unlocked() -> dict[str, Any]:
     path = _store_path()
     if not path.exists():
-        return {"embyConfig": {}, "invites": [], "botConfig": _default_bot_config(), "aiConfig": _default_ai_config()}
+        return {
+            "embyConfig": {},
+            "invites": [],
+            "botConfig": _default_bot_config(),
+            "aiConfig": _default_ai_config(),
+            "drive115Config": _default_drive115_config(),
+        }
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {"embyConfig": {}, "invites": [], "botConfig": _default_bot_config(), "aiConfig": _default_ai_config()}
+        return {
+            "embyConfig": {},
+            "invites": [],
+            "botConfig": _default_bot_config(),
+            "aiConfig": _default_ai_config(),
+            "drive115Config": _default_drive115_config(),
+        }
 
     emby_config = data.get("embyConfig") if isinstance(data, dict) else {}
     invites = data.get("invites") if isinstance(data, dict) else []
     bot_config = data.get("botConfig") if isinstance(data, dict) else {}
     ai_config = data.get("aiConfig") if isinstance(data, dict) else {}
+    drive115_config = data.get("drive115Config") if isinstance(data, dict) else {}
     if not isinstance(emby_config, dict):
         emby_config = {}
     if not isinstance(invites, list):
@@ -624,6 +695,7 @@ def _read_store_unlocked() -> dict[str, Any]:
         "invites": invites,
         "botConfig": _normalize_bot_config(bot_config),
         "aiConfig": _normalize_ai_config(ai_config),
+        "drive115Config": _normalize_drive115_config(drive115_config),
     }
 
 
@@ -808,6 +880,12 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/ai/config":
             self._handle_ai_config_get()
             return
+        if path == "/api/drive115/config":
+            self._handle_drive115_config_get()
+            return
+        if path == "/api/drive115/qrcode/status":
+            self._handle_drive115_qrcode_status(parsed.query)
+            return
         if path == "/api/bot/webhook-url":
             self._handle_bot_webhook_url_get()
             return
@@ -873,6 +951,27 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/ai/test":
             self._handle_ai_config_test()
+            return
+        if path == "/api/tmdb/test":
+            self._handle_tmdb_test()
+            return
+        if path == "/api/drive115/config":
+            self._handle_drive115_config_save()
+            return
+        if path == "/api/drive115/test":
+            self._handle_drive115_test()
+            return
+        if path == "/api/drive115/parse":
+            self._handle_drive115_parse()
+            return
+        if path == "/api/drive115/transfer":
+            self._handle_drive115_transfer()
+            return
+        if path == "/api/drive115/qrcode/start":
+            self._handle_drive115_qrcode_start()
+            return
+        if path == "/api/drive115/qrcode/stop":
+            self._handle_drive115_qrcode_stop()
             return
         if path == "/api/bot/test":
             self._handle_bot_test()
@@ -2007,6 +2106,398 @@ class AppHandler(SimpleHTTPRequestHandler):
             200,
             {"ok": True, "message": "AI 连接测试成功", "sample": self._shorten(answer, limit=80), "elapsedMs": elapsed_ms},
         )
+
+    def _handle_tmdb_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            saved_config = _apply_emby_env_overrides(store.get("embyConfig"))
+
+        submitted = payload.get("tmdbConfig") if isinstance(payload, dict) else {}
+        submitted = submitted if isinstance(submitted, dict) else {}
+        token = str(submitted.get("tmdbToken") or saved_config.get("tmdbToken") or "").strip()
+        language = str(submitted.get("tmdbLanguage") or saved_config.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN"
+        if not token:
+            self._send_json(400, {"ok": False, "status": "not_configured", "error": "TMDB Token 尚未保存。"})
+            return
+
+        request = urllib.request.Request(
+            "https://api.themoviedb.org/3/configuration",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "Accept-Language": language,
+                "User-Agent": "Vistamirror/1.0",
+            },
+        )
+        started = time.time()
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                result = json.loads(response.read().decode("utf-8", errors="replace"))
+            if not isinstance(result, dict) or not isinstance(result.get("images"), dict):
+                raise RuntimeError("TMDB 返回了无法识别的响应。")
+        except urllib.error.HTTPError as err:
+            status = "invalid_token" if err.code in {401, 403} else "upstream_error"
+            message = "TMDB Token 无效或无权访问。" if status == "invalid_token" else f"TMDB 返回 HTTP {err.code}。"
+            self._log_event(
+                level="warning",
+                module="system",
+                action="tmdb_test_failed",
+                message="TMDB 连接测试失败。",
+                detail={"status": status, "httpStatus": err.code},
+            )
+            self._send_json(401 if status == "invalid_token" else 502, {"ok": False, "status": status, "error": message})
+            return
+        except (urllib.error.URLError, TimeoutError, OSError) as err:
+            self._log_event(
+                level="warning",
+                module="system",
+                action="tmdb_test_failed",
+                message="TMDB 网络连接失败。",
+                detail={"status": "network_error", "errorType": type(err).__name__},
+            )
+            self._send_json(502, {"ok": False, "status": "network_error", "error": "无法连接 TMDB，请检查网络或代理设置。"})
+            return
+        except Exception as err:
+            self._log_event(
+                level="warning",
+                module="system",
+                action="tmdb_test_failed",
+                message="TMDB 连接测试失败。",
+                detail={"status": "invalid_response", "errorType": type(err).__name__},
+            )
+            self._send_json(502, {"ok": False, "status": "invalid_response", "error": str(err)})
+            return
+
+        elapsed_ms = int((time.time() - started) * 1000)
+        self._log_event(
+            level="info",
+            module="system",
+            action="tmdb_test_success",
+            message="TMDB 连接测试成功。",
+            status=200,
+            detail={"elapsedMs": elapsed_ms},
+        )
+        self._send_json(200, {"ok": True, "status": "connected", "message": "TMDB 连接正常，Token 已生效。", "elapsedMs": elapsed_ms})
+
+    def _handle_drive115_config_get(self) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            path = _store_path()
+            needs_persist = True
+            if path.exists():
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    needs_persist = not isinstance(raw, dict) or not isinstance(raw.get("drive115Config"), dict)
+                except Exception:
+                    needs_persist = True
+            if needs_persist:
+                _write_store_unlocked(store)
+            config = _apply_drive115_env_overrides(store.get("drive115Config"))
+
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "drive115Config": admin_drive115_config(config),
+                "envControlledFields": _env_controlled_fields_payload(),
+                "managedByEnv": _env_controlled_fields_payload(),
+            },
+        )
+
+    def _handle_drive115_config_save(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw_config = payload.get("drive115Config") if isinstance(payload, dict) else payload
+        if not isinstance(raw_config, dict):
+            self._send_json(400, {"ok": False, "error": "115 配置必须是对象"})
+            return
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            current = _normalize_drive115_config(store.get("drive115Config"))
+            locked = _env_managed_drive115_fields()
+            next_config = merge_drive115_config_for_save(current, raw_config)
+            for field in locked:
+                next_config[field] = current.get(field)
+            store["drive115Config"] = _normalize_drive115_config(next_config)
+            _write_store_unlocked(store)
+            saved = _apply_drive115_env_overrides(store.get("drive115Config"))
+
+        if TELEGRAM_COMMAND_SERVICE is not None:
+            TELEGRAM_COMMAND_SERVICE.wakeup()
+
+        self._log_event(
+            level="info",
+            module="drive115",
+            action="drive115_config_saved",
+            message="115 网盘配置已保存。",
+            status=200,
+            detail=redact_drive115_payload({"enabled": raw_config.get("enabled"), "defaultCid": raw_config.get("defaultCid")}),
+        )
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "drive115Config": admin_drive115_config(saved),
+                "envControlledFields": _env_controlled_fields_payload(),
+                "managedByEnv": _env_controlled_fields_payload(),
+            },
+        )
+
+    def _drive115_service_from_store(self, override_config: dict[str, Any] | None = None) -> Drive115Service:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            base = _apply_drive115_env_overrides(store.get("drive115Config"))
+        if isinstance(override_config, dict):
+            merged = dict(base)
+            for key, value in override_config.items():
+                if key in {"enabled", "cookie", "defaultCid"}:
+                    merged[key] = value
+            base = _apply_drive115_env_overrides(merged)
+        return Drive115Service(base)
+
+    def _handle_drive115_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw_config = payload.get("drive115Config") if isinstance(payload, dict) else {}
+        try:
+            result = self._drive115_service_from_store(raw_config if isinstance(raw_config, dict) else {}).test_cookie()
+        except Exception as err:
+            self._log_event(
+                level="warning",
+                module="drive115",
+                action="drive115_test_failed",
+                message="115 Cookie 测试失败。",
+                detail={"error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(
+            level="info",
+            module="drive115",
+            action="drive115_test_success",
+            message="115 Cookie 测试成功。",
+            status=200,
+            detail={"userName": result.get("userName") or ""},
+        )
+        self._send_json(200, result)
+
+    def _handle_drive115_parse(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        share_url = str(payload.get("shareUrl") or payload.get("url") or "").strip()
+        receive_code = str(payload.get("receiveCode") or payload.get("password") or "").strip()
+        try:
+            result = self._drive115_service_from_store().parse_share(share_url=share_url, receive_code=receive_code)
+        except Exception as err:
+            self._log_event(
+                level="warning",
+                module="drive115",
+                action="drive115_parse_failed",
+                message="115 分享链接解析失败。",
+                detail={"error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(
+            level="info",
+            module="drive115",
+            action="drive115_parse_success",
+            message="115 分享链接解析成功。",
+            status=200,
+            detail={"shareCode": result.get("shareCode"), "fileCount": result.get("fileCount"), "title": result.get("title")},
+        )
+        self._send_json(200, result)
+
+    def _handle_drive115_transfer(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        share_code = str(payload.get("shareCode") or "").strip()
+        if not share_code:
+            share_url = str(payload.get("shareUrl") or payload.get("url") or "").strip()
+            share_code = extract_115_share(share_url, str(payload.get("receiveCode") or "")).get("shareCode") or ""
+        receive_code = str(payload.get("receiveCode") or "").strip()
+        target_cid = str(payload.get("targetCid") or payload.get("cid") or "").strip()
+        file_ids = payload.get("fileIds") if isinstance(payload.get("fileIds"), list) else []
+        try:
+            result = self._drive115_service_from_store().transfer_share(
+                share_code=share_code,
+                receive_code=receive_code,
+                target_cid=target_cid,
+                file_ids=[str(item) for item in file_ids],
+            )
+        except Exception as err:
+            self._log_event(
+                level="error",
+                module="drive115",
+                action="drive115_transfer_failed",
+                message="115 分享转存失败。",
+                detail={"shareCode": share_code, "targetCid": target_cid, "error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(
+            level="info",
+            module="drive115",
+            action="drive115_transfer_success",
+            message="115 分享转存已提交。",
+            status=200,
+            detail={"shareCode": share_code, "targetCid": result.get("targetCid")},
+        )
+        self._send_json(200, result)
+
+    def _cleanup_drive115_qrcode_sessions(self) -> None:
+        now = time.time()
+        with DRIVE115_QRCODE_LOCK:
+            expired = [
+                key
+                for key, value in DRIVE115_QRCODE_SESSIONS.items()
+                if now - float(value.get("createdAt") or 0) > 240 or value.get("stopped")
+            ]
+            for key in expired:
+                DRIVE115_QRCODE_SESSIONS.pop(key, None)
+
+    def _handle_drive115_qrcode_start(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        client = str(payload.get("client") or "qandroid").strip() or "qandroid"
+        try:
+            session = self._drive115_service_from_store().create_qrcode_session(client=client)
+        except Exception as err:
+            self._log_event(
+                level="warning",
+                module="drive115",
+                action="drive115_qrcode_start_failed",
+                message="115 扫码二维码生成失败。",
+                detail={"client": client, "error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        session_id = str(session.get("sessionId") or "").strip()
+        with DRIVE115_QRCODE_LOCK:
+            DRIVE115_QRCODE_SESSIONS[session_id] = {
+                "uid": session.get("uid"),
+                "time": session.get("time"),
+                "sign": session.get("sign"),
+                "client": session.get("client"),
+                "clientLabel": session.get("clientLabel"),
+                "imageUrl": session.get("imageUrl"),
+                "createdAt": time.time(),
+                "status": "waiting",
+            }
+        self._cleanup_drive115_qrcode_sessions()
+        self._log_event(
+            level="info",
+            module="drive115",
+            action="drive115_qrcode_started",
+            message="115 扫码登录二维码已生成。",
+            status=200,
+            detail={"client": session.get("client")},
+        )
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "sessionId": session_id,
+                "imageUrl": session.get("imageUrl"),
+                "client": session.get("client"),
+                "clientLabel": session.get("clientLabel"),
+                "expiresIn": session.get("expiresIn") or 180,
+                "clients": drive115_qrcode_clients(),
+                "message": "二维码已生成，请用 115 App 扫码。",
+            },
+        )
+
+    def _handle_drive115_qrcode_stop(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        session_id = str(payload.get("sessionId") or "").strip()
+        with DRIVE115_QRCODE_LOCK:
+            if session_id:
+                DRIVE115_QRCODE_SESSIONS.pop(session_id, None)
+        self._send_json(200, {"ok": True, "message": "已停止二维码轮询。"})
+
+    def _handle_drive115_qrcode_status(self, query: str) -> None:
+        params = urllib.parse.parse_qs(query or "")
+        session_id = str((params.get("sessionId") or [""])[0] or "").strip()
+        if not session_id:
+            self._send_json(400, {"ok": False, "status": "failed", "error": "缺少二维码会话 ID。"})
+            return
+        with DRIVE115_QRCODE_LOCK:
+            session = dict(DRIVE115_QRCODE_SESSIONS.get(session_id) or {})
+        if not session:
+            self._send_json(404, {"ok": False, "status": "expired", "error": "二维码会话已过期，请重新生成。"})
+            return
+        if time.time() - float(session.get("createdAt") or 0) > 180:
+            with DRIVE115_QRCODE_LOCK:
+                DRIVE115_QRCODE_SESSIONS.pop(session_id, None)
+            self._send_json(410, {"ok": False, "status": "expired", "error": "二维码已过期，请重新生成。"})
+            return
+        try:
+            service = self._drive115_service_from_store()
+            status = service.check_qrcode_status(
+                uid=str(session.get("uid") or ""),
+                time_value=str(session.get("time") or ""),
+                sign=str(session.get("sign") or ""),
+            )
+            if status.get("status") != "confirmed":
+                self._send_json(200, status)
+                return
+            login_result = service.login_qrcode(
+                uid=str(session.get("uid") or ""),
+                client=str(session.get("client") or "qandroid"),
+            )
+            cookie = str(login_result.get("cookie") or "").strip()
+            if not cookie:
+                raise RuntimeError("115 登录成功但未返回 Cookie。")
+            with STORE_LOCK:
+                store = _read_store_unlocked()
+                current = _normalize_drive115_config(store.get("drive115Config"))
+                current["enabled"] = True
+                current["cookie"] = cookie
+                current["updatedAt"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                store["drive115Config"] = current
+                _write_store_unlocked(store)
+                saved = _apply_drive115_env_overrides(store.get("drive115Config"))
+            with DRIVE115_QRCODE_LOCK:
+                DRIVE115_QRCODE_SESSIONS.pop(session_id, None)
+            if TELEGRAM_COMMAND_SERVICE is not None:
+                TELEGRAM_COMMAND_SERVICE.wakeup()
+            self._log_event(
+                level="info",
+                module="drive115",
+                action="drive115_qrcode_login_success",
+                message="115 扫码登录成功，Cookie 已保存。",
+                status=200,
+                detail={"client": session.get("client")},
+            )
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "status": "success",
+                    "message": "扫码登录成功，Cookie 已自动保存。",
+                    "drive115Config": admin_drive115_config(saved),
+                },
+            )
+        except Exception as err:
+            self._log_event(
+                level="warning",
+                module="drive115",
+                action="drive115_qrcode_status_failed",
+                message="115 扫码状态查询失败。",
+                detail={"sessionId": session_id, "error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "status": "failed", "error": str(err)})
 
     def _first_forwarded_value(self, header_name: str) -> str:
         raw = str(self.headers.get(header_name) or "").strip()
@@ -4021,32 +4512,17 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "skipped": "duplicate_skipped"})
                 return
 
-            card = self._build_library_payload(payload, event_name=event_name, emby_config=emby_config)
-            caption = card.get("caption") or "新资源入库通知"
-            poster_url = str(card.get("posterUrl") or "").strip()
-            detail_url = str(card.get("detailUrl") or "").strip()
             try:
-                if poster_url:
-                    try:
-                        self._send_telegram_photo(
-                            token=token_value,
-                            chat_id=chat_id,
-                            photo_url=poster_url,
-                            caption=caption,
-                            button_text="🔗 查看详情",
-                            button_url=detail_url,
-                        )
-                    except RuntimeError as err:
-                        lowered = str(err).lower()
-                        should_fallback = any(
-                            key in lowered
-                            for key in ("wrong type", "failed to get http url", "wrong file identifier", "http url", "bad request")
-                        )
-                        if not should_fallback:
-                            raise
-                        self._send_telegram_text(token=token_value, chat_id=chat_id, text=caption)
-                else:
-                    self._send_telegram_text(token=token_value, chat_id=chat_id, text=caption)
+                if TELEGRAM_COMMAND_SERVICE is None:
+                    raise RuntimeError("Telegram 入库通知服务尚未启动")
+                notify_result = TELEGRAM_COMMAND_SERVICE.notify_library_item(
+                    item_id=item_id,
+                    payload=payload,
+                    source="webhook",
+                )
+                result_status = str(notify_result.get("status") or "unknown")
+                if not bool(notify_result.get("ok")):
+                    raise RuntimeError(f"入库通知处理失败：{result_status}")
             except ValueError as err:
                 self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
                 self._send_json(400, {"error": str(err)})
@@ -4060,8 +4536,24 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self._send_json(502, {"error": f"Telegram 发送失败：{err}"})
                 return
 
-            self._record_webhook_status(event_type=event_type, result="sent", detail="Telegram 入库富媒体推送成功")
-            self._send_json(200, {"ok": True, "sent": True, "eventType": event_type, "itemId": item_id})
+            if result_status == "sent":
+                self._record_webhook_status(event_type=event_type, result="sent", detail="Telegram 新入库海报通知已发送")
+            elif result_status == "duplicate":
+                self._record_webhook_status(event_type=event_type, result="duplicate_skipped", detail="该入库资源已经通知，已跳过")
+            elif result_status == "filtered":
+                self._record_webhook_status(event_type=event_type, result="library_event_filtered", detail="仅通知电影和单集资源")
+            else:
+                self._record_webhook_status(event_type=event_type, result=result_status, detail="入库事件已处理")
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "sent": result_status == "sent",
+                    "eventType": event_type,
+                    "itemId": item_id,
+                    "result": result_status,
+                },
+            )
             return
 
         message = self._build_webhook_message(payload, event_type=event_type, event_name=event_name)
@@ -4426,12 +4918,11 @@ class AppHandler(SimpleHTTPRequestHandler):
             if sanitized:
                 sanitized_invites.append(sanitized)
 
-        emby_config = {
-            "serverUrl": str(emby_config_raw.get("serverUrl") or "").strip(),
-            "apiKey": str(emby_config_raw.get("apiKey") or "").strip(),
-            "clientName": str(emby_config_raw.get("clientName") or "").strip(),
-            "updatedAt": _now_iso(),
-        }
+        with STORE_LOCK:
+            stored = _read_store_unlocked()
+            current_emby_config = stored.get("embyConfig") if isinstance(stored.get("embyConfig"), dict) else {}
+
+        emby_config = _merge_emby_config_for_save(current_emby_config, emby_config_raw)
 
         with STORE_LOCK:
             store = _read_store_unlocked()
@@ -4455,8 +4946,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             detail={
                 "inviteCount": len(sanitized_invites),
                 "storedInviteCount": len(merged_invites),
-                "changedFields": ["serverUrl", "apiKey", "clientName"],
+                "changedFields": ["serverUrl", "apiKey", "clientName", "tmdbEnabled", "tmdbToken", "tmdbLanguage", "tmdbRegion"],
                 "envLockedFields": sorted(_env_managed_emby_fields()),
+                "tmdbConfigured": bool(effective_emby_config.get("tmdbToken")),
             },
         )
         self._send_json(

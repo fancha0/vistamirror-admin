@@ -134,12 +134,18 @@ class TelegramSender:
         text: str,
         reply_markup: dict[str, Any] | None = None,
         parse_mode: str = "",
+        reply_to_message_id: int = 0,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
         if parse_mode:
             payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if int(reply_to_message_id or 0) > 0:
+            payload["reply_parameters"] = {
+                "message_id": int(reply_to_message_id),
+                "allow_sending_without_reply": True,
+            }
         return self.api_request(token=token, method="sendMessage", payload=payload)
 
     def edit_message_text(
