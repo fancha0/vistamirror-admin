@@ -81,3 +81,26 @@ docker compose -f docker-compose.simple.yml up -d
 ## 6) 访问地址
 
 `http://<你的服务器IP或域名>:8091`
+
+## 7) 影巢一键授权代理
+
+一键授权需要单独部署公共代理，并在影巢“我的应用”中把固定回调地址登记为：
+
+```text
+https://你的代理域名/oauth/callback
+```
+
+复制 `docker-compose.hdhive-broker.yml`，配置以下环境变量后启动：
+
+```text
+HDHIVE_BROKER_PUBLIC_URL=https://你的代理域名
+HDHIVE_BROKER_CLIENT_ID=影巢应用ClientID
+HDHIVE_BROKER_APP_SECRET=影巢应用Secret
+HDHIVE_BROKER_ENCRYPTION_KEY=至少24字符的随机密钥
+```
+
+```bash
+docker compose -f docker-compose.hdhive-broker.yml up -d
+```
+
+代理必须由 HTTPS 反向代理保护。普通 Vistamirror 实例只填写 `APP_HDHIVE_BROKER_URL`，不会取得影巢应用 Secret 或用户 Token。授权范围为 `meta query unlock write`，其中 `write` 用于普通签到。

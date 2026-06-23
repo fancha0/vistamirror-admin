@@ -7,7 +7,7 @@
   <meta name="description" content="镜界Vistamirror 风格的 Emby 用户管理控制台，支持 Emby API 接入、邀请管理、到期续费与登录日志。">
   <link rel="icon" type="image/png" href="logo.png?v=20260408-2030">
   <link rel="apple-touch-icon" href="logo.png?v=20260408-2030">
-  <link rel="stylesheet" href="styles.css?v=20260617-drive115-layout">
+  <link rel="stylesheet" href="styles.css?v=20260622-hdhive-broker">
 </head>
 <body class="auth-pending">
   <section id="admin-auth-loading" class="admin-auth-loading" aria-live="polite">
@@ -68,6 +68,7 @@
         <button class="nav-item" data-view="logs" type="button"><span class="nav-icon">🕘</span>播放历史</button>
         <p class="nav-group-title">网盘</p>
         <button class="nav-item" data-view="drive-115" type="button"><span class="nav-icon">📦</span>115网盘</button>
+        <button class="nav-item" data-view="hdhive" type="button"><span class="nav-icon">🪺</span>影巢搜索</button>
         <p class="nav-group-title">互动与维护</p>
         <button class="nav-item" data-view="workorders" type="button"><span class="nav-icon">🎬</span>工单大厅</button>
         <button class="nav-item" data-view="user-center" type="button"><span class="nav-icon">👥</span>用户管理</button>
@@ -1066,6 +1067,144 @@
         </div>
       </section>
 
+      <section id="view-hdhive" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel hdhive-shell">
+            <div class="hdhive-page-head">
+              <div>
+                <p class="section-label">HDHive OpenAPI</p>
+                <h3>影巢资源搜索</h3>
+                <p>确认作品身份后搜索资源，解锁时显示积分并转存到 115。</p>
+              </div>
+              <span id="hdhive-status-badge" class="tmdb-status-badge is-off">未配置</span>
+            </div>
+
+            <div class="hdhive-config-grid">
+              <section class="settings-card hdhive-card">
+                <div class="settings-card-head">
+                  <h4>影巢 OAuth 授权</h4>
+                  <p>通过浏览器授权影巢账号，资源查询、解锁和签到都会使用该账号。</p>
+                </div>
+                <div class="settings-subgrid">
+                  <div class="tmdb-switch-row field-span-2">
+                    <label for="hdhive-enabled" class="tmdb-switch" aria-label="启用影巢搜索">
+                      <input id="hdhive-enabled" type="checkbox">
+                      <span class="tmdb-switch-slider"></span>
+                    </label>
+                    <div class="tmdb-switch-copy">
+                      <strong>启用影巢搜索</strong>
+                      <p>启用后网页、Telegram 和 AI 才能查询影巢资源。</p>
+                    </div>
+                  </div>
+                  <label class="field field-span-2">
+                    <span>授权方式</span>
+                    <select id="hdhive-auth-mode">
+                      <option value="broker">浏览器一键授权（推荐）</option>
+                      <option value="direct">独立 OpenAPI 应用</option>
+                    </select>
+                  </label>
+                  <label id="hdhive-broker-field" class="field field-span-2">
+                    <span>Vistamirror 授权服务</span>
+                    <input id="hdhive-broker-url" type="url" placeholder="https://hdhive.example.com">
+                  </label>
+                  <details id="hdhive-direct-settings" class="hdhive-advanced field-span-2">
+                    <summary>独立应用高级设置</summary>
+                    <div class="settings-subgrid">
+                      <label class="field">
+                        <span>Client ID</span>
+                        <input id="hdhive-client-id" type="text" placeholder="app_xxx">
+                      </label>
+                      <label class="field">
+                        <span>应用 Secret</span>
+                        <div class="password-field">
+                          <input id="hdhive-app-secret" type="password" placeholder="已保存时留空不修改">
+                          <button type="button" class="eye-btn password-toggle" aria-label="显示或隐藏影巢 Secret" data-target="hdhive-app-secret" data-open="false">🙈</button>
+                        </div>
+                      </label>
+                      <label class="field field-span-2">
+                        <span>OAuth 回调地址</span>
+                        <input id="hdhive-redirect-uri" type="url" placeholder="http://localhost:8091/api/hdhive/oauth/callback">
+                      </label>
+                    </div>
+                  </details>
+                  <div class="drive115-actions-row field-span-2">
+                    <button id="hdhive-test-btn" class="ghost-btn" type="button">测试连接</button>
+                    <button id="hdhive-save-btn" class="primary-btn" type="button">保存配置</button>
+                  </div>
+                  <p id="hdhive-config-feedback" class="tmdb-token-hint field-span-2">影巢尚未配置。</p>
+                </div>
+              </section>
+
+              <section class="settings-card hdhive-card">
+                <div class="settings-card-head">
+                  <h4>账号授权</h4>
+                  <p>授权成功后才能查询资源、读取积分和解锁链接。</p>
+                </div>
+                <div id="hdhive-account-summary" class="hdhive-account-summary">
+                  <strong>尚未授权</strong>
+                  <span>请先保存 OpenAPI 应用配置。</span>
+                </div>
+                <div class="drive115-actions-row">
+                  <button id="hdhive-authorize-btn" class="primary-btn" type="button">前往影巢授权</button>
+                  <button id="hdhive-refresh-btn" class="ghost-btn" type="button">刷新状态</button>
+                  <button id="hdhive-disconnect-btn" class="ghost-btn danger-text" type="button">解除授权</button>
+                </div>
+              </section>
+            </div>
+
+            <section class="settings-card hdhive-card">
+              <div class="settings-card-head">
+                <h4>签到设置</h4>
+                <p>使用当前授权账号执行普通签到，不启用可能扣积分的高波动模式。</p>
+              </div>
+              <div class="hdhive-checkin-row">
+                <div class="tmdb-switch-row">
+                  <label for="hdhive-auto-checkin" class="tmdb-switch" aria-label="启用每日自动签到">
+                    <input id="hdhive-auto-checkin" type="checkbox" checked>
+                    <span class="tmdb-switch-slider"></span>
+                  </label>
+                  <div class="tmdb-switch-copy"><strong>每日自动签到</strong><p>代理服务按所选时区每天执行一次普通签到。</p></div>
+                </div>
+                <label class="field"><span>签到时区</span><select id="hdhive-timezone"><option value="Asia/Shanghai">Asia/Shanghai</option><option value="Asia/Hong_Kong">Asia/Hong_Kong</option><option value="UTC">UTC</option></select></label>
+                <button id="hdhive-checkin-btn" class="ghost-btn" type="button">立即签到</button>
+              </div>
+              <p id="hdhive-checkin-feedback" class="tmdb-token-hint">尚无签到记录。</p>
+            </section>
+
+            <section class="settings-card hdhive-card hdhive-search-card">
+              <div class="settings-card-head">
+                <h4>搜索影巢资源</h4>
+                <p>先通过 TMDB 确认作品，再读取影巢中与该作品对应的资源。</p>
+              </div>
+              <div class="hdhive-search-controls">
+                <input id="hdhive-search-keyword" type="search" placeholder="输入电影或剧集名称，例如：遮天">
+                <select id="hdhive-search-type" aria-label="媒体类型">
+                  <option value="">自动识别</option>
+                  <option value="tv">剧集</option>
+                  <option value="movie">电影</option>
+                </select>
+                <label class="hdhive-filter-toggle"><input id="hdhive-only-115" type="checkbox" checked> 仅显示 115</label>
+                <button id="hdhive-search-btn" class="primary-btn" type="button">搜索资源</button>
+              </div>
+              <p id="hdhive-search-summary" class="tmdb-token-hint">等待搜索。</p>
+              <div id="hdhive-search-results" class="hdhive-results">
+                <div class="empty-state">输入片名后开始搜索影巢资源。</div>
+              </div>
+            </section>
+
+            <section class="settings-card hdhive-card">
+              <div class="settings-card-head">
+                <h4>最近操作</h4>
+                <p>仅保留当前页面会话中的搜索和转存结果。</p>
+              </div>
+              <div id="hdhive-records" class="drive115-records">
+                <div class="empty-state">暂无影巢操作记录。</div>
+              </div>
+            </section>
+          </section>
+        </div>
+      </section>
+
       <section id="view-workshop" class="view-section">
         <div class="dashboard-grid logs-grid">
           <section class="panel">
@@ -1674,7 +1813,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260619-tmdb-config-fix"></script>
+  <script src="script.js?v=20260622-hdhive-broker"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

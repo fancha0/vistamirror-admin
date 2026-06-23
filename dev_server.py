@@ -59,7 +59,18 @@ from backend_modules.drive115_service import (
     public_drive115_config,
     redact_drive115_payload,
 )
+from backend_modules.hdhive_service import (
+    HDHiveError,
+    HDHiveService,
+    apply_hdhive_env_overrides,
+    default_hdhive_config as module_default_hdhive_config,
+    env_managed_hdhive_fields,
+    merge_hdhive_config_for_save,
+    normalize_hdhive_config as module_normalize_hdhive_config,
+    public_hdhive_config,
+)
 from backend_modules.ip_locator import build_ip_display
+from backend_modules.media_identity_service import MediaIdentityService
 from backend_modules.message_formatter import compose_playback_message, normalize_content_type, ticks_to_seconds
 from backend_modules.missing_episode_service import MissingEpisodeService
 from backend_modules.admin_auth_service import AdminAuthService, AuthConfig
@@ -122,6 +133,9 @@ TELEGRAM_COMMAND_SERVICE: TelegramCommandService | None = None
 ADMIN_AUTH_SERVICE: AdminAuthService | None = None
 DRIVE115_QRCODE_LOCK = threading.Lock()
 DRIVE115_QRCODE_SESSIONS: dict[str, dict[str, Any]] = {}
+HDHIVE_OAUTH_LOCK = threading.Lock()
+HDHIVE_OAUTH_STATES: dict[str, dict[str, Any]] = {}
+HDHIVE_CHECKIN_STOP = threading.Event()
 
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
@@ -504,6 +518,64 @@ def _env_managed_drive115_fields() -> list[str]:
     return env_managed_drive115_fields()
 
 
+def _default_hdhive_config() -> dict[str, Any]:
+    return module_default_hdhive_config()
+
+
+def _normalize_hdhive_config(raw: Any) -> dict[str, Any]:
+    return module_normalize_hdhive_config(raw)
+
+
+def _apply_hdhive_env_overrides(raw: Any) -> dict[str, Any]:
+    return apply_hdhive_env_overrides(raw)
+
+
+def _env_managed_hdhive_fields() -> list[str]:
+    return env_managed_hdhive_fields()
+
+
+def _save_hdhive_background_config(config: dict[str, Any]) -> None:
+    with STORE_LOCK:
+        store = _read_store_unlocked()
+        stored = _normalize_hdhive_config(config)
+        current = _normalize_hdhive_config(store.get("hdhiveConfig"))
+        for field in _env_managed_hdhive_fields():
+            stored[field] = current.get(field)
+        store["hdhiveConfig"] = stored
+        _write_store_unlocked(store)
+
+
+def _hdhive_direct_checkin_loop() -> None:
+    while not HDHIVE_CHECKIN_STOP.wait(60):
+        try:
+            with STORE_LOCK:
+                store = _read_store_unlocked()
+                config = _apply_hdhive_env_overrides(store.get("hdhiveConfig"))
+            if not config.get("enabled") or str(config.get("authMode") or "") != "direct" or not config.get("autoCheckin"):
+                continue
+            if not config.get("accessToken") or "write" not in str(config.get("scopes") or "").split():
+                continue
+            try:
+                from zoneinfo import ZoneInfo
+                date_key = datetime.now(ZoneInfo(str(config.get("timezone") or "Asia/Shanghai"))).date().isoformat()
+            except Exception:
+                date_key = datetime.now(timezone.utc).date().isoformat()
+            if str(config.get("lastCheckinDate") or "") == date_key:
+                continue
+            service = HDHiveService(config, save_config=_save_hdhive_background_config)
+            result = service.checkin()
+            _write_project_event(
+                level="info", module="hdhive", action="hdhive_auto_checkin",
+                message="影巢每日普通签到已执行。",
+                detail={"checkedIn": bool(result.get("checked_in")), "points": result.get("points")},
+            )
+        except Exception as err:
+            _write_project_event(
+                level="warning", module="hdhive", action="hdhive_auto_checkin_failed",
+                message="影巢每日签到失败。", detail={"error": str(err)},
+            )
+
+
 def _env_managed_admin_auth_fields() -> list[str]:
     managed: list[str] = []
     for field, env_name in ADMIN_AUTH_ENV_FIELD_MAP.items():
@@ -584,6 +656,7 @@ def _env_controlled_fields_payload() -> dict[str, list[str]]:
         "botConfig": _env_managed_bot_fields(),
         "aiConfig": _env_managed_ai_fields(),
         "drive115Config": _env_managed_drive115_fields(),
+        "hdhiveConfig": _env_managed_hdhive_fields(),
         "adminAuth": _env_managed_admin_auth_fields(),
     }
 
@@ -668,6 +741,7 @@ def _read_store_unlocked() -> dict[str, Any]:
             "botConfig": _default_bot_config(),
             "aiConfig": _default_ai_config(),
             "drive115Config": _default_drive115_config(),
+            "hdhiveConfig": _default_hdhive_config(),
         }
 
     try:
@@ -679,6 +753,7 @@ def _read_store_unlocked() -> dict[str, Any]:
             "botConfig": _default_bot_config(),
             "aiConfig": _default_ai_config(),
             "drive115Config": _default_drive115_config(),
+            "hdhiveConfig": _default_hdhive_config(),
         }
 
     emby_config = data.get("embyConfig") if isinstance(data, dict) else {}
@@ -686,6 +761,7 @@ def _read_store_unlocked() -> dict[str, Any]:
     bot_config = data.get("botConfig") if isinstance(data, dict) else {}
     ai_config = data.get("aiConfig") if isinstance(data, dict) else {}
     drive115_config = data.get("drive115Config") if isinstance(data, dict) else {}
+    hdhive_config = data.get("hdhiveConfig") if isinstance(data, dict) else {}
     if not isinstance(emby_config, dict):
         emby_config = {}
     if not isinstance(invites, list):
@@ -696,6 +772,7 @@ def _read_store_unlocked() -> dict[str, Any]:
         "botConfig": _normalize_bot_config(bot_config),
         "aiConfig": _normalize_ai_config(ai_config),
         "drive115Config": _normalize_drive115_config(drive115_config),
+        "hdhiveConfig": _normalize_hdhive_config(hdhive_config),
     }
 
 
@@ -886,6 +963,18 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/drive115/qrcode/status":
             self._handle_drive115_qrcode_status(parsed.query)
             return
+        if path == "/api/hdhive/config":
+            self._handle_hdhive_config_get()
+            return
+        if path == "/api/hdhive/oauth/start":
+            self._handle_hdhive_oauth_start()
+            return
+        if path == "/api/hdhive/oauth/status":
+            self._handle_hdhive_oauth_status(parsed.query)
+            return
+        if path == "/api/hdhive/oauth/callback":
+            self._handle_hdhive_oauth_callback(parsed.query)
+            return
         if path == "/api/bot/webhook-url":
             self._handle_bot_webhook_url_get()
             return
@@ -972,6 +1061,24 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/drive115/qrcode/stop":
             self._handle_drive115_qrcode_stop()
+            return
+        if path == "/api/hdhive/config":
+            self._handle_hdhive_config_save()
+            return
+        if path == "/api/hdhive/test":
+            self._handle_hdhive_test()
+            return
+        if path == "/api/hdhive/oauth/disconnect":
+            self._handle_hdhive_disconnect()
+            return
+        if path == "/api/hdhive/checkin":
+            self._handle_hdhive_checkin()
+            return
+        if path == "/api/hdhive/search":
+            self._handle_hdhive_search()
+            return
+        if path == "/api/hdhive/transfer":
+            self._handle_hdhive_transfer()
             return
         if path == "/api/bot/test":
             self._handle_bot_test()
@@ -2326,12 +2433,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         receive_code = str(payload.get("receiveCode") or "").strip()
         target_cid = str(payload.get("targetCid") or payload.get("cid") or "").strip()
         file_ids = payload.get("fileIds") if isinstance(payload.get("fileIds"), list) else []
+        source_files = payload.get("sourceFiles") if isinstance(payload.get("sourceFiles"), list) else []
         try:
             result = self._drive115_service_from_store().transfer_share(
                 share_code=share_code,
                 receive_code=receive_code,
                 target_cid=target_cid,
                 file_ids=[str(item) for item in file_ids],
+                source_files=[row for row in source_files if isinstance(row, dict)],
             )
         except Exception as err:
             self._log_event(
@@ -2498,6 +2607,280 @@ class AppHandler(SimpleHTTPRequestHandler):
                 detail={"sessionId": session_id, "error": str(err)},
             )
             self._send_json(502, {"ok": False, "status": "failed", "error": str(err)})
+
+    def _save_hdhive_runtime_config(self, config: dict[str, Any]) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            stored = _normalize_hdhive_config(config)
+            for field in _env_managed_hdhive_fields():
+                stored[field] = _normalize_hdhive_config(store.get("hdhiveConfig")).get(field)
+            store["hdhiveConfig"] = stored
+            _write_store_unlocked(store)
+
+    def _hdhive_service_from_store(self) -> HDHiveService:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            config = _apply_hdhive_env_overrides(store.get("hdhiveConfig"))
+        return HDHiveService(config, save_config=self._save_hdhive_runtime_config)
+
+    def _handle_hdhive_config_get(self) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            config = _apply_hdhive_env_overrides(store.get("hdhiveConfig"))
+        payload = public_hdhive_config(config)
+        payload["callbackUri"] = str(config.get("redirectUri") or "").strip() or f"{self._resolve_public_origin()}/api/hdhive/oauth/callback"
+        self._send_json(200, {"ok": True, "hdhiveConfig": payload, "envControlledFields": _env_controlled_fields_payload()})
+
+    def _handle_hdhive_config_save(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        incoming = payload.get("hdhiveConfig") if isinstance(payload, dict) else payload
+        if not isinstance(incoming, dict):
+            self._send_json(400, {"ok": False, "error": "影巢配置必须是对象"})
+            return
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            current = _normalize_hdhive_config(store.get("hdhiveConfig"))
+            saved = merge_hdhive_config_for_save(current, incoming)
+            broker_changed = (
+                str(saved.get("authMode") or "") != str(current.get("authMode") or "")
+                or str(saved.get("brokerUrl") or "") != str(current.get("brokerUrl") or "")
+            )
+            if broker_changed:
+                for field in ("installationId", "installationSecret", "oauthSessionId"):
+                    saved[field] = ""
+                for field in ("oauthSessionExpiresAt",):
+                    saved[field] = 0
+                saved["user"] = {}
+                saved["lastCheckin"] = {}
+            if (
+                str(saved.get("clientId") or "") != str(current.get("clientId") or "")
+                or str(saved.get("appSecret") or "") != str(current.get("appSecret") or "")
+                or str(saved.get("redirectUri") or "") != str(current.get("redirectUri") or "")
+            ):
+                for field in ("accessToken", "refreshToken", "accessExpiresAt", "refreshExpiresAt", "user"):
+                    saved[field] = {} if field == "user" else 0 if field.endswith("At") else ""
+            for field in _env_managed_hdhive_fields():
+                saved[field] = current.get(field)
+            store["hdhiveConfig"] = _normalize_hdhive_config(saved)
+            _write_store_unlocked(store)
+            effective = _apply_hdhive_env_overrides(store["hdhiveConfig"])
+        if TELEGRAM_COMMAND_SERVICE is not None:
+            TELEGRAM_COMMAND_SERVICE.wakeup()
+        if str(effective.get("authMode") or "") == "broker" and effective.get("user"):
+            try:
+                HDHiveService(effective, save_config=self._save_hdhive_runtime_config).update_broker_preferences()
+            except HDHiveError as err:
+                self._log_event(level="warning", module="hdhive", action="hdhive_preferences_sync_failed", message="影巢签到设置同步失败。", detail={"code": err.code, "error": str(err)})
+        self._log_event(
+            level="info",
+            module="hdhive",
+            action="hdhive_config_saved",
+            message="影巢 OpenAPI 配置已保存。",
+            status=200,
+            detail={"enabled": bool(effective.get("enabled")), "clientIdConfigured": bool(effective.get("clientId"))},
+        )
+        result = public_hdhive_config(effective)
+        result["callbackUri"] = str(effective.get("redirectUri") or "").strip() or f"{self._resolve_public_origin()}/api/hdhive/oauth/callback"
+        self._send_json(200, {"ok": True, "hdhiveConfig": result, "envControlledFields": _env_controlled_fields_payload()})
+
+    def _handle_hdhive_test(self) -> None:
+        try:
+            service = self._hdhive_service_from_store()
+            app = service.ping()
+            has_authorization = bool(service.config.get("user")) if service.is_broker else bool(service.config.get("accessToken") or service.config.get("refreshToken"))
+            user = service.me() if has_authorization else {}
+            self._send_json(200, {"ok": True, "status": "connected", "app": app, "user": user})
+        except HDHiveError as err:
+            self._log_event(level="warning", module="hdhive", action="hdhive_test_failed", message="影巢连接测试失败。", detail={"code": err.code, "error": str(err)})
+            self._send_json(err.status if 400 <= err.status < 500 else 502, {"ok": False, "code": err.code, "error": str(err), "retryAfter": err.retry_after})
+
+    def _handle_hdhive_oauth_start(self) -> None:
+        try:
+            service = self._hdhive_service_from_store()
+            if service.is_broker:
+                session = service.create_broker_oauth_session()
+                self._send_json(200, {"ok": True, "authorizeUrl": session.get("authorizeUrl"), "sessionId": session.get("sessionId"), "expiresAt": session.get("expiresAt"), "mode": "broker"})
+                return
+            redirect_uri = str(service.config.get("redirectUri") or "").strip() or f"{self._resolve_public_origin()}/api/hdhive/oauth/callback"
+            state = secrets.token_urlsafe(32)
+            with HDHIVE_OAUTH_LOCK:
+                now = time.time()
+                HDHIVE_OAUTH_STATES.clear()
+                HDHIVE_OAUTH_STATES[state] = {"createdAt": now, "redirectUri": redirect_uri}
+            authorize_url = service.build_authorize_url(state=state, redirect_uri=redirect_uri)
+            self._send_json(200, {"ok": True, "authorizeUrl": authorize_url, "redirectUri": redirect_uri})
+        except HDHiveError as err:
+            self._send_json(400, {"ok": False, "code": err.code, "error": str(err)})
+
+    def _handle_hdhive_oauth_status(self, query: str) -> None:
+        params = urllib.parse.parse_qs(query)
+        session_id = str((params.get("sessionId") or [""])[0]).strip()
+        try:
+            service = self._hdhive_service_from_store()
+            if not service.is_broker:
+                self._send_json(200, {"ok": True, "status": "authorized" if service.config.get("accessToken") else "idle", "mode": "direct"})
+                return
+            result = service.broker_oauth_status(session_id)
+            self._send_json(200, {"ok": True, **result, "mode": "broker"})
+        except HDHiveError as err:
+            self._send_json(err.status if 400 <= err.status < 500 else 502, {"ok": False, "code": err.code, "error": str(err)})
+
+    def _handle_hdhive_oauth_callback(self, query: str) -> None:
+        params = urllib.parse.parse_qs(query)
+        state = str((params.get("state") or [""])[0]).strip()
+        code = str((params.get("code") or [""])[0]).strip()
+        error = str((params.get("error_description") or params.get("error") or [""])[0]).strip()
+        with HDHIVE_OAUTH_LOCK:
+            session = HDHIVE_OAUTH_STATES.pop(state, None) if state else None
+        if not session or time.time() - float(session.get("createdAt") or 0) > 600:
+            self._send_json(400, {"ok": False, "error": "影巢授权 state 无效或已过期，请重新授权。"})
+            return
+        if error or not code:
+            self._send_json(400, {"ok": False, "error": error or "影巢未返回授权码。"})
+            return
+        try:
+            service = self._hdhive_service_from_store()
+            service.exchange_code(code=code, redirect_uri=str(session.get("redirectUri") or ""))
+            user = service.me()
+            self._log_event(level="info", module="hdhive", action="hdhive_oauth_success", message="影巢账号授权成功。", status=200, detail={"userId": str(user.get("id") or ""), "level": str(user.get("level") or "")})
+        except HDHiveError as err:
+            self._log_event(level="error", module="hdhive", action="hdhive_oauth_failed", message="影巢账号授权失败。", detail={"code": err.code, "error": str(err)})
+            self._send_json(err.status if 400 <= err.status < 500 else 502, {"ok": False, "code": err.code, "error": str(err)})
+            return
+        self.send_response(302)
+        self.send_header("Location", "/?hdhive=authorized")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_hdhive_disconnect(self) -> None:
+        try:
+            service = self._hdhive_service_from_store()
+            service.disconnect()
+            self._log_event(level="info", module="hdhive", action="hdhive_disconnected", message="影巢账号授权已解除。", status=200, detail={"mode": "broker" if service.is_broker else "direct"})
+            self._send_json(200, {"ok": True, "message": "影巢账号授权已解除。"})
+        except HDHiveError as err:
+            self._send_json(err.status if 400 <= err.status < 500 else 502, {"ok": False, "code": err.code, "error": str(err)})
+
+    def _handle_hdhive_checkin(self) -> None:
+        try:
+            service = self._hdhive_service_from_store()
+            result = service.checkin()
+            user = service.me()
+            self._log_event(level="info", module="hdhive", action="hdhive_checkin", message="影巢普通签到已执行。", status=200, detail={"checkedIn": bool(result.get("checked_in")), "points": result.get("points")})
+            self._send_json(200, {"ok": True, "result": result, "user": user})
+        except HDHiveError as err:
+            self._log_event(level="warning", module="hdhive", action="hdhive_checkin_failed", message="影巢签到失败。", detail={"code": err.code, "error": str(err)})
+            self._send_json(err.status if 400 <= err.status < 500 else 502, {"ok": False, "code": err.code, "error": str(err)})
+
+    def _hdhive_tmdb_fetcher(self, path: str) -> dict[str, Any] | list[Any] | None:
+        with STORE_LOCK:
+            config = _apply_emby_env_overrides(_read_store_unlocked().get("embyConfig"))
+        token = str(config.get("tmdbToken") or "").strip()
+        if not bool(config.get("tmdbEnabled")) or not token:
+            raise RuntimeError("请先在系统设置中启用并保存 TMDB Token。")
+        request = urllib.request.Request(
+            f"https://api.themoviedb.org/3{path}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+
+    def _resolve_hdhive_identity(self, query: str, media_type: str = "", tmdb_id: str = "") -> dict[str, Any]:
+        if str(tmdb_id or "").strip():
+            normalized_type = "series" if str(media_type).lower() in {"tv", "series"} else "movie"
+            return {"title": str(query or "").strip(), "type": normalized_type, "tmdbId": str(tmdb_id).strip(), "year": ""}
+        with STORE_LOCK:
+            config = _apply_emby_env_overrides(_read_store_unlocked().get("embyConfig"))
+        service = MediaIdentityService(
+            emby_fetcher=lambda _path: None,
+            tmdb_fetcher=self._hdhive_tmdb_fetcher,
+            language=str(config.get("tmdbLanguage") or "zh-CN"),
+            region=str(config.get("tmdbRegion") or "CN"),
+        )
+        candidates = service.search_media(str(query or "").strip(), media_type=str(media_type or ""))
+        if not candidates:
+            raise RuntimeError(f"TMDB 没有找到《{str(query or '').strip()}》。")
+        return candidates[0]
+
+    @staticmethod
+    def _public_hdhive_resource(row: Any) -> dict[str, Any]:
+        source = row if isinstance(row, dict) else {}
+        pan_type = str(source.get("pan_type") or source.get("website") or "").strip()
+        return {
+            "slug": str(source.get("slug") or "").strip(),
+            "title": str(source.get("title") or "").strip(),
+            "panType": pan_type,
+            "shareSize": str(source.get("share_size") or "").strip(),
+            "resolution": source.get("video_resolution") or [],
+            "source": source.get("source") or [],
+            "subtitleLanguage": source.get("subtitle_language") or [],
+            "subtitleType": source.get("subtitle_type") or [],
+            "unlockPoints": int(source.get("unlock_points") or 0),
+            "isUnlocked": bool(source.get("is_unlocked")),
+            "publisher": str((source.get("user") or {}).get("username") or "") if isinstance(source.get("user"), dict) else "",
+            "is115": "115" in pan_type.lower(),
+        }
+
+    def _handle_hdhive_search(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        query = str(payload.get("query") or payload.get("keyword") or "").strip()
+        try:
+            identity = self._resolve_hdhive_identity(query, str(payload.get("mediaType") or ""), str(payload.get("tmdbId") or ""))
+            service = self._hdhive_service_from_store()
+            if not service.config.get("enabled"):
+                raise HDHiveError("影巢搜索尚未启用。")
+            result = service.search_resources(media_type=str(identity.get("type") or ""), tmdb_id=str(identity.get("tmdbId") or ""))
+            resources = [self._public_hdhive_resource(row) for row in result.get("items") or []]
+            resources = [row for row in resources if row.get("slug")]
+            user = service.me()
+            self._log_event(level="info", module="hdhive", action="hdhive_search_success", message="影巢资源搜索完成。", status=200, detail={"tmdbId": identity.get("tmdbId"), "mediaType": identity.get("type"), "resultCount": len(resources)})
+            self._send_json(200, {"ok": True, "identity": identity, "resources": resources, "meta": result.get("meta") or {}, "user": public_hdhive_config({**service.config, "user": user}).get("user")})
+        except (HDHiveError, RuntimeError, urllib.error.URLError, urllib.error.HTTPError) as err:
+            code = err.code if isinstance(err, HDHiveError) else ""
+            status = err.status if isinstance(err, HDHiveError) else 0
+            self._log_event(level="warning", module="hdhive", action="hdhive_search_failed", message="影巢资源搜索失败。", detail={"code": code, "error": str(err)})
+            self._send_json(status if 400 <= status < 500 else 502, {"ok": False, "code": code, "error": str(err), "retryAfter": err.retry_after if isinstance(err, HDHiveError) else 0})
+
+    def _handle_hdhive_transfer(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        slug = str(payload.get("slug") or "").strip()
+        target_cid = str(payload.get("targetCid") or "").strip()
+        if not slug:
+            self._send_json(400, {"ok": False, "error": "缺少影巢资源 slug。"})
+            return
+        try:
+            service = self._hdhive_service_from_store()
+            unlocked = service.unlock(slug)
+            full_url = str(unlocked.get("full_url") or unlocked.get("url") or "").strip()
+            access_code = str(unlocked.get("access_code") or "").strip()
+            share = extract_115_share(full_url, access_code)
+            if not share.get("shareCode"):
+                raise RuntimeError("该影巢资源不是可识别的 115 分享链接，无法转存。")
+            parsed = self._drive115_service_from_store().parse_share(share_url=full_url, receive_code=access_code)
+            parsed_files = parsed.get("files") if isinstance(parsed.get("files"), list) else []
+            transfer = self._drive115_service_from_store().transfer_share(
+                share_code=str(parsed.get("shareCode") or share.get("shareCode") or ""),
+                receive_code=str(parsed.get("receiveCode") or access_code),
+                target_cid=target_cid,
+                file_ids=[str(row.get("id") or "").strip() for row in parsed_files if isinstance(row, dict) and str(row.get("id") or "").strip()],
+                source_files=parsed_files,
+            )
+            self._log_event(level="info", module="hdhive", action="hdhive_transfer_success", message="影巢资源已解锁并提交 115 转存。", status=200, detail={"slug": slug, "targetCid": transfer.get("targetCid"), "alreadyOwned": bool(unlocked.get("already_owned"))})
+            transfer_status = str(transfer.get("status") or "submitted")
+            message = "目标目录已存在相同资源。" if transfer_status == "exists" else "影巢资源已解锁并提交 115 转存。"
+            self._send_json(200, {"ok": True, "message": message, "status": transfer_status, "targetCid": transfer.get("targetCid"), "alreadyOwned": bool(unlocked.get("already_owned"))})
+        except (HDHiveError, RuntimeError) as err:
+            code = err.code if isinstance(err, HDHiveError) else ""
+            status = err.status if isinstance(err, HDHiveError) else 0
+            self._log_event(level="error", module="hdhive", action="hdhive_transfer_failed", message="影巢资源解锁或 115 转存失败。", detail={"slug": slug, "code": code, "error": str(err)})
+            self._send_json(status if 400 <= status < 500 else 502, {"ok": False, "code": code, "error": str(err), "retryAfter": err.retry_after if isinstance(err, HDHiveError) else 0})
 
     def _first_forwarded_value(self, header_name: str) -> str:
         raw = str(self.headers.get(header_name) or "").strip()
@@ -5562,6 +5945,9 @@ def main() -> None:
         event_logger=_write_project_event,
     )
     TELEGRAM_COMMAND_SERVICE.start()
+    HDHIVE_CHECKIN_STOP.clear()
+    hdhive_checkin_thread = threading.Thread(target=_hdhive_direct_checkin_loop, name="hdhive-checkin", daemon=True)
+    hdhive_checkin_thread.start()
     handler_cls = AppHandler
     server = ThreadingHTTPServer((args.host, args.port), handler_cls)
     _record_service_start(str(args.host), int(args.port))
@@ -5573,6 +5959,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        HDHIVE_CHECKIN_STOP.set()
         server.server_close()
         if TELEGRAM_COMMAND_SERVICE is not None:
             TELEGRAM_COMMAND_SERVICE.stop()

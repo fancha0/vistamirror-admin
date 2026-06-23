@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import base64
+from io import BytesIO
 import json
 import os
 import re
@@ -169,6 +171,18 @@ def _human_size(value: Any) -> str:
     return "0B"
 
 
+class Drive115Error(RuntimeError):
+    def __init__(self, message: str, *, code: str = "", payload: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code = str(code or "")
+        self.payload = payload if isinstance(payload, dict) else {}
+
+    @property
+    def is_duplicate(self) -> bool:
+        text = str(self).lower()
+        return any(marker in text for marker in ("已经转存", "已转存", "重复接收", "无需重复接收", "already received"))
+
+
 @dataclass
 class Drive115Service:
     config: dict[str, Any]
@@ -176,6 +190,7 @@ class Drive115Service:
 
     def __post_init__(self) -> None:
         self.config = apply_drive115_env_overrides(self.config)
+        self._user_id = ""
 
     @property
     def cookie(self) -> str:
@@ -263,7 +278,107 @@ class Drive115Service:
         if state in (True, 1, "1", "true", "success") or payload.get("data") is not None:
             return
         message = str(payload.get("error") or payload.get("msg") or payload.get("message") or "").strip()
-        raise RuntimeError(message or default_error)
+        raise Drive115Error(message or default_error, code=str(errno or payload.get("code") or ""), payload=payload)
+
+    @staticmethod
+    def _response_data(payload: dict[str, Any]) -> dict[str, Any]:
+        return payload.get("data") if isinstance(payload.get("data"), dict) else payload
+
+    def _get_user_id(self) -> str:
+        if self._user_id:
+            return self._user_id
+        for url in ("https://my.115.com/?ct=ajax&ac=get_user_aq", "https://webapi.115.com/user/info"):
+            try:
+                payload = self._request(url)
+                self._ensure_success(payload, "115 账号信息读取失败。")
+            except RuntimeError:
+                continue
+            data = self._response_data(payload)
+            user_id = str(data.get("user_id") or data.get("userId") or data.get("uid") or "").strip()
+            if user_id:
+                self._user_id = user_id
+                return user_id
+        raise RuntimeError("无法读取 115 用户 ID，请更新 Cookie 后重试。")
+
+    @staticmethod
+    def _normalize_file_name(value: Any) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    @staticmethod
+    def _file_meta(row: Any) -> dict[str, Any]:
+        source = row if isinstance(row, dict) else {}
+        size = source.get("size") if source.get("size") is not None else source.get("s")
+        try:
+            size_value = int(float(size or 0))
+        except (TypeError, ValueError):
+            size_value = 0
+        return {
+            "name": str(source.get("name") or source.get("n") or source.get("file_name") or "").strip(),
+            "size": size_value,
+            "isDir": bool(source.get("isDir") or source.get("is_dir") or source.get("isFolder") or source.get("fc")),
+        }
+
+    def _list_target_files(self, cid: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        limit = 200
+        for _ in range(10):
+            query = urllib.parse.urlencode(
+                {"aid": "1", "cid": cid, "offset": offset, "limit": limit, "show_dir": "1", "o": "file_name", "asc": "1"}
+            )
+            payload = self._request(f"https://webapi.115.com/files?{query}")
+            self._ensure_success(payload, "115 目标目录读取失败。")
+            data = self._response_data(payload)
+            page = data.get("data") if isinstance(data.get("data"), list) else data.get("list")
+            if not isinstance(page, list):
+                page = payload.get("data") if isinstance(payload.get("data"), list) else []
+            rows.extend(row for row in page if isinstance(row, dict))
+            if len(page) < limit:
+                break
+            offset += len(page)
+        return rows
+
+    def _target_has_files(self, cid: str, source_files: list[dict[str, Any]]) -> bool:
+        expected = [self._file_meta(row) for row in source_files]
+        expected = [row for row in expected if row["name"]]
+        if not expected:
+            return False
+        actual = [self._file_meta(row) for row in self._list_target_files(cid)]
+        for source in expected:
+            source_name = self._normalize_file_name(source["name"])
+            matched = False
+            for target in actual:
+                if self._normalize_file_name(target["name"]) != source_name:
+                    continue
+                if bool(source["isDir"]) != bool(target["isDir"]):
+                    continue
+                if not source["isDir"] and source["size"] > 0 and target["size"] != source["size"]:
+                    continue
+                matched = True
+                break
+            if not matched:
+                return False
+        return True
+
+    def _submit_transfer(
+        self,
+        *,
+        share_code: str,
+        receive_code: str,
+        cid: str,
+        file_ids: list[str],
+    ) -> dict[str, Any]:
+        payload_data: dict[str, Any] = {
+            "user_id": self._get_user_id(),
+            "share_code": share_code,
+            "receive_code": receive_code,
+            "cid": cid,
+        }
+        if file_ids:
+            payload_data["file_id"] = ",".join(file_ids)
+        payload = self._request("https://webapi.115.com/share/receive", method="POST", data=payload_data)
+        self._ensure_success(payload, "115 转存失败，请检查 Cookie、目录 ID、访问码或分享状态。")
+        return payload
 
     def test_cookie(self) -> dict[str, Any]:
         payload = self._request("https://webapi.115.com/user/info")
@@ -285,10 +400,25 @@ class Drive115Service:
         uid = str(data.get("uid") or "").strip()
         time_value = str(data.get("time") or "").strip()
         sign = str(data.get("sign") or "").strip()
-        qrcode = str(data.get("qrcode") or data.get("qrCode") or "").strip()
+        qrcode_content = str(data.get("qrcode") or data.get("qrCode") or "").strip()
         if not uid or not time_value or not sign:
             raise RuntimeError("115 二维码接口未返回完整会话参数。")
-        image_url = qrcode if qrcode.startswith("http") else f"https://qrcodeapi.115.com/api/1.0/web/1.0/qrcode?uid={urllib.parse.quote(uid, safe='')}"
+        if not qrcode_content:
+            raise RuntimeError("115 二维码接口没有返回可编码的扫码内容。")
+        try:
+            import qrcode
+
+            qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=3)
+            qr.add_data(qrcode_content)
+            qr.make(fit=True)
+            image = qr.make_image(fill_color="black", back_color="white")
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            image_url = f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+        except ImportError as err:
+            raise RuntimeError("服务器缺少二维码生成组件，请安装 requirements.txt 后重启。") from err
+        except Exception as err:
+            raise RuntimeError(f"115 二维码图片生成失败：{err}") from err
         session_id = secrets.token_urlsafe(16)
         return {
             "ok": True,
@@ -419,24 +549,69 @@ class Drive115Service:
         receive_code: str = "",
         target_cid: str = "",
         file_ids: list[str] | None = None,
+        source_files: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         safe_share_code = str(share_code or "").strip()
         if not safe_share_code:
             raise RuntimeError("缺少 115 分享码，无法转存。")
         cid = str(target_cid or self.config.get("defaultCid") or "0").strip() or "0"
         ids = [str(item).strip() for item in (file_ids or []) if str(item).strip()]
-        payload_data: dict[str, Any] = {
-            "share_code": safe_share_code,
-            "receive_code": str(receive_code or "").strip(),
-            "cid": cid,
-        }
-        if ids:
-            payload_data["file_id"] = ",".join(ids)
-            payload_data["file_id[]"] = ids
-        payload = self._request("https://webapi.115.com/share/receive", method="POST", data=payload_data)
-        self._ensure_success(payload, "115 转存失败，请检查 Cookie、目录 ID、访问码或分享状态。")
+        receive = str(receive_code or "").strip()
+        files = [dict(row) for row in (source_files or []) if isinstance(row, dict)]
+        time.sleep(1.2)
+        try:
+            payload = self._submit_transfer(
+                share_code=safe_share_code,
+                receive_code=receive,
+                cid=cid,
+                file_ids=ids,
+            )
+        except Drive115Error as err:
+            if not err.is_duplicate:
+                raise
+            if self._target_has_files(cid, files):
+                return {
+                    "ok": True,
+                    "status": "exists",
+                    "message": "目标目录中已存在相同文件。",
+                    "targetCid": cid,
+                    "shareCode": safe_share_code,
+                    "errorCode": err.code,
+                }
+            refreshed = self.parse_share(
+                share_url=f"https://115.com/s/{safe_share_code}",
+                receive_code=receive,
+            )
+            refreshed_files = [row for row in refreshed.get("files", []) if isinstance(row, dict)]
+            refreshed_ids = [str(row.get("id") or "").strip() for row in refreshed_files if str(row.get("id") or "").strip()]
+            time.sleep(1.2)
+            try:
+                payload = self._submit_transfer(
+                    share_code=safe_share_code,
+                    receive_code=receive,
+                    cid=cid,
+                    file_ids=refreshed_ids or ids,
+                )
+            except Drive115Error as retry_err:
+                if retry_err.is_duplicate and self._target_has_files(cid, refreshed_files or files):
+                    return {
+                        "ok": True,
+                        "status": "exists",
+                        "message": "目标目录中已存在相同文件。",
+                        "targetCid": cid,
+                        "shareCode": safe_share_code,
+                        "errorCode": retry_err.code,
+                    }
+                if retry_err.is_duplicate:
+                    raise Drive115Error(
+                        "115 返回重复转存，但目标目录未发现相同文件，请稍后重试。",
+                        code=retry_err.code,
+                        payload=retry_err.payload,
+                    ) from retry_err
+                raise
         return {
             "ok": True,
+            "status": "submitted",
             "message": "115 已收到转存请求。",
             "targetCid": cid,
             "shareCode": safe_share_code,

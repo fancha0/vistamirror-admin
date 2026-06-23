@@ -21,6 +21,7 @@ from .ai_assistant import apply_ai_env_overrides, chat_completion, normalize_ai_
 from .ai_conversation_store import AiConversationStore
 from .ai_intent_router import AiIntentRouter
 from .drive115_service import Drive115Service, apply_drive115_env_overrides, default_drive115_config, extract_115_share, normalize_drive115_config
+from .hdhive_service import HDHiveError, HDHiveService, apply_hdhive_env_overrides, default_hdhive_config, normalize_hdhive_config
 from .media_identity_service import MediaIdentityService
 from .missing_episode_service import MissingEpisodeService
 from .notification_config import normalize_bot_config
@@ -40,6 +41,7 @@ COMMAND_MENU: list[dict[str, str]] = [
     {"command": "zuijinbofangjilu", "description": "📜 最近播放记录"},
     {"command": "saomiao", "description": "🔄 扫描媒体库"},
     {"command": "zhuancun115", "description": "📦 115 链接转存"},
+    {"command": "hdhive", "description": "🪺 影巢资源搜索"},
     {"command": "ai", "description": "🧠 AI 媒体问答"},
     {"command": "help", "description": "🤖 帮助菜单"},
     {"command": "start", "description": "🚀 启动机器人"},
@@ -90,6 +92,7 @@ def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
             "botConfig": normalize_bot_config({}),
             "aiConfig": normalize_ai_config({}),
             "drive115Config": default_drive115_config(),
+            "hdhiveConfig": default_hdhive_config(),
         }
     try:
         data = json.loads(store_path.read_text(encoding="utf-8"))
@@ -103,6 +106,7 @@ def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
         "botConfig": normalize_bot_config(data.get("botConfig")),
         "aiConfig": normalize_ai_config(data.get("aiConfig")),
         "drive115Config": normalize_drive115_config(data.get("drive115Config")),
+        "hdhiveConfig": normalize_hdhive_config(data.get("hdhiveConfig")),
     }
 
 
@@ -172,6 +176,7 @@ class TelegramCommandService:
         self._commands_registered_token = ""
         self._pending_ai_actions: dict[str, dict[str, Any]] = {}
         self._pending_drive115_transfers: dict[str, dict[str, Any]] = {}
+        self._pending_hdhive_actions: dict[str, dict[str, Any]] = {}
         self._pending_missing_searches: dict[str, dict[str, Any]] = {}
         self._ai_chat_history: dict[str, list[dict[str, str]]] = {}
         self._ai_conversations = AiConversationStore(self.store_path.parent / "ai_conversations.json")
@@ -751,10 +756,13 @@ class TelegramCommandService:
             if drive115_candidate:
                 cmd_name = "zhuancun115"
                 args = str(drive115_candidate.get("text") or text).strip()
+            elif re.match(r"^\s*(?:请)?(?:用)?(?:影巢|hdhive)(?:搜索|搜|查找|查)\s*", text, flags=re.IGNORECASE):
+                cmd_name = "hdhive"
+                args = re.sub(r"^\s*(?:请)?(?:用)?(?:影巢|hdhive)(?:搜索|搜|查找|查)\s*", "", text, flags=re.IGNORECASE).strip()
             else:
                 cmd_name = "ai"
                 args = text
-        if not is_private and cmd_name not in {"ai", "zhuancun115"}:
+        if not is_private and cmd_name not in {"ai", "zhuancun115", "hdhive"}:
             return
         if cmd_name == "zhuancun115" and not str(args or "").strip():
             all_candidates = self._message_text_candidates(message, include_reply=True)
@@ -813,6 +821,8 @@ class TelegramCommandService:
                     args.strip(),
                     reply_to_message_id=drive115_reply_message_id,
                 )
+            elif cmd_name == "hdhive":
+                reply = self._cmd_hdhive_search(args.strip())
             else:
                 reply = self._dispatch_command(cmd_name, args.strip())
         except Exception as err:
@@ -934,6 +944,15 @@ class TelegramCommandService:
             return
         if data.startswith("drive115:"):
             self._handle_drive115_callback(
+                data=data,
+                token=token,
+                callback_id=callback_id,
+                chat_id=str(chat_id) if chat_id not in (None, "") else "",
+                message_id=message_id if isinstance(message_id, int) else 0,
+            )
+            return
+        if data.startswith("hdhive:"):
+            self._handle_hdhive_callback(
                 data=data,
                 token=token,
                 callback_id=callback_id,
@@ -1154,13 +1173,7 @@ class TelegramCommandService:
             try:
                 self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已取消")
                 if chat_id and message_id:
-                    self._edit_ai_markdown_message(
-                        token=token,
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        title="📦 115 转存已取消",
-                        body="已取消，本次没有提交 115 转存。",
-                    )
+                    self._edit_ai_markdown_message(token=token, chat_id=chat_id, message_id=message_id, title="📦 115 转存已取消", body="已取消，本次没有提交 115 转存。")
             except Exception:
                 pass
             return
@@ -1170,54 +1183,87 @@ class TelegramCommandService:
             except Exception:
                 pass
             return
-        detail = {
-            "shareCode": pending.get("shareCode"),
-            "targetCid": pending.get("targetCid"),
-            "title": pending.get("title"),
-        }
+        detail = {"shareCode": pending.get("shareCode"), "targetCid": pending.get("targetCid"), "title": pending.get("title")}
         try:
             result = self._drive115_service().transfer_share(
                 share_code=str(pending.get("shareCode") or ""),
                 receive_code=str(pending.get("receiveCode") or ""),
                 target_cid=str(pending.get("targetCid") or ""),
                 file_ids=pending.get("fileIds") if isinstance(pending.get("fileIds"), list) else [],
+                source_files=pending.get("sourceFiles") if isinstance(pending.get("sourceFiles"), list) else [],
             )
             self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已提交转存")
-            self._log_project_event(
-                level="info",
-                module="drive115",
-                action="telegram_drive115_transfer_submitted",
-                message="Telegram 115 转存已提交。",
-                detail=detail,
-            )
+            self._log_project_event(level="info", module="drive115", action="telegram_drive115_transfer_submitted", message="Telegram 115 转存已提交。", detail=detail)
             if chat_id and message_id:
-                self._edit_ai_markdown_message(
-                    token=token,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    title="📦 115 转存",
-                    body=f"已提交 115 转存。\n资源：{pending.get('title') or pending.get('shareCode')}\n目录：{result.get('targetCid') or pending.get('targetCid') or '0'}\n结果：115 已收到转存请求。",
-                )
+                self._edit_ai_markdown_message(token=token, chat_id=chat_id, message_id=message_id, title="📦 115 转存", body=f"已提交 115 转存。\n资源：{pending.get('title') or pending.get('shareCode')}\n目录：{result.get('targetCid') or pending.get('targetCid') or '0'}\n结果：115 已收到转存请求。")
         except Exception as err:
-            LOGGER.exception("Telegram 115 transfer callback failed: %s", err)
             detail["error"] = str(err)
-            self._log_project_event(
-                level="error",
-                module="drive115",
-                action="telegram_drive115_transfer_failed",
-                message="Telegram 115 转存失败。",
-                detail=detail,
-            )
+            self._log_project_event(level="error", module="drive115", action="telegram_drive115_transfer_failed", message="Telegram 115 转存失败。", detail=detail)
             try:
                 self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="转存失败")
                 if chat_id and message_id:
-                    self._edit_ai_markdown_message(
-                        token=token,
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        title="📦 115 转存失败",
-                        body=str(err),
-                    )
+                    self._edit_ai_markdown_message(token=token, chat_id=chat_id, message_id=message_id, title="📦 115 转存失败", body=str(err))
+            except Exception:
+                pass
+
+    def _handle_hdhive_callback(self, *, data: str, token: str, callback_id: str, chat_id: str, message_id: int) -> None:
+        parts = str(data or "").split(":", 2)
+        decision = parts[1] if len(parts) > 1 else ""
+        action_id = parts[2] if len(parts) > 2 else ""
+        pending = self._pending_hdhive_actions.get(action_id)
+        if not isinstance(pending, dict) or time.time() - float(pending.get("createdAt") or 0) > 900:
+            self._pending_hdhive_actions.pop(action_id, None)
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="操作已过期，请重新搜索")
+            except Exception:
+                pass
+            return
+        if decision == "cancel":
+            self._pending_hdhive_actions.pop(action_id, None)
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已取消")
+            if chat_id and message_id:
+                self._edit_ai_markdown_message(token=token, chat_id=chat_id, message_id=message_id, title="🪺 影巢转存已取消", body="未解锁资源，也没有消耗积分。")
+            return
+        if decision == "pick":
+            resource = pending.get("resource") if isinstance(pending.get("resource"), dict) else {}
+            cost = "已解锁，不重复扣积分" if resource.get("isUnlocked") else f"预计消耗 {int(resource.get('unlockPoints') or 0)} 积分"
+            body = f"资源：{resource.get('title') or '影巢资源'}\n网盘：{resource.get('panType') or '-'}\n费用：{cost}\n目录：{pending.get('targetCid') or '0'}\n\n确认后才会解锁并提交 115 转存。"
+            markup = {"inline_keyboard": [[{"text": "确认解锁并转存", "callback_data": f"hdhive:ok:{action_id}"}, {"text": "取消", "callback_data": f"hdhive:cancel:{action_id}"}]]}
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="请确认积分消耗")
+            if chat_id and message_id:
+                reply = self._ai_markdown_reply("🪺 影巢转存确认", body, reply_markup=markup)
+                self.sender.edit_message_text(token=token, chat_id=chat_id, message_id=message_id, text=str(reply["text"]), reply_markup=markup, parse_mode="MarkdownV2")
+            return
+        if decision != "ok":
+            return
+        self._pending_hdhive_actions.pop(action_id, None)
+        resource = pending.get("resource") if isinstance(pending.get("resource"), dict) else {}
+        try:
+            unlocked = self._hdhive_service().unlock(str(resource.get("slug") or ""))
+            full_url = str(unlocked.get("full_url") or unlocked.get("url") or "").strip()
+            access_code = str(unlocked.get("access_code") or "").strip()
+            share = extract_115_share(full_url, access_code)
+            if not share.get("shareCode"):
+                raise RuntimeError("该资源不是可识别的 115 分享链接。")
+            parsed = self._drive115_service().parse_share(share_url=full_url, receive_code=access_code)
+            parsed_files = parsed.get("files") if isinstance(parsed.get("files"), list) else []
+            result = self._drive115_service().transfer_share(
+                share_code=str(parsed.get("shareCode") or share.get("shareCode") or ""),
+                receive_code=str(parsed.get("receiveCode") or access_code),
+                target_cid=str(pending.get("targetCid") or "0"),
+                file_ids=[str(row.get("id") or "").strip() for row in parsed_files if isinstance(row, dict) and str(row.get("id") or "").strip()],
+                source_files=parsed_files,
+            )
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已提交 115 转存")
+            self._log_project_event(level="info", module="hdhive", action="telegram_hdhive_transfer_success", message="Telegram 影巢资源已解锁并提交 115 转存。", detail={"slug": resource.get("slug"), "targetCid": result.get("targetCid"), "alreadyOwned": bool(unlocked.get("already_owned"))})
+            if chat_id and message_id:
+                self._edit_ai_markdown_message(token=token, chat_id=chat_id, message_id=message_id, title="🪺 影巢转存完成", body=f"资源：{resource.get('title') or '影巢资源'}\n结果：115 已收到转存请求\n目录：{result.get('targetCid') or pending.get('targetCid') or '0'}")
+        except Exception as err:
+            self._log_project_event(level="error", module="hdhive", action="telegram_hdhive_transfer_failed", message="Telegram 影巢资源转存失败。", detail={"slug": resource.get("slug"), "error": str(err)})
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="转存失败")
+                if chat_id and message_id:
+                    self._edit_ai_markdown_message(token=token, chat_id=chat_id, message_id=message_id, title="🪺 影巢转存失败", body=str(err))
             except Exception:
                 pass
 
@@ -1368,6 +1414,8 @@ class TelegramCommandService:
             return self._cmd_scan_library(args)
         if cmd == "zhuancun115":
             return self._cmd_drive115_transfer(args)
+        if cmd == "hdhive":
+            return self._cmd_hdhive_search(args)
         if cmd == "ai":
             return self._cmd_ai(args)
         if cmd == "sousuo":
@@ -2096,6 +2144,94 @@ class TelegramCommandService:
         config = apply_drive115_env_overrides(store.get("drive115Config"))
         return Drive115Service(config)
 
+    def _save_hdhive_runtime_config(self, config: dict[str, Any]) -> None:
+        store = _read_store(self.store_path)
+        current = normalize_hdhive_config(store.get("hdhiveConfig"))
+        incoming = normalize_hdhive_config(config)
+        for field in (
+            "installationId", "installationSecret", "oauthSessionId", "oauthSessionExpiresAt",
+            "accessToken", "refreshToken", "accessExpiresAt", "refreshExpiresAt",
+            "scopes", "user", "lastCheckin", "lastCheckinDate", "updatedAt",
+        ):
+            current[field] = incoming.get(field)
+        store["hdhiveConfig"] = normalize_hdhive_config(current)
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.store_path.with_suffix(".hdhive.tmp")
+        temp_path.write_text(json.dumps(store, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temp_path, self.store_path)
+
+    def _hdhive_service(self) -> HDHiveService:
+        store = _read_store(self.store_path)
+        config = apply_hdhive_env_overrides(store.get("hdhiveConfig"))
+        return HDHiveService(config, save_config=self._save_hdhive_runtime_config)
+
+    @staticmethod
+    def _normalize_hdhive_resource(raw: Any) -> dict[str, Any]:
+        source = raw if isinstance(raw, dict) else {}
+        pan_type = str(source.get("pan_type") or source.get("website") or "").strip()
+        return {
+            "slug": str(source.get("slug") or "").strip(),
+            "title": str(source.get("title") or "影巢资源").strip(),
+            "panType": pan_type,
+            "shareSize": str(source.get("share_size") or "").strip(),
+            "resolution": source.get("video_resolution") or [],
+            "source": source.get("source") or [],
+            "unlockPoints": int(source.get("unlock_points") or 0),
+            "isUnlocked": bool(source.get("is_unlocked")),
+            "is115": "115" in pan_type.lower(),
+        }
+
+    def _cmd_hdhive_search(self, args: str = "") -> CommandReply:
+        keyword = str(args or "").strip()
+        if not keyword:
+            return self._ai_markdown_reply("🪺 影巢资源搜索", "用法：/hdhive 片名\n例如：/hdhive 遮天")
+        service = self._hdhive_service()
+        if not service.config.get("enabled"):
+            return self._ai_markdown_reply("🪺 影巢未启用", "请先在后台“影巢搜索”页面保存并启用 OpenAPI 配置。")
+        authorized = bool(service.config.get("user")) if service.is_broker else bool(service.config.get("accessToken") or service.config.get("refreshToken"))
+        if not authorized:
+            return self._ai_markdown_reply("🪺 影巢未授权", "请先在后台完成影巢 OAuth 授权。")
+        try:
+            resolution = self._media_identity_service().resolve(keyword)
+            if resolution.get("ambiguous"):
+                candidates = resolution.get("candidates") if isinstance(resolution.get("candidates"), list) else []
+                body = "找到多个同名作品，请带年份重新搜索：\n" + "\n".join(f"- {row.get('title')}（{row.get('year') or '年份未知'}）" for row in candidates[:5])
+                return self._ai_markdown_reply("🪺 影巢资源搜索", body)
+            identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
+            tmdb_id = str(identity.get("tmdbId") or "").strip()
+            if not tmdb_id:
+                return self._ai_markdown_reply("🪺 影巢资源搜索", f"无法确认《{keyword}》的 TMDB 身份，请检查 TMDB 配置或补充年份。")
+            result = service.search_resources(media_type=str(identity.get("type") or ""), tmdb_id=tmdb_id)
+            resources = [self._normalize_hdhive_resource(row) for row in result.get("items") or []]
+            resources = [row for row in resources if row.get("slug")][:8]
+            if not resources:
+                return self._ai_markdown_reply("🪺 影巢资源搜索", f"《{identity.get('title') or keyword}》暂未找到可用影巢资源。")
+            store = _read_store(self.store_path)
+            drive_config = apply_drive115_env_overrides(store.get("drive115Config"))
+            target_cid = str(drive_config.get("defaultCid") or "0")
+            now = time.time()
+            self._pending_hdhive_actions = {key: value for key, value in self._pending_hdhive_actions.items() if now - float(value.get("createdAt") or 0) <= 900}
+            lines = [f"《{identity.get('title') or keyword}》找到 {len(resources)} 条资源：", ""]
+            buttons: list[list[dict[str, str]]] = []
+            for index, resource in enumerate(resources, start=1):
+                cost = "已解锁" if resource.get("isUnlocked") else f"{resource.get('unlockPoints') or 0} 积分"
+                specs = " / ".join(str(item) for item in (resource.get("resolution") or []))
+                lines.append(f"{index}. {resource.get('title')}\n   {resource.get('panType') or '未知网盘'} · {resource.get('shareSize') or '大小未知'} · {specs or '规格未知'} · {cost}")
+                if resource.get("is115"):
+                    action_id = secrets.token_urlsafe(7).replace("-", "").replace("_", "")[:10]
+                    self._pending_hdhive_actions[action_id] = {"createdAt": now, "resource": resource, "targetCid": target_cid}
+                    buttons.append([{"text": f"转存 #{index} · {cost}", "callback_data": f"hdhive:pick:{action_id}"}])
+            if not buttons:
+                lines.append("\n当前结果没有可转存的 115 资源。")
+            self._log_project_event(level="info", module="hdhive", action="telegram_hdhive_search_success", message="Telegram 影巢资源搜索完成。", detail={"tmdbId": tmdb_id, "mediaType": identity.get("type"), "resultCount": len(resources)})
+            return self._ai_markdown_reply("🪺 影巢资源搜索", "\n".join(lines), reply_markup={"inline_keyboard": buttons} if buttons else None)
+        except HDHiveError as err:
+            self._log_project_event(level="warning", module="hdhive", action="telegram_hdhive_search_failed", message="Telegram 影巢资源搜索失败。", detail={"code": err.code, "error": str(err)})
+            suffix = f"\n请等待 {err.retry_after} 秒后重试。" if err.retry_after else ""
+            return self._ai_markdown_reply("🪺 影巢搜索失败", f"{err}{suffix}")
+        except Exception as err:
+            return self._ai_markdown_reply("🪺 影巢搜索失败", str(err))
+
     def _cmd_drive115_transfer(self, args: str = "", *, reply_to_message_id: int = 0) -> CommandReply:
         text = str(args or "").strip()
         if not text:
@@ -2166,10 +2302,13 @@ class TelegramCommandService:
                 receive_code=str(parsed.get("receiveCode") or share.get("receiveCode") or ""),
                 target_cid=target_cid,
                 file_ids=file_ids,
+                source_files=parsed.get("files") if isinstance(parsed.get("files"), list) else [],
             )
             if not bool(result.get("ok", True)):
                 raise RuntimeError(str(result.get("message") or "115 未接受转存请求"))
-            detail.update({"successCount": 1, "failureCount": 0})
+            status = str(result.get("status") or "submitted")
+            exists = status == "exists"
+            detail.update({"successCount": 0 if exists else 1, "existsCount": 1 if exists else 0, "failureCount": 0, "status": status})
             self._log_project_event(
                 level="info",
                 module="drive115",
@@ -2178,7 +2317,7 @@ class TelegramCommandService:
                 detail=detail,
             )
             return self._drive115_transfer_result(
-                success=True,
+                status=status,
                 reply_to_message_id=reply_to_message_id,
             )
         except Exception as err:
@@ -2192,18 +2331,21 @@ class TelegramCommandService:
                 detail=detail,
             )
             return self._drive115_transfer_result(
-                success=False,
+                status="failed",
                 reason=str(err),
                 reply_to_message_id=reply_to_message_id,
             )
 
     @staticmethod
-    def _drive115_transfer_result(*, success: bool, reason: str = "", reply_to_message_id: int = 0) -> dict[str, Any]:
-        if success:
-            text = "转存完成：成功 1 个，失败 0 个"
+    def _drive115_transfer_result(*, status: str = "", success: bool | None = None, reason: str = "", reply_to_message_id: int = 0) -> dict[str, Any]:
+        normalized = str(status or ("submitted" if success else "failed")).strip().lower()
+        if normalized == "exists":
+            text = "转存完成：成功 0 个，已存在 1 个，失败 0 个"
+        elif normalized == "submitted":
+            text = "转存完成：成功 1 个，已存在 0 个，失败 0 个"
         else:
             safe_reason = str(reason or "115 未接受转存请求").strip()
-            text = f"转存完成：成功 0 个，失败 1 个\n原因：{safe_reason}"
+            text = f"转存完成：成功 0 个，已存在 0 个，失败 1 个\n原因：{safe_reason}"
         return {
             "text": text,
             "fallback_text": text,
@@ -2224,6 +2366,9 @@ class TelegramCommandService:
         question = str(args or "").strip()
         if not question:
             return self._ai_markdown_reply("🧠 AI 媒体问答", "用法：/ai 推荐一部最近入库的动漫")
+        hdhive_match = re.match(r"^\s*(?:请)?(?:用)?(?:影巢|hdhive)(?:搜索|搜|查找|查)\s*(.+)$", question, flags=re.IGNORECASE)
+        if hdhive_match:
+            return self._cmd_hdhive_search(hdhive_match.group(1).strip())
         store = _read_store(self.store_path)
         ai_config = apply_ai_env_overrides(store.get("aiConfig"))
         if not bool(ai_config.get("enabled")):
@@ -2303,6 +2448,9 @@ class TelegramCommandService:
         question = str(args or "").strip()
         if not question:
             return self._ai_markdown_reply("🧠 AI 媒体问答", "用法：/ai 推荐一部最近入库的动漫")
+        hdhive_match = re.match(r"^\s*(?:请)?(?:用)?(?:影巢|hdhive)(?:搜索|搜|查找|查)\s*(.+)$", question, flags=re.IGNORECASE)
+        if hdhive_match:
+            return self._cmd_hdhive_search(hdhive_match.group(1).strip())
         store = _read_store(self.store_path)
         ai_config = apply_ai_env_overrides(store.get("aiConfig"))
         if not bool(ai_config.get("enabled")):

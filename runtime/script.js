@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
   botConfig: "embyPulseBotConfig",
   aiConfig: "vistamirrorAiConfig",
   drive115Config: "vistamirrorDrive115Config",
+  hdhiveConfig: "vistamirrorHDHiveConfig",
   activeView: "embyPulseActiveView",
   inviteSyncEndpoint: "embyPulseInviteSyncEndpoint",
   qualityLastScanAt: "embyPulseQualityLastScanAt"
@@ -53,6 +54,28 @@ const DEFAULT_DRIVE115_CONFIG = {
   cookieMasked: ""
 };
 
+const DEFAULT_HDHIVE_CONFIG = {
+  enabled: false,
+  authMode: "broker",
+  brokerUrl: "",
+  installationId: "",
+  registered: false,
+  oauthSessionId: "",
+  oauthSessionExpiresAt: 0,
+  autoCheckin: true,
+  timezone: "Asia/Shanghai",
+  lastCheckin: {},
+  lastCheckinDate: "",
+  clientId: "",
+  redirectUri: "",
+  hasAppSecret: false,
+  appSecretMasked: "",
+  authorized: false,
+  accessExpiresAt: 0,
+  scopes: "meta query unlock write",
+  user: {}
+};
+
 const DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console";
 const MEDIA_SERVER_TYPES = ["emby", "jellyfin"];
 const MEDIA_SERVER_META = {
@@ -87,11 +110,17 @@ const appState = {
   botConfig: loadJson(STORAGE_KEYS.botConfig, DEFAULT_BOT_CONFIG),
   aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
   drive115Config: loadJson(STORAGE_KEYS.drive115Config, DEFAULT_DRIVE115_CONFIG),
+  hdhiveConfig: loadJson(STORAGE_KEYS.hdhiveConfig, DEFAULT_HDHIVE_CONFIG),
+  hdhiveResources: [],
+  hdhiveIdentity: null,
+  hdhiveRecords: [],
   drive115Records: [],
   drive115LastParse: null,
   drive115QrSessionId: "",
   drive115QrTimer: null,
   drive115QrStartedAt: 0,
+  drive115QrPolling: false,
+  drive115QrFailureCount: 0,
   users: [],
   sessions: [],
   devices: [],
@@ -302,6 +331,39 @@ function normalizeDrive115Config(rawConfig) {
   };
 }
 
+function normalizeHDHiveConfig(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const user = config.user && typeof config.user === "object" ? config.user : {};
+  return {
+    enabled: Boolean(config.enabled),
+    authMode: String(config.authMode || "broker") === "direct" ? "direct" : "broker",
+    brokerUrl: String(config.brokerUrl || "").trim().replace(/\/+$/, ""),
+    installationId: String(config.installationId || "").trim(),
+    registered: Boolean(config.registered),
+    oauthSessionId: String(config.oauthSessionId || "").trim(),
+    oauthSessionExpiresAt: Number(config.oauthSessionExpiresAt || 0),
+    autoCheckin: Boolean(config.autoCheckin ?? true),
+    timezone: String(config.timezone || "Asia/Shanghai").trim() || "Asia/Shanghai",
+    lastCheckin: config.lastCheckin && typeof config.lastCheckin === "object" ? config.lastCheckin : {},
+    lastCheckinDate: String(config.lastCheckinDate || "").trim(),
+    clientId: String(config.clientId || "").trim(),
+    redirectUri: String(config.redirectUri || config.callbackUri || "").trim(),
+    callbackUri: String(config.callbackUri || config.redirectUri || "").trim(),
+    hasAppSecret: Boolean(config.hasAppSecret),
+    appSecretMasked: String(config.appSecretMasked || "").trim(),
+    authorized: Boolean(config.authorized),
+    accessExpiresAt: Number(config.accessExpiresAt || 0),
+    scopes: String(config.scopes || "meta query unlock write").trim(),
+    user: {
+      id: String(user.id || ""),
+      username: String(user.username || "").trim(),
+      level: String(user.level || "").trim(),
+      points: user.points ?? null,
+      avatar: String(user.avatar || "").trim()
+    }
+  };
+}
+
 function normalizeEnvControlledFields(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const normalizeList = (value) =>
@@ -312,6 +374,8 @@ function normalizeEnvControlledFields(raw) {
     embyConfig: normalizeList(source.embyConfig),
     botConfig: normalizeList(source.botConfig),
     aiConfig: normalizeList(source.aiConfig),
+    drive115Config: normalizeList(source.drive115Config),
+    hdhiveConfig: normalizeList(source.hdhiveConfig),
     adminAuth: normalizeList(source.adminAuth)
   };
 }
@@ -324,7 +388,7 @@ function mergeEnvControlledFields(raw, groupHint = "") {
       : [];
 
   if (Array.isArray(raw)) {
-    if (groupHint === "embyConfig" || groupHint === "botConfig" || groupHint === "aiConfig" || groupHint === "drive115Config" || groupHint === "adminAuth") {
+    if (["embyConfig", "botConfig", "aiConfig", "drive115Config", "hdhiveConfig", "adminAuth"].includes(groupHint)) {
       current[groupHint] = normalizeList(raw);
     }
     return current;
@@ -342,6 +406,9 @@ function mergeEnvControlledFields(raw, groupHint = "") {
     }
     if (Object.prototype.hasOwnProperty.call(raw, "drive115Config")) {
       current.drive115Config = normalizeList(raw.drive115Config);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "hdhiveConfig")) {
+      current.hdhiveConfig = normalizeList(raw.hdhiveConfig);
     }
     if (Object.prototype.hasOwnProperty.call(raw, "adminAuth")) {
       current.adminAuth = normalizeList(raw.adminAuth);
@@ -369,6 +436,7 @@ function renderEnvControlledState() {
   const botManaged = appState?.envControlledFields?.botConfig || [];
   const aiManaged = appState?.envControlledFields?.aiConfig || [];
   const drive115Managed = appState?.envControlledFields?.drive115Config || [];
+  const hdhiveManaged = appState?.envControlledFields?.hdhiveConfig || [];
   const activeServerType = getActiveMediaServerType();
 
   setFieldEnvControlled(elements.serverUrl, activeServerType === "emby" && embyManaged.includes("serverUrl"));
@@ -400,6 +468,9 @@ function renderEnvControlledState() {
   if (document.getElementById("drive115-cookie-toggle")) {
     document.getElementById("drive115-cookie-toggle").disabled = drive115Managed.includes("cookie");
   }
+  setFieldEnvControlled(elements.hdhiveClientId, hdhiveManaged.includes("clientId"));
+  setFieldEnvControlled(elements.hdhiveAppSecret, hdhiveManaged.includes("appSecret"));
+  setFieldEnvControlled(elements.hdhiveRedirectUri, hdhiveManaged.includes("redirectUri"));
   if (elements.botEnvManagedHint) {
     const hasManaged = botManaged.length > 0;
     elements.botEnvManagedHint.hidden = !hasManaged;
@@ -413,6 +484,7 @@ appState.config = normalizeAppConfig(appState.config);
 appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...appState.botConfig });
 appState.aiConfig = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...appState.aiConfig });
 appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...appState.drive115Config });
+appState.hdhiveConfig = normalizeHDHiveConfig({ ...DEFAULT_HDHIVE_CONFIG, ...appState.hdhiveConfig });
 appState.qualityResolutionFilters = normalizeQualityResolutionFilters(appState.qualityResolutionFilters);
 
 const elements = {
@@ -498,6 +570,33 @@ const elements = {
   drive115TransferBtn: document.getElementById("drive115-transfer-btn"),
   drive115ParseResult: document.getElementById("drive115-parse-result"),
   drive115Records: document.getElementById("drive115-records"),
+  hdhiveEnabled: document.getElementById("hdhive-enabled"),
+  hdhiveAuthMode: document.getElementById("hdhive-auth-mode"),
+  hdhiveBrokerUrl: document.getElementById("hdhive-broker-url"),
+  hdhiveBrokerField: document.getElementById("hdhive-broker-field"),
+  hdhiveDirectSettings: document.getElementById("hdhive-direct-settings"),
+  hdhiveClientId: document.getElementById("hdhive-client-id"),
+  hdhiveAppSecret: document.getElementById("hdhive-app-secret"),
+  hdhiveRedirectUri: document.getElementById("hdhive-redirect-uri"),
+  hdhiveSaveBtn: document.getElementById("hdhive-save-btn"),
+  hdhiveTestBtn: document.getElementById("hdhive-test-btn"),
+  hdhiveAuthorizeBtn: document.getElementById("hdhive-authorize-btn"),
+  hdhiveRefreshBtn: document.getElementById("hdhive-refresh-btn"),
+  hdhiveDisconnectBtn: document.getElementById("hdhive-disconnect-btn"),
+  hdhiveAutoCheckin: document.getElementById("hdhive-auto-checkin"),
+  hdhiveTimezone: document.getElementById("hdhive-timezone"),
+  hdhiveCheckinBtn: document.getElementById("hdhive-checkin-btn"),
+  hdhiveCheckinFeedback: document.getElementById("hdhive-checkin-feedback"),
+  hdhiveStatusBadge: document.getElementById("hdhive-status-badge"),
+  hdhiveConfigFeedback: document.getElementById("hdhive-config-feedback"),
+  hdhiveAccountSummary: document.getElementById("hdhive-account-summary"),
+  hdhiveSearchKeyword: document.getElementById("hdhive-search-keyword"),
+  hdhiveSearchType: document.getElementById("hdhive-search-type"),
+  hdhiveOnly115: document.getElementById("hdhive-only-115"),
+  hdhiveSearchBtn: document.getElementById("hdhive-search-btn"),
+  hdhiveSearchSummary: document.getElementById("hdhive-search-summary"),
+  hdhiveSearchResults: document.getElementById("hdhive-search-results"),
+  hdhiveRecords: document.getElementById("hdhive-records"),
   connectBtn: document.getElementById("connect-btn"),
   diagnoseBtn: document.getElementById("diagnose-btn"),
   disconnectBtn: document.getElementById("disconnect-btn"),
@@ -760,6 +859,11 @@ const VIEW_META = {
     icon: "📦",
     title: "115网盘",
     subtitle: "配置 115 账号、解析分享链接并确认转存"
+  },
+  hdhive: {
+    icon: "🪺",
+    title: "影巢搜索",
+    subtitle: "通过 HDHive OpenAPI 搜索资源并确认转存到 115"
   },
   invites: {
     icon: "🔗",
@@ -6141,6 +6245,7 @@ function persistLocalState() {
   saveJson(STORAGE_KEYS.botConfig, appState.botConfig);
   saveJson(STORAGE_KEYS.aiConfig, appState.aiConfig);
   saveJson(STORAGE_KEYS.drive115Config, appState.drive115Config);
+  saveJson(STORAGE_KEYS.hdhiveConfig, appState.hdhiveConfig);
 }
 
 function getCurrentSiteOriginForBot() {
@@ -6459,9 +6564,11 @@ function setDrive115QrStatus(message, state = "") {
 function stopDrive115QrPolling(options = {}) {
   const { clearSession = false, notifyServer = false } = options;
   if (appState.drive115QrTimer) {
-    clearInterval(appState.drive115QrTimer);
+    clearTimeout(appState.drive115QrTimer);
     appState.drive115QrTimer = null;
   }
+  appState.drive115QrPolling = false;
+  appState.drive115QrFailureCount = 0;
   if (notifyServer && appState.drive115QrSessionId) {
     inviteApiFetch("/api/drive115/qrcode/stop", {
       method: "POST",
@@ -6483,6 +6590,14 @@ function stopDrive115QrPolling(options = {}) {
   }
 }
 
+function scheduleDrive115QrPoll(delay = 2000) {
+  if (!appState.drive115QrSessionId || appState.drive115QrTimer) return;
+  appState.drive115QrTimer = setTimeout(() => {
+    appState.drive115QrTimer = null;
+    pollDrive115QrStatus();
+  }, Math.max(0, Number(delay) || 0));
+}
+
 async function pollDrive115QrStatus() {
   const sessionId = String(appState.drive115QrSessionId || "").trim();
   if (!sessionId) {
@@ -6494,8 +6609,12 @@ async function pollDrive115QrStatus() {
     stopDrive115QrPolling({ clearSession: true, notifyServer: true });
     return;
   }
+  if (appState.drive115QrPolling) return;
+  appState.drive115QrPolling = true;
+  let continuePolling = true;
   try {
     const result = await inviteApiFetch(`/api/drive115/qrcode/status?sessionId=${encodeURIComponent(sessionId)}`);
+    appState.drive115QrFailureCount = 0;
     const status = String(result?.status || "").trim();
     if (status === "waiting") {
       setDrive115QrStatus(result?.message || "等待扫码。", "waiting");
@@ -6511,6 +6630,7 @@ async function pollDrive115QrStatus() {
       renderDrive115Page();
       setDrive115QrStatus(result?.message || "扫码登录成功，Cookie 已自动保存。", "success");
       addDrive115Record("扫码登录成功", "Cookie 已自动保存。", "success");
+      continuePolling = false;
       stopDrive115QrPolling({ clearSession: true });
       showToast("115 Cookie 已自动保存", 1400);
       return;
@@ -6518,14 +6638,27 @@ async function pollDrive115QrStatus() {
     setDrive115QrStatus(result?.message || "二维码状态未知。", status || "waiting");
   } catch (error) {
     const message = error.message || "二维码状态查询失败。";
-    setDrive115QrStatus(message, message.includes("过期") ? "expired" : "failed");
-    if (message.includes("过期") || message.includes("失败")) {
+    const expired = message.includes("过期") || message.includes("会话不存在");
+    appState.drive115QrFailureCount = Number(appState.drive115QrFailureCount || 0) + 1;
+    if (expired || appState.drive115QrFailureCount >= 5) {
+      continuePolling = false;
+      setDrive115QrStatus(expired ? message : `115 状态接口连续失败 ${appState.drive115QrFailureCount} 次，请重新生成二维码。`, expired ? "expired" : "failed");
       stopDrive115QrPolling({ clearSession: true });
+    } else {
+      setDrive115QrStatus(`115 状态接口暂时无响应，正在重试（${appState.drive115QrFailureCount}/5）。`, "waiting");
+    }
+  } finally {
+    appState.drive115QrPolling = false;
+    if (continuePolling && String(appState.drive115QrSessionId || "") === sessionId) {
+      scheduleDrive115QrPoll(2000);
     }
   }
 }
 
 async function startDrive115QrLogin() {
+  if (appState.drive115QrSessionId) {
+    stopDrive115QrPolling({ clearSession: true, notifyServer: true });
+  }
   if (elements.drive115QrStartBtn) {
     elements.drive115QrStartBtn.disabled = true;
     elements.drive115QrStartBtn.textContent = "生成中...";
@@ -6537,6 +6670,7 @@ async function startDrive115QrLogin() {
     });
     appState.drive115QrSessionId = String(result?.sessionId || "");
     appState.drive115QrStartedAt = Date.now();
+    appState.drive115QrFailureCount = 0;
     if (elements.drive115QrImage && result?.imageUrl) {
       elements.drive115QrImage.src = result.imageUrl;
       elements.drive115QrImage.hidden = false;
@@ -6556,8 +6690,7 @@ async function startDrive115QrLogin() {
     if (elements.drive115QrStopBtn) {
       elements.drive115QrStopBtn.disabled = false;
     }
-    appState.drive115QrTimer = setInterval(pollDrive115QrStatus, 2000);
-    setTimeout(pollDrive115QrStatus, 800);
+    scheduleDrive115QrPoll(800);
   } catch (error) {
     setDrive115QrStatus(`生成二维码失败：${error.message || "未知错误"}`, "failed");
     stopDrive115QrPolling({ clearSession: true });
@@ -6761,13 +6894,19 @@ async function transferDrive115Link() {
         shareCode: parsed.shareCode,
         receiveCode: parsed.receiveCode || String(elements.drive115ReceiveCode?.value || "").trim(),
         targetCid,
-        fileIds: Array.isArray(parsed.files) ? parsed.files.map((file) => String(file?.id || "").trim()).filter(Boolean) : []
+        fileIds: Array.isArray(parsed.files) ? parsed.files.map((file) => String(file?.id || "").trim()).filter(Boolean) : [],
+        sourceFiles: Array.isArray(parsed.files) ? parsed.files.map((file) => ({
+          name: String(file?.name || ""),
+          size: Number(file?.size || 0),
+          isDir: Boolean(file?.isDir)
+        })) : []
       })
     });
     const message = result?.message || "115 已收到转存请求。";
     updateDrive115Feedback(message);
-    addDrive115Record("转存已提交", `${parsed.title || parsed.shareCode}｜目录 ${targetCid}`, "success");
-    showToast("115 转存已提交", 1200);
+    const existed = String(result?.status || "") === "exists";
+    addDrive115Record(existed ? "资源已存在" : "转存已提交", `${parsed.title || parsed.shareCode}｜目录 ${targetCid}`, existed ? "warning" : "success");
+    showToast(existed ? "目标目录已存在该资源" : "115 转存已提交", 1200);
   } catch (error) {
     updateDrive115Feedback(`115 转存失败：${error.message || "未知错误"}`);
     addDrive115Record("转存失败", error.message || "未知错误", "error");
@@ -6778,6 +6917,296 @@ async function transferDrive115Link() {
     if (elements.drive115TransferBtn) {
       elements.drive115TransferBtn.textContent = "确认转存";
     }
+  }
+}
+
+let hdhiveOAuthPollTimer = null;
+
+function renderHDHiveConfig() {
+  const config = normalizeHDHiveConfig(appState.hdhiveConfig);
+  if (elements.hdhiveEnabled) elements.hdhiveEnabled.checked = config.enabled;
+  if (elements.hdhiveAuthMode) elements.hdhiveAuthMode.value = config.authMode;
+  if (elements.hdhiveBrokerUrl) elements.hdhiveBrokerUrl.value = config.brokerUrl;
+  if (elements.hdhiveBrokerField) elements.hdhiveBrokerField.hidden = config.authMode !== "broker";
+  if (elements.hdhiveDirectSettings) {
+    elements.hdhiveDirectSettings.hidden = config.authMode !== "direct";
+    if (config.authMode === "direct") elements.hdhiveDirectSettings.open = true;
+  }
+  if (elements.hdhiveClientId) elements.hdhiveClientId.value = config.clientId;
+  if (elements.hdhiveAppSecret) {
+    elements.hdhiveAppSecret.value = "";
+    elements.hdhiveAppSecret.placeholder = config.hasAppSecret ? `已保存 ${config.appSecretMasked || "应用 Secret"}` : "输入应用 Secret";
+  }
+  if (elements.hdhiveRedirectUri) elements.hdhiveRedirectUri.value = config.callbackUri || config.redirectUri;
+  if (elements.hdhiveAutoCheckin) elements.hdhiveAutoCheckin.checked = config.autoCheckin;
+  if (elements.hdhiveTimezone) elements.hdhiveTimezone.value = config.timezone;
+  if (elements.hdhiveStatusBadge) {
+    const state = config.authorized ? "authorized" : config.hasAppSecret && config.clientId ? "configured" : "off";
+    elements.hdhiveStatusBadge.className = `tmdb-status-badge ${state === "authorized" ? "is-on" : state === "configured" ? "is-pending" : "is-off"}`;
+    elements.hdhiveStatusBadge.textContent = state === "authorized" ? "已授权" : state === "configured" ? "待授权" : "未配置";
+  }
+  if (elements.hdhiveAccountSummary) {
+    const user = config.user || {};
+    elements.hdhiveAccountSummary.innerHTML = config.authorized
+      ? `<strong>${escapeHtml(user.username || "影巢用户")}</strong><span>等级：${escapeHtml(user.level || "-")} · 积分：${escapeHtml(user.points ?? "-")} · 权限：${escapeHtml(config.scopes)}</span>`
+      : `<strong>尚未授权</strong><span>${config.authMode === "broker" ? (config.brokerUrl ? "授权服务已配置，请点击浏览器授权。" : "请先填写 Vistamirror 授权服务地址。") : (config.clientId && config.hasAppSecret ? "独立应用已保存，请完成 OAuth 授权。" : "请先填写独立应用凭据。")}</span>`;
+  }
+  if (elements.hdhiveAuthorizeBtn) {
+    elements.hdhiveAuthorizeBtn.disabled = config.authMode === "broker" ? !config.brokerUrl : !(config.clientId && config.hasAppSecret);
+    elements.hdhiveAuthorizeBtn.textContent = config.oauthSessionId ? "等待浏览器确认" : "前往影巢授权";
+  }
+  if (elements.hdhiveDisconnectBtn) elements.hdhiveDisconnectBtn.disabled = !config.authorized;
+  if (elements.hdhiveCheckinBtn) elements.hdhiveCheckinBtn.disabled = !config.authorized || !config.scopes.split(/\s+/).includes("write");
+  if (elements.hdhiveCheckinFeedback) {
+    const checkin = config.lastCheckin || {};
+    elements.hdhiveCheckinFeedback.textContent = checkin.message
+      ? `${checkin.message}${checkin.points ? ` · 积分 ${checkin.points > 0 ? "+" : ""}${checkin.points}` : ""}`
+      : config.authorized && !config.scopes.split(/\s+/).includes("write")
+        ? "当前授权缺少 write 权限，请重新授权后使用签到。"
+        : "尚无签到记录。";
+  }
+  if (elements.hdhiveConfigFeedback) {
+    elements.hdhiveConfigFeedback.textContent = config.authorized
+      ? "影巢已授权，可搜索资源并在确认后解锁转存。"
+      : config.authMode === "broker"
+        ? (config.brokerUrl ? "一键授权服务已保存，请完成浏览器授权。" : "请填写并保存 Vistamirror 授权服务地址。")
+        : (config.clientId && config.hasAppSecret ? "独立 OpenAPI 应用已保存，请完成影巢账号授权。" : "请填写并保存独立应用配置。")
+  }
+}
+
+function addHDHiveRecord(title, detail, state = "success") {
+  appState.hdhiveRecords = [{ title, detail, state, at: new Date().toLocaleString("zh-CN") }, ...(appState.hdhiveRecords || [])].slice(0, 8);
+  renderHDHiveRecords();
+}
+
+function renderHDHiveRecords() {
+  if (!elements.hdhiveRecords) return;
+  const rows = Array.isArray(appState.hdhiveRecords) ? appState.hdhiveRecords : [];
+  elements.hdhiveRecords.innerHTML = rows.length
+    ? rows.map((row) => `<div class="drive115-record"><strong>${escapeHtml(row.title)}</strong><span>${escapeHtml(row.detail)}</span><span>${escapeHtml(row.at)}</span></div>`).join("")
+    : `<div class="empty-state">暂无影巢操作记录。</div>`;
+}
+
+function renderHDHiveResults() {
+  if (!elements.hdhiveSearchResults) return;
+  const only115 = Boolean(elements.hdhiveOnly115?.checked);
+  const rows = (Array.isArray(appState.hdhiveResources) ? appState.hdhiveResources : []).filter((row) => !only115 || row.is115);
+  if (!rows.length) {
+    elements.hdhiveSearchResults.innerHTML = `<div class="empty-state">${appState.hdhiveResources?.length ? "当前筛选条件下没有 115 资源。" : "没有找到影巢资源。"}</div>`;
+    return;
+  }
+  elements.hdhiveSearchResults.innerHTML = rows.map((row) => {
+    const resolution = Array.isArray(row.resolution) ? row.resolution.join(" / ") : String(row.resolution || "");
+    const source = Array.isArray(row.source) ? row.source.join(" / ") : String(row.source || "");
+    const cost = row.isUnlocked ? "已解锁" : `${Number(row.unlockPoints || 0)} 积分`;
+    return `<article class="hdhive-resource-card">
+      <h5>${escapeHtml(row.title || "影巢资源")}</h5>
+      <div class="hdhive-resource-meta">
+        <span>${escapeHtml(row.panType || "未知网盘")}</span>
+        ${row.shareSize ? `<span>${escapeHtml(row.shareSize)}</span>` : ""}
+        ${resolution ? `<span>${escapeHtml(resolution)}</span>` : ""}
+        ${source ? `<span>${escapeHtml(source)}</span>` : ""}
+      </div>
+      <p>发布者：${escapeHtml(row.publisher || "-")}</p>
+      <div class="hdhive-resource-actions">
+        <strong>${escapeHtml(cost)}</strong>
+        <button class="primary-btn" type="button" data-hdhive-transfer="${escapeHtml(row.slug)}" ${row.is115 ? "" : "disabled"}>${row.is115 ? "解锁并转存" : "非 115 资源"}</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+async function loadHDHiveConfigFromServer(options = {}) {
+  const { silent = false } = options;
+  try {
+    const result = await inviteApiFetch("/api/hdhive/config");
+    appState.hdhiveConfig = normalizeHDHiveConfig({ ...DEFAULT_HDHIVE_CONFIG, ...(result?.hdhiveConfig || {}) });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "hdhiveConfig");
+    persistLocalState();
+    renderHDHiveConfig();
+    renderEnvControlledState();
+    if (appState.hdhiveConfig.authMode === "broker" && appState.hdhiveConfig.oauthSessionId && !hdhiveOAuthPollTimer) {
+      startHDHiveOAuthPolling(appState.hdhiveConfig.oauthSessionId, appState.hdhiveConfig.oauthSessionExpiresAt);
+    }
+    return true;
+  } catch (error) {
+    if (!silent && elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `读取影巢配置失败：${error.message || "未知错误"}`;
+    return false;
+  }
+}
+
+async function saveHDHiveConfig() {
+  const payload = {
+    enabled: Boolean(elements.hdhiveEnabled?.checked),
+    authMode: String(elements.hdhiveAuthMode?.value || "broker"),
+    brokerUrl: String(elements.hdhiveBrokerUrl?.value || "").trim(),
+    autoCheckin: Boolean(elements.hdhiveAutoCheckin?.checked),
+    timezone: String(elements.hdhiveTimezone?.value || "Asia/Shanghai"),
+    clientId: String(elements.hdhiveClientId?.value || "").trim(),
+    appSecret: String(elements.hdhiveAppSecret?.value || "").trim(),
+    redirectUri: String(elements.hdhiveRedirectUri?.value || "").trim()
+  };
+  if (elements.hdhiveSaveBtn) { elements.hdhiveSaveBtn.disabled = true; elements.hdhiveSaveBtn.textContent = "保存中..."; }
+  try {
+    const result = await inviteApiFetch("/api/hdhive/config", { method: "POST", body: JSON.stringify({ hdhiveConfig: payload }) });
+    appState.hdhiveConfig = normalizeHDHiveConfig({ ...DEFAULT_HDHIVE_CONFIG, ...(result?.hdhiveConfig || {}) });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "hdhiveConfig");
+    persistLocalState();
+    renderHDHiveConfig();
+    addHDHiveRecord("配置已保存", payload.authMode === "broker" ? "一键授权代理配置已更新。" : "独立 OpenAPI 应用配置已更新。", "success");
+    showToast("影巢配置已保存", 1200);
+  } catch (error) {
+    if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `保存失败：${error.message || "未知错误"}`;
+    addHDHiveRecord("配置保存失败", error.message || "未知错误", "error");
+  } finally {
+    if (elements.hdhiveSaveBtn) { elements.hdhiveSaveBtn.disabled = false; elements.hdhiveSaveBtn.textContent = "保存配置"; }
+  }
+}
+
+async function authorizeHDHive() {
+  try {
+    const result = await inviteApiFetch("/api/hdhive/oauth/start");
+    if (!result?.authorizeUrl) throw new Error("未取得影巢授权地址");
+    if (result.mode === "broker") {
+      window.open(result.authorizeUrl, "_blank", "noopener,noreferrer");
+      appState.hdhiveConfig = normalizeHDHiveConfig({ ...appState.hdhiveConfig, oauthSessionId: result.sessionId, oauthSessionExpiresAt: result.expiresAt });
+      renderHDHiveConfig();
+      startHDHiveOAuthPolling(result.sessionId, result.expiresAt);
+    } else {
+      window.location.assign(result.authorizeUrl);
+    }
+  } catch (error) {
+    if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `无法发起授权：${error.message || "未知错误"}`;
+  }
+}
+
+function stopHDHiveOAuthPolling() {
+  if (hdhiveOAuthPollTimer) window.clearInterval(hdhiveOAuthPollTimer);
+  hdhiveOAuthPollTimer = null;
+}
+
+function startHDHiveOAuthPolling(sessionId, expiresAt = 0) {
+  stopHDHiveOAuthPolling();
+  const poll = async () => {
+    try {
+      const result = await inviteApiFetch(`/api/hdhive/oauth/status?sessionId=${encodeURIComponent(sessionId || "")}`);
+      if (result?.status === "authorized") {
+        stopHDHiveOAuthPolling();
+        await loadHDHiveConfigFromServer({ silent: true });
+        addHDHiveRecord("授权成功", "影巢账号已通过浏览器授权。", "success");
+        showToast("影巢授权成功", 1600);
+      } else if (["failed", "expired"].includes(String(result?.status || "")) || (expiresAt && Date.now() / 1000 > Number(expiresAt))) {
+        stopHDHiveOAuthPolling();
+        if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = result?.error || "影巢授权会话已过期，请重新授权。";
+      }
+    } catch (error) {
+      if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `授权状态读取失败：${error.message || "未知错误"}`;
+    }
+  };
+  poll();
+  hdhiveOAuthPollTimer = window.setInterval(poll, 2000);
+}
+
+async function refreshHDHiveStatus() {
+  const config = normalizeHDHiveConfig(appState.hdhiveConfig);
+  if (config.authMode === "broker" && config.oauthSessionId) {
+    startHDHiveOAuthPolling(config.oauthSessionId, config.oauthSessionExpiresAt);
+    return;
+  }
+  await testHDHive();
+}
+
+async function checkinHDHive() {
+  if (elements.hdhiveCheckinBtn) { elements.hdhiveCheckinBtn.disabled = true; elements.hdhiveCheckinBtn.textContent = "签到中..."; }
+  try {
+    const result = await inviteApiFetch("/api/hdhive/checkin", { method: "POST", body: "{}" });
+    const message = result?.result?.message || "签到请求已完成。";
+    await loadHDHiveConfigFromServer({ silent: true });
+    addHDHiveRecord("影巢签到", message, "success");
+    showToast(message, 1800);
+  } catch (error) {
+    if (elements.hdhiveCheckinFeedback) elements.hdhiveCheckinFeedback.textContent = `签到失败：${error.message || "未知错误"}`;
+  } finally {
+    if (elements.hdhiveCheckinBtn) { elements.hdhiveCheckinBtn.textContent = "立即签到"; renderHDHiveConfig(); }
+  }
+}
+
+async function testHDHive() {
+  if (elements.hdhiveTestBtn) { elements.hdhiveTestBtn.disabled = true; elements.hdhiveTestBtn.textContent = "测试中..."; }
+  try {
+    const result = await inviteApiFetch("/api/hdhive/test", { method: "POST", body: "{}" });
+    if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = result?.user?.username
+      ? `连接正常，当前用户：${result.user.username}`
+      : appState.hdhiveConfig.authMode === "broker" ? "授权代理连接正常，账号尚未授权。" : "应用 Secret 验证通过，账号尚未授权。";
+    await loadHDHiveConfigFromServer({ silent: true });
+  } catch (error) {
+    if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `连接测试失败：${error.message || "未知错误"}`;
+  } finally {
+    if (elements.hdhiveTestBtn) { elements.hdhiveTestBtn.disabled = false; elements.hdhiveTestBtn.textContent = "测试连接"; }
+  }
+}
+
+async function disconnectHDHive() {
+  if (!window.confirm("确定解除当前影巢账号授权吗？应用配置会保留。")) return;
+  try {
+    await inviteApiFetch("/api/hdhive/oauth/disconnect", { method: "POST", body: "{}" });
+    await loadHDHiveConfigFromServer();
+    stopHDHiveOAuthPolling();
+    addHDHiveRecord("授权已解除", "当前影巢账号授权已撤销。", "success");
+  } catch (error) {
+    if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `解除授权失败：${error.message || "未知错误"}`;
+  }
+}
+
+async function searchHDHive() {
+  const query = String(elements.hdhiveSearchKeyword?.value || "").trim();
+  if (!query) {
+    if (elements.hdhiveSearchSummary) elements.hdhiveSearchSummary.textContent = "请输入电影或剧集名称。";
+    return;
+  }
+  if (elements.hdhiveSearchBtn) { elements.hdhiveSearchBtn.disabled = true; elements.hdhiveSearchBtn.textContent = "搜索中..."; }
+  if (elements.hdhiveSearchSummary) elements.hdhiveSearchSummary.textContent = "正在确认 TMDB 身份并查询影巢资源...";
+  try {
+    const result = await inviteApiFetch("/api/hdhive/search", {
+      method: "POST",
+      body: JSON.stringify({ query, mediaType: elements.hdhiveSearchType?.value || "" })
+    });
+    appState.hdhiveIdentity = result?.identity || null;
+    appState.hdhiveResources = Array.isArray(result?.resources) ? result.resources : [];
+    if (result?.user) appState.hdhiveConfig.user = result.user;
+    const identity = appState.hdhiveIdentity || {};
+    if (elements.hdhiveSearchSummary) elements.hdhiveSearchSummary.textContent = `《${identity.title || query}》${identity.year ? `（${identity.year}）` : ""} · TMDB ${identity.tmdbId || "-"} · 找到 ${appState.hdhiveResources.length} 条资源。`;
+    renderHDHiveResults();
+    renderHDHiveConfig();
+    addHDHiveRecord("搜索完成", `《${identity.title || query}》找到 ${appState.hdhiveResources.length} 条资源。`, "success");
+  } catch (error) {
+    appState.hdhiveResources = [];
+    renderHDHiveResults();
+    if (elements.hdhiveSearchSummary) elements.hdhiveSearchSummary.textContent = `搜索失败：${error.message || "未知错误"}`;
+    addHDHiveRecord("搜索失败", error.message || "未知错误", "error");
+  } finally {
+    if (elements.hdhiveSearchBtn) { elements.hdhiveSearchBtn.disabled = false; elements.hdhiveSearchBtn.textContent = "搜索资源"; }
+  }
+}
+
+async function transferHDHiveResource(slug) {
+  const resource = (appState.hdhiveResources || []).find((row) => row.slug === slug);
+  if (!resource || !resource.is115) return;
+  const targetCid = String(appState.drive115Config?.defaultCid || "0").trim() || "0";
+  const cost = resource.isUnlocked ? "该资源已解锁，不会重复扣积分" : `预计消耗 ${Number(resource.unlockPoints || 0)} 积分`;
+  if (!window.confirm(`${resource.title || "影巢资源"}\n${cost}\n转存到 115 目录：${targetCid}\n\n确认继续吗？`)) return;
+  const button = elements.hdhiveSearchResults?.querySelector(`[data-hdhive-transfer="${CSS.escape(slug)}"]`);
+  if (button) { button.disabled = true; button.textContent = "转存中..."; }
+  try {
+    const result = await inviteApiFetch("/api/hdhive/transfer", { method: "POST", body: JSON.stringify({ slug, targetCid }) });
+    addHDHiveRecord("转存已提交", `${resource.title || slug} · 目录 ${result?.targetCid || targetCid}`, "success");
+    showToast("影巢资源已提交 115 转存", 1600);
+    resource.isUnlocked = true;
+    renderHDHiveResults();
+  } catch (error) {
+    addHDHiveRecord("转存失败", error.message || "未知错误", "error");
+    if (elements.hdhiveSearchSummary) elements.hdhiveSearchSummary.textContent = `转存失败：${error.message || "未知错误"}`;
+    if (button) { button.disabled = false; button.textContent = "解锁并转存"; }
   }
 }
 
@@ -7378,6 +7807,9 @@ function renderAll() {
   renderProjectLogs();
   renderBotAssistant();
   renderDrive115Page();
+  renderHDHiveConfig();
+  renderHDHiveResults();
+  renderHDHiveRecords();
 }
 
 function swapLogsActionBlocks(activeView) {
@@ -9256,6 +9688,25 @@ function initEvents() {
   });
   elements.drive115ParseBtn?.addEventListener("click", parseDrive115Link);
   elements.drive115TransferBtn?.addEventListener("click", transferDrive115Link);
+  elements.hdhiveSaveBtn?.addEventListener("click", saveHDHiveConfig);
+  elements.hdhiveTestBtn?.addEventListener("click", testHDHive);
+  elements.hdhiveAuthorizeBtn?.addEventListener("click", authorizeHDHive);
+  elements.hdhiveRefreshBtn?.addEventListener("click", refreshHDHiveStatus);
+  elements.hdhiveDisconnectBtn?.addEventListener("click", disconnectHDHive);
+  elements.hdhiveCheckinBtn?.addEventListener("click", checkinHDHive);
+  elements.hdhiveAuthMode?.addEventListener("change", () => {
+    appState.hdhiveConfig = normalizeHDHiveConfig({ ...appState.hdhiveConfig, authMode: elements.hdhiveAuthMode?.value });
+    renderHDHiveConfig();
+  });
+  elements.hdhiveSearchBtn?.addEventListener("click", searchHDHive);
+  elements.hdhiveOnly115?.addEventListener("change", renderHDHiveResults);
+  elements.hdhiveSearchKeyword?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchHDHive();
+  });
+  elements.hdhiveSearchResults?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-hdhive-transfer]") : null;
+    if (button) transferHDHiveResource(String(button.getAttribute("data-hdhive-transfer") || ""));
+  });
 
   elements.ucInviteManageBtn?.addEventListener("click", () => {
     openUserCenterInviteManageModal();
@@ -9536,6 +9987,12 @@ initEvents();
 hydrateInputs();
 renderAdminCredentialForm();
 renderConnectionState(false, "尚未连接 Emby。你可以先填地址和 API Key。");
+const initialParams = new URLSearchParams(window.location.search || "");
+if (initialParams.get("hdhive") === "authorized") {
+  appState.activeView = "hdhive";
+  localStorage.setItem(STORAGE_KEYS.activeView, "hdhive");
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
 const initialView = VIEW_META[appState.activeView] ? appState.activeView : "overview";
 switchView(initialView);
 renderAll();
@@ -9551,6 +10008,7 @@ async function startPostAuthBootstrap() {
         loadBotConfigFromServer({ silent: true });
         loadAiConfigFromServer({ silent: true });
         loadDrive115ConfigFromServer({ silent: true });
+        loadHDHiveConfigFromServer({ silent: true });
         refreshBotWebhookInfo({ silent: true });
         ensureBotWebhookStatusPolling();
       }, 80);

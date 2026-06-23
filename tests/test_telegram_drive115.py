@@ -62,7 +62,7 @@ class TelegramDrive115Tests(unittest.TestCase):
                 reply_to_message_id=88,
             )
 
-        self.assertEqual(reply["text"], "转存完成：成功 1 个，失败 0 个")
+        self.assertEqual(reply["text"], "转存完成：成功 1 个，已存在 0 个，失败 0 个")
         self.assertEqual(reply["reply_to_message_id"], 88)
         self.assertNotIn("reply_markup", reply)
 
@@ -74,7 +74,7 @@ class TelegramDrive115Tests(unittest.TestCase):
                 reply_to_message_id=99,
             )
 
-        self.assertIn("成功 0 个，失败 1 个", reply["text"])
+        self.assertIn("成功 0 个，已存在 0 个，失败 1 个", reply["text"])
         self.assertIn("原因：Cookie 已失效", reply["text"])
         self.assertEqual(reply["reply_to_message_id"], 99)
 
@@ -92,6 +92,19 @@ class TelegramDrive115Tests(unittest.TestCase):
         self.assertEqual(captured["method"], "sendMessage")
         self.assertEqual(captured["payload"]["reply_parameters"]["message_id"], 77)
         self.assertTrue(captured["payload"]["reply_parameters"]["allow_sending_without_reply"])
+
+    def test_existing_transfer_uses_separate_statistics(self):
+        FakeDrive115Service.transfer_error = ""
+
+        def existing_transfer(self, **kwargs):
+            return {"ok": True, "status": "exists", "message": "目标目录中已存在相同文件。"}
+
+        with patch.object(FakeDrive115Service, "transfer_share", existing_transfer), patch(
+            "backend_modules.telegram_commands.Drive115Service", FakeDrive115Service
+        ):
+            reply = self.service._cmd_drive115_transfer("https://115.com/s/abc123")
+
+        self.assertEqual(reply["text"], "转存完成：成功 0 个，已存在 1 个，失败 0 个")
 
     def test_group_reply_command_replies_to_resource_message(self):
         sent = []

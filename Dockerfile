@@ -9,10 +9,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Optional dependency for enterprise WeCom callback decrypt support.
-RUN pip install --no-cache-dir pycryptodome
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY dev_server.py /app/dev_server.py
+COPY hdhive_broker.py /app/hdhive_broker.py
 COPY backend_modules /app/backend_modules
 COPY runtime /app/runtime
 COPY docs /app/docs

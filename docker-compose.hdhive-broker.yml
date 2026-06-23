@@ -1,0 +1,25 @@
+services:
+  hdhive-broker:
+    image: ${IMAGE_NAME:-lishiya003/vistamirror-admin:latest}
+    container_name: vistamirror-hdhive-broker
+    restart: unless-stopped
+    command: ["python3", "hdhive_broker.py"]
+    environment:
+      HDHIVE_BROKER_HOST: 0.0.0.0
+      HDHIVE_BROKER_PORT: ${HDHIVE_BROKER_PORT:-12388}
+      HDHIVE_BROKER_DATA_DIR: /app/data
+      HDHIVE_BROKER_PUBLIC_URL: ${HDHIVE_BROKER_PUBLIC_URL:?请填写代理 HTTPS 公网地址}
+      HDHIVE_BROKER_CLIENT_ID: ${HDHIVE_BROKER_CLIENT_ID:?请填写影巢 Client ID}
+      HDHIVE_BROKER_APP_SECRET: ${HDHIVE_BROKER_APP_SECRET:?请填写影巢应用 Secret}
+      HDHIVE_BROKER_ENCRYPTION_KEY: ${HDHIVE_BROKER_ENCRYPTION_KEY:?请填写至少 24 字符的加密主密钥}
+      HDHIVE_BROKER_RATE_LIMIT_PER_MINUTE: ${HDHIVE_BROKER_RATE_LIMIT_PER_MINUTE:-120}
+    ports:
+      - "${HDHIVE_BROKER_PORT:-12388}:${HDHIVE_BROKER_PORT:-12388}"
+    volumes:
+      - ./data-hdhive-broker:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:12388/healthz',timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
