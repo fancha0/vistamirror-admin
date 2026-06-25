@@ -187,6 +187,7 @@ class TelegramCommandService:
         self._library_state_lock = threading.Lock()
         self._library_notify_lock = threading.RLock()
         self._library_state_path = self.store_path.parent / "library_notification_state.json"
+        self._library_group_window_seconds = 60
 
     def _log_project_event(
         self,
@@ -270,9 +271,13 @@ class TelegramCommandService:
         self._wakeup_event.clear()
 
     def _run_library_notification_loop(self) -> None:
+        next_poll_at = 0.0
         while not self._stop_event.is_set():
+            now_ts = time.time()
             try:
-                self._poll_library_notifications_once()
+                if now_ts >= next_poll_at:
+                    self._poll_library_notifications_once()
+                    next_poll_at = time.time() + 60.0
             except Exception as err:
                 LOGGER.warning("Library notification poll failed: %s", err)
                 self._log_project_event(
@@ -282,7 +287,18 @@ class TelegramCommandService:
                     message="新入库定时检测失败，将在下一轮重试。",
                     detail={"error": str(err)},
                 )
-            self._stop_event.wait(60.0)
+            try:
+                self._flush_library_notification_groups_due()
+            except Exception as err:
+                LOGGER.warning("Library notification flush failed: %s", err)
+                self._log_project_event(
+                    level="warning",
+                    module="webhook",
+                    action="library_notification_group_flush_failed",
+                    message="新入库聚合通知发送失败，将在下一轮重试。",
+                    detail={"error": str(err)},
+                )
+            self._wait_tick(2.0)
 
     def _library_notification_config(self) -> tuple[dict[str, Any], dict[str, Any]]:
         store = _read_store(self.store_path)
@@ -295,11 +311,32 @@ class TelegramCommandService:
             except Exception:
                 raw = {}
             seen = raw.get("seen") if isinstance(raw.get("seen"), dict) else {}
+            pending_raw = raw.get("pendingSeries") if isinstance(raw.get("pendingSeries"), dict) else {}
+            pending: dict[str, dict[str, Any]] = {}
+            for key, value in pending_raw.items():
+                if not str(key).strip() or not isinstance(value, dict):
+                    continue
+                items = value.get("items") if isinstance(value.get("items"), list) else []
+                normalized_items = []
+                for row in items:
+                    if isinstance(row, dict) and str(row.get("Id") or "").strip():
+                        normalized_items.append(dict(row))
+                if not normalized_items:
+                    continue
+                pending[str(key)] = {
+                    "seriesId": str(value.get("seriesId") or key).strip(),
+                    "seriesName": str(value.get("seriesName") or "").strip(),
+                    "firstSeenAt": str(value.get("firstSeenAt") or ""),
+                    "lastSeenAt": str(value.get("lastSeenAt") or ""),
+                    "sources": [str(source).strip() for source in value.get("sources", []) if str(source).strip()],
+                    "items": normalized_items,
+                }
             return {
                 "version": 1,
                 "active": bool(raw.get("active")),
                 "lastPollAt": str(raw.get("lastPollAt") or ""),
                 "seen": {str(key): str(value or "") for key, value in seen.items() if str(key).strip()},
+                "pendingSeries": pending,
             }
 
     def _write_library_notification_state(self, state: dict[str, Any]) -> None:
@@ -309,6 +346,33 @@ class TelegramCommandService:
             if len(seen) > 5000:
                 ordered = sorted(seen.items(), key=lambda row: str(row[1] or ""), reverse=True)[:5000]
                 state["seen"] = dict(ordered)
+            pending_raw = state.get("pendingSeries") if isinstance(state.get("pendingSeries"), dict) else {}
+            pending: dict[str, dict[str, Any]] = {}
+            for key, value in pending_raw.items():
+                if not str(key).strip() or not isinstance(value, dict):
+                    continue
+                items = value.get("items") if isinstance(value.get("items"), list) else []
+                normalized_items = []
+                seen_item_ids: set[str] = set()
+                for row in items:
+                    if not isinstance(row, dict):
+                        continue
+                    item_id = str(row.get("Id") or "").strip()
+                    if not item_id or item_id in seen_item_ids:
+                        continue
+                    seen_item_ids.add(item_id)
+                    normalized_items.append(dict(row))
+                if not normalized_items:
+                    continue
+                pending[str(key)] = {
+                    "seriesId": str(value.get("seriesId") or key).strip(),
+                    "seriesName": str(value.get("seriesName") or "").strip(),
+                    "firstSeenAt": str(value.get("firstSeenAt") or ""),
+                    "lastSeenAt": str(value.get("lastSeenAt") or ""),
+                    "sources": [str(source).strip() for source in value.get("sources", []) if str(source).strip()],
+                    "items": normalized_items,
+                }
+            state["pendingSeries"] = pending
             temp_path = self._library_state_path.with_suffix(".tmp")
             temp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
             temp_path.replace(self._library_state_path)
@@ -334,6 +398,13 @@ class TelegramCommandService:
                 "ProductionYear",
                 "CommunityRating",
                 "Overview",
+                "Genres",
+                "People",
+                "Status",
+                "MediaSources",
+                "MediaStreams",
+                "Width",
+                "Height",
                 "ImageTags",
                 "PrimaryImageItemId",
             )
@@ -351,6 +422,177 @@ class TelegramCommandService:
         payload = self._emby_get(f"/Items?{query}")
         rows = payload.get("Items") if isinstance(payload, dict) else payload
         return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    @staticmethod
+    def _library_notification_now_iso() -> str:
+        return datetime.now().isoformat(timespec="seconds")
+
+    @staticmethod
+    def _library_notification_group_key(payload: dict[str, Any]) -> str:
+        if str(payload.get("Type") or "").strip().lower() != "episode":
+            return ""
+        return str(payload.get("SeriesId") or "").strip()
+
+    def _buffer_library_episode_group(
+        self,
+        *,
+        state: dict[str, Any],
+        payload: dict[str, Any],
+        source: str,
+    ) -> dict[str, Any]:
+        item_id = str(payload.get("Id") or "").strip()
+        series_id = self._library_notification_group_key(payload)
+        if not item_id:
+            return {"ok": False, "status": "missing_item_id"}
+        if item_id in state["seen"]:
+            return {"ok": True, "status": "duplicate"}
+        if not series_id:
+            return {"ok": True, "status": "single_fallback"}
+        pending = state.get("pendingSeries") if isinstance(state.get("pendingSeries"), dict) else {}
+        group = pending.get(series_id) if isinstance(pending.get(series_id), dict) else {}
+        items = group.get("items") if isinstance(group.get("items"), list) else []
+        if any(str(row.get("Id") or "").strip() == item_id for row in items if isinstance(row, dict)):
+            return {"ok": True, "status": "buffered_duplicate", "seriesId": series_id}
+        now = self._library_notification_now_iso()
+        normalized = dict(payload)
+        group = {
+            "seriesId": series_id,
+            "seriesName": str(payload.get("SeriesName") or group.get("seriesName") or "").strip(),
+            "firstSeenAt": str(group.get("firstSeenAt") or now),
+            "lastSeenAt": now,
+            "sources": sorted(
+                {
+                    *(str(source_name).strip() for source_name in group.get("sources", []) if str(source_name).strip()),
+                    str(source or "").strip() or "webhook",
+                }
+            ),
+            "items": [*items, normalized],
+        }
+        pending[series_id] = group
+        state["pendingSeries"] = pending
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="library_notification_group_buffered",
+            message="新入库剧集已加入聚合缓冲区。",
+            detail={
+                "seriesId": series_id,
+                "seriesName": group["seriesName"],
+                "itemId": item_id,
+                "episodeCount": len(group["items"]),
+                "source": source,
+            },
+        )
+        return {"ok": True, "status": "buffered", "seriesId": series_id, "episodeCount": len(group["items"])}
+
+    @staticmethod
+    def _library_notification_iso_to_ts(raw: Any) -> float:
+        value = str(raw or "").strip()
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    def _collect_due_library_groups(
+        self,
+        *,
+        state: dict[str, Any],
+        force_series_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        pending = state.get("pendingSeries") if isinstance(state.get("pendingSeries"), dict) else {}
+        if not pending:
+            return []
+        due: list[dict[str, Any]] = []
+        now_ts = time.time()
+        forced = force_series_ids or set()
+        for series_id, group in list(pending.items()):
+            if not isinstance(group, dict):
+                continue
+            items = group.get("items") if isinstance(group.get("items"), list) else []
+            if not items:
+                pending.pop(series_id, None)
+                continue
+            last_seen_ts = self._library_notification_iso_to_ts(group.get("lastSeenAt"))
+            has_poll_source = "poll" in {str(value).strip() for value in group.get("sources", []) if str(value).strip()}
+            should_flush = (
+                series_id in forced
+                or has_poll_source
+                or (last_seen_ts > 0 and now_ts - last_seen_ts >= float(self._library_group_window_seconds))
+            )
+            if should_flush:
+                due.append(dict(group))
+                pending.pop(series_id, None)
+        state["pendingSeries"] = pending
+        return due
+
+    def _flush_library_notification_groups_due(self) -> None:
+        with self._library_notify_lock:
+            state = self._read_library_notification_state()
+            due_groups = self._collect_due_library_groups(state=state)
+            if not due_groups:
+                return
+            self._write_library_notification_state(state)
+            self._flush_library_notification_groups_unlocked(due_groups)
+
+    def _flush_library_notification_groups_unlocked(self, groups: list[dict[str, Any]]) -> None:
+        if not groups:
+            return
+        for index, group in enumerate(groups):
+            try:
+                self._send_library_notification_group_unlocked(group)
+            except Exception as err:
+                self._restore_library_notification_group(group)
+                self._log_project_event(
+                    level="warning",
+                    module="webhook",
+                    action="library_notification_group_flush_failed",
+                    message="剧集聚合通知发送失败，该分组将在下一轮重试。",
+                    detail={
+                        "seriesId": str(group.get("seriesId") or ""),
+                        "seriesName": str(group.get("seriesName") or ""),
+                        "episodeCount": len(group.get("items") or []),
+                        "error": str(err),
+                    },
+                )
+            if index + 1 < len(groups):
+                self._stop_event.wait(0.75)
+
+    def _restore_library_notification_group(self, group: dict[str, Any]) -> None:
+        series_id = str(group.get("seriesId") or "").strip()
+        items = group.get("items") if isinstance(group.get("items"), list) else []
+        if not series_id or not items:
+            return
+        state = self._read_library_notification_state()
+        pending = state.get("pendingSeries") if isinstance(state.get("pendingSeries"), dict) else {}
+        existing = pending.get(series_id) if isinstance(pending.get(series_id), dict) else {}
+        existing_items = existing.get("items") if isinstance(existing.get("items"), list) else []
+        existing_ids = {str(row.get("Id") or "").strip() for row in existing_items if isinstance(row, dict)}
+        merged_items = [*existing_items]
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            item_id = str(row.get("Id") or "").strip()
+            if not item_id or item_id in existing_ids:
+                continue
+            existing_ids.add(item_id)
+            merged_items.append(dict(row))
+        pending[series_id] = {
+            "seriesId": series_id,
+            "seriesName": str(existing.get("seriesName") or group.get("seriesName") or "").strip(),
+            "firstSeenAt": str(existing.get("firstSeenAt") or group.get("firstSeenAt") or self._library_notification_now_iso()),
+            "lastSeenAt": str(group.get("lastSeenAt") or existing.get("lastSeenAt") or self._library_notification_now_iso()),
+            "sources": sorted(
+                {
+                    *(str(value).strip() for value in existing.get("sources", []) if str(value).strip()),
+                    *(str(value).strip() for value in group.get("sources", []) if str(value).strip()),
+                }
+            ),
+            "items": merged_items,
+        }
+        state["pendingSeries"] = pending
+        self._write_library_notification_state(state)
 
     def _poll_library_notifications_once(self) -> None:
         with self._library_notify_lock:
@@ -400,17 +642,20 @@ class TelegramCommandService:
                 message="新入库定时检测发现新增资源。",
                 detail={"scanned": len(rows), "newItems": len(pending), "batchItems": len(batch), "intervalSeconds": 60},
             )
+        state = self._read_library_notification_state()
         success_count = 0
         failure_count = 0
+        poll_series_ids: set[str] = set()
         for index, row in enumerate(batch):
             item_id = str(row.get("Id") or "").strip()
             try:
-                result = self.notify_library_item(
-                    item_id=item_id,
-                    payload=row,
-                    source="poll",
-                )
-                if bool(result.get("ok")) and str(result.get("status") or "") in {"sent", "duplicate", "filtered"}:
+                result = self._notify_library_item_unlocked(item_id=item_id, payload=row, source="poll", state=state)
+                result_status = str(result.get("status") or "")
+                if result_status == "buffered":
+                    series_id = str(result.get("seriesId") or "").strip()
+                    if series_id:
+                        poll_series_ids.add(series_id)
+                if bool(result.get("ok")) and result_status in {"sent", "duplicate", "filtered", "buffered", "buffered_duplicate"}:
                     success_count += 1
                 else:
                     failure_count += 1
@@ -425,9 +670,33 @@ class TelegramCommandService:
                 )
             if index + 1 < len(batch):
                 self._stop_event.wait(0.75)
-        state = self._read_library_notification_state()
+        due_groups = self._collect_due_library_groups(state=state, force_series_ids=poll_series_ids)
         state["lastPollAt"] = now
         self._write_library_notification_state(state)
+        if due_groups:
+            flushed_success = 0
+            flushed_failure = 0
+            for group in due_groups:
+                try:
+                    self._send_library_notification_group_unlocked(group)
+                    flushed_success += 1
+                except Exception as err:
+                    flushed_failure += 1
+                    self._restore_library_notification_group(group)
+                    self._log_project_event(
+                        level="warning",
+                        module="webhook",
+                        action="library_notification_group_flush_failed",
+                        message="轮询聚合剧集通知发送失败，该分组将在下一轮重试。",
+                        detail={
+                            "seriesId": str(group.get("seriesId") or ""),
+                            "seriesName": str(group.get("seriesName") or ""),
+                            "episodeCount": len(group.get("items") or []),
+                            "error": str(err),
+                        },
+                    )
+            success_count += flushed_success
+            failure_count += flushed_failure
         if batch:
             self._log_project_event(
                 level="info" if failure_count == 0 else "warning",
@@ -439,15 +708,25 @@ class TelegramCommandService:
                     "processed": len(batch),
                     "success": success_count,
                     "failed": failure_count,
-                    "remaining": max(0, len(pending) - success_count),
+                    "remaining": max(0, len(pending) - len(batch)),
                 },
             )
 
     def notify_library_item(self, *, item_id: str, payload: dict[str, Any] | None = None, source: str = "webhook") -> dict[str, Any]:
         with self._library_notify_lock:
-            return self._notify_library_item_unlocked(item_id=item_id, payload=payload, source=source)
+            state = self._read_library_notification_state()
+            result = self._notify_library_item_unlocked(item_id=item_id, payload=payload, source=source, state=state)
+            self._write_library_notification_state(state)
+            return result
 
-    def _notify_library_item_unlocked(self, *, item_id: str, payload: dict[str, Any] | None = None, source: str = "webhook") -> dict[str, Any]:
+    def _notify_library_item_unlocked(
+        self,
+        *,
+        item_id: str,
+        payload: dict[str, Any] | None = None,
+        source: str = "webhook",
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         safe_item_id = str(item_id or "").strip()
         if not safe_item_id:
             return {"ok": False, "status": "missing_item_id"}
@@ -459,7 +738,7 @@ class TelegramCommandService:
         if not token or not chat_id:
             return {"ok": False, "status": "telegram_not_configured"}
 
-        state = self._read_library_notification_state()
+        state = state if isinstance(state, dict) else self._read_library_notification_state()
         if safe_item_id in state["seen"]:
             self._log_project_event(
                 level="info",
@@ -488,7 +767,33 @@ class TelegramCommandService:
         item_type = str(detail.get("Type") or "").strip().lower()
         if item_type not in {"movie", "episode"}:
             return {"ok": True, "status": "filtered", "itemType": item_type}
+        if item_type == "episode":
+            buffered = self._buffer_library_episode_group(state=state, payload=detail, source=source)
+            if str(buffered.get("status") or "") == "single_fallback":
+                pass
+            else:
+                return buffered
 
+        return self._send_library_single_notification_unlocked(
+            item_id=safe_item_id,
+            detail=detail,
+            source=source,
+            state=state,
+        )
+
+    def _send_library_single_notification_unlocked(
+        self,
+        *,
+        item_id: str,
+        detail: dict[str, Any],
+        source: str,
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        safe_item_id = str(item_id or "").strip()
+        bot, _emby = self._library_notification_config()
+        token = str(bot.get("telegramToken") or "").strip()
+        chat_id = str(bot.get("telegramChatId") or "").strip()
+        item_type = str(detail.get("Type") or "").strip().lower()
         series_detail: dict[str, Any] = {}
         if item_type == "episode":
             series_id = str(detail.get("SeriesId") or "").strip()
@@ -503,8 +808,43 @@ class TelegramCommandService:
                         message="所属剧集资料读取失败，继续发送单集通知。",
                         detail={"itemId": safe_item_id, "seriesId": series_id, "source": source, "error": str(err)},
                     )
-        caption = self._format_library_notification_caption(detail, series_detail)
-        image_item_ids = self._library_notification_image_ids(detail, series_detail)
+        photo_sent = self._send_library_caption(
+            token=token,
+            chat_id=chat_id,
+            caption=self._format_library_notification_caption(detail, series_detail),
+            image_item_ids=self._library_notification_image_ids(detail, series_detail),
+            item_id=safe_item_id,
+            source=source,
+        )
+        state["active"] = True
+        state["seen"][safe_item_id] = self._library_notification_now_iso()
+        self._write_library_notification_state(state)
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="library_notification_sent",
+            message="Telegram 新入库海报通知已发送。",
+            detail={
+                "itemId": safe_item_id,
+                "itemType": item_type,
+                "source": source,
+                "photo": photo_sent,
+                "detailSource": str(detail.get("_detailSource") or "event_payload"),
+                "seriesDetailSource": str(series_detail.get("_detailSource") or ""),
+            },
+        )
+        return {"ok": True, "status": "sent", "photo": photo_sent, "itemType": item_type}
+
+    def _send_library_caption(
+        self,
+        *,
+        token: str,
+        chat_id: str,
+        caption: str,
+        image_item_ids: list[str],
+        item_id: str,
+        source: str,
+    ) -> bool:
         photo_sent = False
         for image_item_id in image_item_ids:
             try:
@@ -527,30 +867,11 @@ class TelegramCommandService:
                     module="webhook",
                     action="library_notification_photo_fallback",
                     message="入库海报发送失败，尝试文字通知。",
-                    detail={"itemId": safe_item_id, "source": source, "error": str(err)},
+                    detail={"itemId": item_id, "source": source, "error": str(err)},
                 )
         if not photo_sent:
             self.sender.send_text(token=token, chat_id=chat_id, text=caption)
-
-        state = self._read_library_notification_state()
-        state["active"] = True
-        state["seen"][safe_item_id] = datetime.now().isoformat(timespec="seconds")
-        self._write_library_notification_state(state)
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="library_notification_sent",
-            message="Telegram 新入库海报通知已发送。",
-            detail={
-                "itemId": safe_item_id,
-                "itemType": item_type,
-                "source": source,
-                "photo": photo_sent,
-                "detailSource": str(detail.get("_detailSource") or "event_payload"),
-                "seriesDetailSource": str(series_detail.get("_detailSource") or ""),
-            },
-        )
-        return {"ok": True, "status": "sent", "photo": photo_sent, "itemType": item_type}
+        return photo_sent
 
     def _fetch_library_item_detail(self, item_id: str) -> dict[str, Any]:
         safe_item_id = str(item_id or "").strip()
@@ -560,7 +881,9 @@ class TelegramCommandService:
             (
                 "Overview",
                 "CommunityRating",
+                "CriticRating",
                 "Type",
+                "Name",
                 "SeriesName",
                 "SeriesId",
                 "ParentIndexNumber",
@@ -568,6 +891,15 @@ class TelegramCommandService:
                 "ProductionYear",
                 "PremiereDate",
                 "DateCreated",
+                "Genres",
+                "People",
+                "Status",
+                "Taglines",
+                "Tagline",
+                "MediaSources",
+                "MediaStreams",
+                "Width",
+                "Height",
                 "ImageTags",
                 "PrimaryImageItemId",
             )
@@ -656,54 +988,345 @@ class TelegramCommandService:
             return value[:16].replace("T", " ")
 
     @classmethod
-    def _format_library_notification_caption(cls, detail: dict[str, Any], series_detail: dict[str, Any]) -> str:
+    def _truncate_library_notification_text(cls, text: str, limit: int = 1000) -> str:
+        safe = str(text or "").strip()
+        if len(safe) <= limit:
+            return safe
+        return safe[: max(0, limit - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _library_notification_genres(detail: dict[str, Any]) -> str:
+        genres = detail.get("Genres") if isinstance(detail.get("Genres"), list) else []
+        rows = [str(row).strip() for row in genres if str(row).strip()]
+        return " / ".join(rows[:4]) or "未分类"
+
+    @staticmethod
+    def _library_notification_people(detail: dict[str, Any]) -> str:
+        people = detail.get("People") if isinstance(detail.get("People"), list) else []
+        rows: list[str] = []
+        for person in people:
+            if not isinstance(person, dict):
+                continue
+            name = str(person.get("Name") or "").strip()
+            if name:
+                rows.append(name)
+        return "、".join(rows[:8]) or "暂无"
+
+    @classmethod
+    def _library_notification_overview(cls, detail: dict[str, Any]) -> str:
+        overview = str(detail.get("Overview") or "").replace("\n", " ").strip()
+        overview = re.sub(r"\s+", " ", overview)
+        if not overview:
+            return "暂无简介"
+        return cls._truncate_library_notification_text(overview, limit=300)
+
+    @classmethod
+    def _library_notification_tagline_text(cls, detail: dict[str, Any]) -> str:
+        tagline = detail.get("Tagline")
+        if not tagline and isinstance(detail.get("Taglines"), list):
+            taglines = [str(row).strip() for row in detail.get("Taglines") if str(row).strip()]
+            tagline = taglines[0] if taglines else ""
+        text = str(tagline or "").strip()
+        if text:
+            return cls._truncate_library_notification_text(text, limit=80)
+        overview = cls._library_notification_overview(detail)
+        if overview and overview != "暂无简介":
+            first_sentence = re.split(r"[。！？!?]", overview, maxsplit=1)[0].strip()
+            if first_sentence:
+                return cls._truncate_library_notification_text(first_sentence, limit=80)
+        return "暂无一句话简介"
+
+    @staticmethod
+    def _library_notification_media_type(detail: dict[str, Any]) -> str:
         item_type = str(detail.get("Type") or "").strip().lower()
-        fallback = series_detail if isinstance(series_detail, dict) else {}
-        name = str(detail.get("Name") or "未命名内容").strip()
-        series_name = str(detail.get("SeriesName") or fallback.get("Name") or "未命名剧集").strip()
+        if item_type == "movie":
+            return "电影"
+        if item_type in {"episode", "series"}:
+            return "电视剧"
+        return "影视"
+
+    @classmethod
+    def _library_notification_year(cls, detail: dict[str, Any]) -> str:
+        year = detail.get("ProductionYear")
+        if isinstance(year, (int, float)) and int(year) > 0:
+            return str(int(year))
+        premiere = str(detail.get("PremiereDate") or "").strip()
+        if re.match(r"^\d{4}", premiere):
+            return premiere[:4]
+        return "未知"
+
+    @staticmethod
+    def _library_notification_rating(detail: dict[str, Any]) -> str:
+        for key in ("CommunityRating", "CriticRating"):
+            value = detail.get(key)
+            if isinstance(value, (int, float)) and float(value) > 0:
+                return f"{float(value):.1f}".rstrip("0").rstrip(".")
+        return "暂无"
+
+    @staticmethod
+    def _library_notification_status_text(detail: dict[str, Any]) -> str:
+        raw = str(detail.get("Status") or "").strip().lower()
+        mapping = {
+            "continuing": "连载中",
+            "returningseries": "连载中",
+            "inproduction": "制作中",
+            "ended": "已完结",
+            "released": "已发布",
+            "postproduction": "后期制作",
+            "planned": "待上线",
+            "canceled": "已取消",
+            "cancelled": "已取消",
+        }
+        return mapping.get(raw, "整理完成")
+
+    @staticmethod
+    def _library_notification_episode_info(detail: dict[str, Any]) -> str:
+        item_type = str(detail.get("Type") or "").strip().lower()
+        if item_type == "movie":
+            return "电影"
         if item_type == "episode":
-            title = f"📺 新入库 剧集 {series_name}"
-            if name and name != series_name:
-                title += f" {name}"
             try:
                 season = int(detail.get("ParentIndexNumber"))
                 episode = int(detail.get("IndexNumber"))
-                episode_label = f"S{season:02d}E{episode:02d}"
+                return f"S{season:02d}E{episode:02d}"
             except (TypeError, ValueError):
-                episode_label = ""
-        else:
-            title = f"🎬 新入库 电影 {name}"
-            episode_label = ""
+                return "单集"
+        return "未提供"
 
-        year = detail.get("ProductionYear") or fallback.get("ProductionYear")
-        if not year:
-            premiere = str(detail.get("PremiereDate") or fallback.get("PremiereDate") or "").strip()
-            year = premiere[:4] if re.match(r"^\d{4}", premiere) else "未知"
-        rating_raw = detail.get("CommunityRating") or fallback.get("CommunityRating")
-        try:
-            rating = f"{float(rating_raw):.1f}".rstrip("0").rstrip(".")
-        except (TypeError, ValueError):
-            rating = "暂无"
-        created_at = cls._library_notification_datetime(detail.get("DateCreated"))
-        overview = str(detail.get("Overview") or fallback.get("Overview") or "暂无剧情简介").replace("\n", " ").strip()
-        overview = re.sub(r"\s+", " ", overview)
-        if len(overview) > 360:
-            overview = overview[:357].rstrip() + "..."
-        lines = [title]
-        if episode_label:
-            lines.append(episode_label)
-        lines.extend(
-            [
-                "",
-                f"📌 年份：{year} | ⭐ 评分：{rating}",
-                f"🕘 时间：{created_at}",
-                "",
-                "📝 剧情简介：",
-                overview,
-            ]
+    def _library_notification_quality_text(self, detail: dict[str, Any]) -> str:
+        quality = self._format_media_quality(detail)
+        if str(quality or "").strip() in {"", "质量未知"}:
+            return "质量未知"
+        return quality
+
+    def _build_library_notification_caption(
+        self,
+        *,
+        title: str,
+        year: str,
+        detail: dict[str, Any],
+        episode_info: str,
+        count: int,
+        latest_created_at: str,
+    ) -> str:
+        tagline = self._library_notification_tagline_text(detail)
+        rating = self._library_notification_rating(detail)
+        status = self._library_notification_status_text(detail)
+        processed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        media_type = self._library_notification_media_type(detail)
+        category = self._library_notification_genres(detail)
+        quality = self._library_notification_quality_text(detail)
+        actors = self._library_notification_people(detail)
+        overview = self._library_notification_overview(detail)
+
+        lines = [
+            f"🎬 新入库｜{title}（{year}）" if year and year != "未知" else f"🎬 新入库｜{title}",
+            "",
+            f"> **“{tagline}”**",
+            f"> 评分：⭐ **{rating}** / 10 · 状态：{status}",
+            "",
+            "---",
+            "=== 基本信息 ===",
+            f"🕘 整理时间｜{processed_at}",
+            f"📺 内容类型｜{media_type} · {category}",
+            f"🎞 入库信息｜{episode_info}",
+            f"📅 入库时间｜{latest_created_at}",
+            "",
+            "=== 资源详情 ===",
+            f"🧩 资源规格｜{quality}",
+            f"📦 文件数量｜{max(1, int(count or 1))} 个",
+            "",
+            "=== 创作信息 ===",
+            f"👥 主演阵容｜{actors}",
+            "",
+            "=== 内容简介 ===",
+            f"📜 {overview}",
+        ]
+        return self._truncate_library_notification_text("\n".join(lines), limit=1000)
+
+    def _format_library_notification_caption(self, detail: dict[str, Any], series_detail: dict[str, Any]) -> str:
+        item_type = str(detail.get("Type") or "").strip().lower()
+        fallback = series_detail if isinstance(series_detail, dict) else {}
+        primary = detail if item_type == "movie" else (fallback or detail)
+        title = str(
+            (detail.get("Name") if item_type == "movie" else (detail.get("SeriesName") or fallback.get("Name")))
+            or "未命名内容"
+        ).strip()
+        year = self._library_notification_year(primary)
+        latest_created_at = self._library_notification_datetime(detail.get("DateCreated") or fallback.get("DateCreated"))
+        episode_info = self._library_notification_episode_info(detail)
+        return self._build_library_notification_caption(
+            title=title,
+            year=year,
+            detail=primary if isinstance(primary, dict) else {},
+            episode_info=episode_info,
+            count=1,
+            latest_created_at=latest_created_at,
         )
-        caption = "\n".join(lines)
-        return caption if len(caption) <= 1000 else caption[:997].rstrip() + "..."
+
+    def _send_library_notification_group_unlocked(self, group: dict[str, Any]) -> None:
+        bot, _emby = self._library_notification_config()
+        token = str(bot.get("telegramToken") or "").strip()
+        chat_id = str(bot.get("telegramChatId") or "").strip()
+        if not token or not chat_id:
+            raise RuntimeError("telegram_not_configured")
+
+        items = [dict(row) for row in group.get("items", []) if isinstance(row, dict) and str(row.get("Id") or "").strip()]
+        if not items:
+            return
+        series_id = str(group.get("seriesId") or "").strip()
+        sources = sorted({str(value).strip() for value in group.get("sources", []) if str(value).strip()})
+        resolved_items = [self._resolve_library_group_item(row) for row in items]
+        if len(resolved_items) <= 1:
+            row = resolved_items[0]
+            result = self._send_library_single_notification_unlocked(
+                item_id=str(row.get("Id") or "").strip(),
+                detail=row,
+                source="+".join(sources) or "group",
+                state=self._read_library_notification_state(),
+            )
+            if not bool(result.get("ok")):
+                raise RuntimeError(f"group_single_fallback_failed:{result.get('status')}")
+            return
+
+        series_detail = self._fetch_library_item_detail(series_id) if series_id else {}
+        caption = self._format_library_group_notification_caption(group=group, items=resolved_items, series_detail=series_detail)
+        image_item_ids = self._library_notification_image_ids(
+            {"Type": "Episode", "SeriesId": series_id, "PrimaryImageItemId": series_detail.get("PrimaryImageItemId")},
+            series_detail,
+        )
+        item_ids = [str(row.get("Id") or "").strip() for row in resolved_items if str(row.get("Id") or "").strip()]
+        photo_sent = self._send_library_caption(
+            token=token,
+            chat_id=chat_id,
+            caption=caption,
+            image_item_ids=image_item_ids,
+            item_id=series_id or ",".join(item_ids),
+            source="+".join(sources) or "group",
+        )
+        state = self._read_library_notification_state()
+        state["active"] = True
+        sent_at = self._library_notification_now_iso()
+        for item_id in item_ids:
+            state["seen"][item_id] = sent_at
+        self._write_library_notification_state(state)
+        range_text = self._library_group_episode_range_text(resolved_items)
+        self._log_project_event(
+            level="info",
+            module="webhook",
+            action="library_notification_group_sent",
+            message="Telegram 剧集合并入库通知已发送。",
+            detail={
+                "seriesId": series_id,
+                "seriesName": str(series_detail.get("Name") or group.get("seriesName") or ""),
+                "episodeCount": len(item_ids),
+                "seasonCount": self._library_group_season_count(resolved_items),
+                "rangeText": range_text,
+                "photo": photo_sent,
+                "source": "+".join(sources) or "group",
+            },
+        )
+
+    def _resolve_library_group_item(self, row: dict[str, Any]) -> dict[str, Any]:
+        if self._library_group_has_episode_identity(row):
+            return dict(row)
+        item_id = str(row.get("Id") or "").strip()
+        if not item_id:
+            return dict(row)
+        try:
+            detail = self._fetch_library_item_detail(item_id)
+        except Exception:
+            detail = {}
+        merged = dict(row)
+        if isinstance(detail, dict):
+            merged.update(detail)
+        return merged
+
+    @staticmethod
+    def _library_group_has_episode_identity(row: dict[str, Any]) -> bool:
+        try:
+            int(row.get("ParentIndexNumber"))
+            int(row.get("IndexNumber"))
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _library_group_episode_pairs(cls, items: list[dict[str, Any]]) -> dict[int, list[int]]:
+        grouped: dict[int, list[int]] = {}
+        for row in items:
+            season = cls._library_group_int(row.get("ParentIndexNumber"))
+            episode = cls._library_group_int(row.get("IndexNumber"))
+            if season is None or episode is None:
+                continue
+            grouped.setdefault(season, [])
+            if episode not in grouped[season]:
+                grouped[season].append(episode)
+        for season in grouped:
+            grouped[season] = sorted(grouped[season])
+        return grouped
+
+    @classmethod
+    def _library_group_episode_range_text(cls, items: list[dict[str, Any]]) -> str:
+        grouped = cls._library_group_episode_pairs(items)
+        if not grouped:
+            return f"共{len(items)}集"
+        parts: list[str] = []
+        for season in sorted(grouped):
+            compressed = cls._compress_number_ranges(grouped[season])
+            if "、" in compressed:
+                parts.append(f"S{season:02d} {compressed}")
+                continue
+            if compressed.startswith("E") and "-E" in compressed:
+                start_text, _, end_tail = compressed.partition("-")
+                end_text = f"E{end_tail[1:]}" if end_tail.startswith("E") else end_tail
+                parts.append(f"S{season:02d} {start_text}-{end_text}")
+            else:
+                parts.append(f"S{season:02d} {compressed}")
+        return " / ".join(parts)
+
+    @classmethod
+    def _library_group_season_count(cls, items: list[dict[str, Any]]) -> int:
+        return len(cls._library_group_episode_pairs(items))
+
+    @staticmethod
+    def _library_group_int(raw: Any) -> int | None:
+        try:
+            value = int(float(raw))
+        except (TypeError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    def _format_library_group_notification_caption(
+        self,
+        *,
+        group: dict[str, Any],
+        items: list[dict[str, Any]],
+        series_detail: dict[str, Any],
+    ) -> str:
+        fallback = series_detail if isinstance(series_detail, dict) else {}
+        series_name = str(fallback.get("Name") or group.get("seriesName") or items[0].get("SeriesName") or "未命名剧集").strip()
+        year = self._library_notification_year(fallback or items[0])
+        latest_created_raw = max((str(row.get("DateCreated") or "") for row in items), default="")
+        created_at = self._library_notification_datetime(latest_created_raw)
+        episode_text = self._library_group_episode_range_text(items)
+        item_count = len({str(row.get("Id") or "").strip() for row in items if str(row.get("Id") or "").strip()})
+        primary_detail = dict(fallback or items[0] or {})
+        if items:
+            best_quality_item = max(items, key=self._media_quality_score)
+            if isinstance(best_quality_item, dict):
+                primary_detail["MediaSources"] = best_quality_item.get("MediaSources")
+                primary_detail["MediaStreams"] = best_quality_item.get("MediaStreams")
+                primary_detail["Width"] = best_quality_item.get("Width")
+                primary_detail["Height"] = best_quality_item.get("Height")
+        return self._build_library_notification_caption(
+            title=series_name,
+            year=year,
+            detail=primary_detail,
+            episode_info=episode_text,
+            count=item_count,
+            latest_created_at=created_at,
+        )
 
     def _handle_update(self, update: dict[str, Any], token: str) -> None:
         update_id = str(update.get("update_id") or "").strip()

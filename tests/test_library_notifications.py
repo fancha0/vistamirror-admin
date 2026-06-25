@@ -1,6 +1,7 @@
 import json
 import pathlib
 import tempfile
+import time
 import unittest
 
 from backend_modules.telegram_commands import TelegramCommandService
@@ -74,6 +75,51 @@ class LibraryNotificationTests(unittest.TestCase):
                         }
                     ]
                 }
+            if path.startswith("/Items?") and "Ids=episode-batch-1" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "episode-batch-1",
+                            "Type": "Episode",
+                            "Name": "第 1 集",
+                            "SeriesName": "南部档案",
+                            "SeriesId": "series-batch",
+                            "ParentIndexNumber": 1,
+                            "IndexNumber": 1,
+                            "DateCreated": "2026-06-23T15:10:00Z",
+                        }
+                    ]
+                }
+            if path.startswith("/Items?") and "Ids=episode-batch-2" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "episode-batch-2",
+                            "Type": "Episode",
+                            "Name": "第 2 集",
+                            "SeriesName": "南部档案",
+                            "SeriesId": "series-batch",
+                            "ParentIndexNumber": 1,
+                            "IndexNumber": 2,
+                            "DateCreated": "2026-06-23T15:10:00Z",
+                        }
+                    ]
+                }
+            if path.startswith("/Items?") and "Ids=episode-batch-3" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "episode-batch-3",
+                            "Type": "Episode",
+                            "Name": "第 3 集",
+                            "SeriesName": "南部档案",
+                            "SeriesId": "series-batch",
+                            "ParentIndexNumber": 1,
+                            "IndexNumber": 3,
+                            "DateCreated": "2026-06-23T15:10:00Z",
+                        }
+                    ]
+                }
             if path.startswith("/Items?") and "Ids=series-1" in path:
                 return {
                     "Items": [
@@ -84,6 +130,23 @@ class LibraryNotificationTests(unittest.TestCase):
                             "ProductionYear": 2026,
                             "CommunityRating": 7,
                             "Overview": "上古末世，辉华族少女自惨痛的族地叛乱中出逃。",
+                            "Genres": ["动画", "国漫"],
+                            "People": [{"Name": "蔡海婷"}, {"Name": "张若瑜"}],
+                        }
+                    ]
+                }
+            if path.startswith("/Items?") and "Ids=series-batch" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "series-batch",
+                            "Type": "Series",
+                            "Name": "南部档案",
+                            "ProductionYear": 2026,
+                            "CommunityRating": 7,
+                            "Overview": "民国初年，南洋上发生水鬼望乡离奇命案。",
+                            "Genres": ["华语剧集"],
+                            "People": [{"Name": "张新成"}, {"Name": "丁禹兮"}],
                         }
                     ]
                 }
@@ -97,6 +160,9 @@ class LibraryNotificationTests(unittest.TestCase):
                             "ProductionYear": 2026,
                             "DateCreated": "2026-06-20T13:00:00Z",
                             "Overview": "电影简介",
+                            "Genres": ["剧情"],
+                            "People": [{"Name": "主演甲"}],
+                            "CommunityRating": 8.5,
                         }
                     ]
                 }
@@ -139,11 +205,13 @@ class LibraryNotificationTests(unittest.TestCase):
 
         self.assertEqual(len(self.sender.photos), 1)
         caption = self.sender.photos[0]["caption"]
-        self.assertIn("📺 新入库 剧集 云深不知梦 特别篇：逐冥之役", caption)
-        self.assertIn("S01E01", caption)
-        self.assertIn("📌 年份：2026 | ⭐ 评分：7", caption)
-        self.assertIn("🕘 时间：2026-06-20", caption)
-        self.assertIn("上古末世", caption)
+        self.assertIn("🎬 新入库｜云深不知梦（2026）", caption)
+        self.assertIn("> **“上古末世，辉华族少女自惨痛的族地叛乱中出逃”**", caption)
+        self.assertIn("> 评分：⭐ **7** / 10 · 状态：整理完成", caption)
+        self.assertIn("📺 内容类型｜电视剧 · 动画 / 国漫", caption)
+        self.assertIn("🎞 入库信息｜S01E01", caption)
+        self.assertIn("📦 文件数量｜1 个", caption)
+        self.assertIn("👥 主演阵容｜蔡海婷、张若瑜", caption)
 
         duplicate = self.service.notify_library_item(
             item_id="episode-new",
@@ -152,6 +220,106 @@ class LibraryNotificationTests(unittest.TestCase):
         )
         self.assertEqual(duplicate["status"], "duplicate")
         self.assertEqual(len(self.sender.photos), 1)
+
+    def test_poll_groups_multiple_new_episodes_into_one_series_card(self):
+        self.service._poll_library_notifications_once()
+        self.rows = [
+            {
+                "Id": "episode-batch-1",
+                "Type": "Episode",
+                "Name": "第 1 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "DateCreated": "2026-06-23T15:10:00Z",
+            },
+            {
+                "Id": "episode-batch-2",
+                "Type": "Episode",
+                "Name": "第 2 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 2,
+                "DateCreated": "2026-06-23T15:10:01Z",
+            },
+            {
+                "Id": "episode-batch-3",
+                "Type": "Episode",
+                "Name": "第 3 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 3,
+                "DateCreated": "2026-06-23T15:10:02Z",
+            },
+        ]
+
+        self.service._poll_library_notifications_once()
+
+        self.assertEqual(len(self.sender.photos), 1)
+        caption = self.sender.photos[0]["caption"]
+        self.assertIn("🎬 新入库｜南部档案（2026）", caption)
+        self.assertIn("🎞 入库信息｜S01 E01-E03", caption)
+        self.assertIn("📦 文件数量｜3 个", caption)
+        self.assertIn("📺 内容类型｜电视剧 · 华语剧集", caption)
+        self.assertIn("📜 民国初年，南洋上发生水鬼望乡离奇命案。", caption)
+        state = self.service._read_library_notification_state()
+        self.assertIn("episode-batch-1", state["seen"])
+        self.assertIn("episode-batch-2", state["seen"])
+        self.assertIn("episode-batch-3", state["seen"])
+        self.assertFalse(state["pendingSeries"])
+
+    def test_webhook_episode_is_buffered_then_flushed_as_group(self):
+        result1 = self.service.notify_library_item(
+            item_id="episode-batch-1",
+            payload={
+                "Id": "episode-batch-1",
+                "Type": "Episode",
+                "Name": "第 1 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "DateCreated": "2026-06-23T15:10:00Z",
+            },
+            source="webhook",
+        )
+        result2 = self.service.notify_library_item(
+            item_id="episode-batch-2",
+            payload={
+                "Id": "episode-batch-2",
+                "Type": "Episode",
+                "Name": "第 2 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 2,
+                "DateCreated": "2026-06-23T15:10:01Z",
+            },
+            source="webhook",
+        )
+
+        self.assertEqual(result1["status"], "buffered")
+        self.assertEqual(result2["status"], "buffered")
+        self.assertFalse(self.sender.photos)
+
+        state = self.service._read_library_notification_state()
+        group = state["pendingSeries"]["series-batch"]
+        group["lastSeenAt"] = "2026-06-23T15:09:00"
+        state["pendingSeries"]["series-batch"] = group
+        self.service._write_library_notification_state(state)
+
+        self.service._flush_library_notification_groups_due()
+
+        self.assertEqual(len(self.sender.photos), 1)
+        caption = self.sender.photos[0]["caption"]
+        self.assertIn("🎞 入库信息｜S01 E01-E02", caption)
+        state = self.service._read_library_notification_state()
+        self.assertIn("episode-batch-1", state["seen"])
+        self.assertIn("episode-batch-2", state["seen"])
+        self.assertFalse(state["pendingSeries"])
 
     def test_photo_failure_falls_back_to_text_and_marks_sent(self):
         self.service._poll_library_notifications_once()
@@ -166,8 +334,20 @@ class LibraryNotificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "sent")
         self.assertFalse(result["photo"])
         self.assertEqual(len(self.sender.texts), 1)
-        self.assertIn("🎬 新入库 电影 新电影", self.sender.texts[0]["text"])
+        self.assertIn("🎬 新入库｜新电影（2026）", self.sender.texts[0]["text"])
+        self.assertIn("> **“电影简介”**", self.sender.texts[0]["text"])
+        self.assertIn("📺 内容类型｜电影 · 剧情", self.sender.texts[0]["text"])
         self.assertIn("movie-new", self.service._read_library_notification_state()["seen"])
+
+    def test_library_notification_tagline_falls_back_to_first_overview_sentence(self):
+        text = self.service._library_notification_tagline_text(
+            {"Overview": "第一句。第二句。", "Tagline": "", "Taglines": []}
+        )
+        self.assertEqual(text, "第一句")
+
+    def test_library_notification_status_maps_to_chinese(self):
+        self.assertEqual(self.service._library_notification_status_text({"Status": "Continuing"}), "连载中")
+        self.assertEqual(self.service._library_notification_status_text({"Status": ""}), "整理完成")
 
     def test_disabled_notification_does_not_send(self):
         store = json.loads(self.store_path.read_text(encoding="utf-8"))
