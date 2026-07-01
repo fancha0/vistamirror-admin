@@ -35,6 +35,16 @@ class AiIntentRouterTests(unittest.TestCase):
         self.assertEqual(route["source"], "fallback")
         self.assertEqual(route["routerError"], "ValueError")
 
+    def test_missing_episode_meta_question_falls_back_to_general_chat(self):
+        route = AiIntentRouter(lambda **kwargs: "not json").route(
+            "查询媒体缺失集的方式",
+            config={"enabled": True},
+            active_media={},
+        )
+
+        self.assertEqual(route["intent"], "general_chat")
+        self.assertEqual(route["source"], "fallback")
+
     def test_correction_sentence_only_extracts_real_title(self):
         title = AiIntentRouter.extract_correction_title("你识别错了，我说的是仙逆的缺失集，你识别的是啥")
         self.assertEqual(title, "仙逆")
@@ -145,7 +155,27 @@ class TelegramAiRoutedQuestionTests(unittest.TestCase):
                 ai_config=self.config,
                 conversation_key="chat:2",
             )
-        self.assertEqual(routed, "查看一下仙逆的缺失集")
+        self.assertEqual(routed, "查看一下缺失的集")
+        self.assertEqual(immediate, "")
+
+    def test_missing_episode_meta_question_does_not_rewrite_into_media_query(self):
+        route = {
+            "intent": "media_missing_episodes",
+            "mediaTitle": "查询媒体",
+            "mediaType": "tv",
+            "useActiveMedia": False,
+            "isCorrection": False,
+            "confidence": 0.7,
+            "source": "llm",
+        }
+        with patch.object(AiIntentRouter, "route", return_value=route):
+            routed, immediate = self.service._prepare_ai_routed_question(
+                "查询媒体缺失集的方式",
+                ai_config=self.config,
+                conversation_key="chat:meta",
+            )
+
+        self.assertEqual(routed, "查询媒体缺失集的方式")
         self.assertEqual(immediate, "")
 
 

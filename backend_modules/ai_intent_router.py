@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any, Callable
 
+from .ai_missing_episode_support import is_missing_episode_meta_question
+
 
 ROUTE_INTENTS = {
     "media_missing_episodes",
@@ -82,7 +84,7 @@ class AiIntentRouter:
     def fallback_route(cls, question: str) -> dict[str, Any]:
         text = str(question or "").strip()
         correction_title = cls.extract_correction_title(text)
-        missing = bool(re.search(r"缺失.*集|缺少.*集|缺哪.*集|漏.*集|缺集", text))
+        missing = bool(re.search(r"缺失.*集|缺少.*集|缺哪.*集|漏.*集|缺集", text)) and not is_missing_episode_meta_question(text)
         progress = bool(re.search(r"多少集|几集|更新到|最新.*集", text))
         detail = bool(re.search(r"简介|剧情|详情|演员|主演|评分", text))
         if missing:

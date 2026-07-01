@@ -242,6 +242,103 @@ class MediaIdentityServiceTests(unittest.TestCase):
         self.assertEqual(item["Id"], "series-1")
         self.assertEqual(len(paths), 1)
 
+    def test_local_candidates_rank_exact_series_above_wrong_work(self) -> None:
+        def emby_fetcher(path: str):
+            if "IncludeItemTypes=Series" not in path:
+                raise AssertionError(f"unexpected path: {path}")
+            return {
+                "Items": [
+                    {
+                        "Id": "dark",
+                        "Name": "暗黑",
+                        "Type": "Series",
+                        "ProductionYear": 2017,
+                        "ProviderIds": {"Tmdb": "70523"},
+                        "RecursiveItemCount": 26,
+                    },
+                    {
+                        "Id": "xian-ni",
+                        "Name": "仙逆",
+                        "Type": "Series",
+                        "ProductionYear": 2023,
+                        "ProviderIds": {"Tmdb": "223911"},
+                        "RecursiveItemCount": 147,
+                    },
+                ]
+            }
+
+        service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
+        candidates = service.search_local_candidates("仙逆", preferred_type="series", tmdb_id="223911", year="2023")
+
+        self.assertEqual(candidates[0]["embyItemId"], "xian-ni")
+        self.assertTrue(candidates[0]["isTitleExact"])
+        self.assertEqual(candidates[0]["tmdbId"], "223911")
+
+    def test_library_inventory_marks_virtual_missing_episodes(self) -> None:
+        def emby_fetcher(path: str):
+            if "AnyProviderIdEqualTo=tmdb%3A223911" in path:
+                return {"Items": [{"Id": "xian-ni", "Name": "仙逆", "Type": "Series", "ProviderIds": {"Tmdb": "223911"}}]}
+            if "ParentId=xian-ni" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "Season 1"}]}
+            if "ParentId=xian-ni" in path and "IncludeItemTypes=Episode" in path:
+                return {
+                    "Items": [
+                        {"Id": "e1", "ParentIndexNumber": 1, "IndexNumber": 1, "Name": "第1集", "LocationType": "FileSystem", "IsMissing": False},
+                        {"Id": "e2", "ParentIndexNumber": 1, "IndexNumber": 2, "Name": "第2集", "LocationType": "Virtual", "IsMissing": True},
+                    ],
+                    "TotalRecordCount": 2,
+                }
+            raise AssertionError(f"unexpected path: {path}")
+
+        service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
+        result = service.query_library_exists({"title": "仙逆", "type": "series", "tmdbId": "223911"})
+
+        self.assertTrue(result["hasMissingEpisodeData"])
+        self.assertEqual(result["seasonMap"], {1: {1}})
+        self.assertEqual(result["missingEpisodeMap"], {1: {2}})
+
+    def test_query_library_exists_by_tmdb_uses_exact_provider_match(self) -> None:
+        paths = []
+
+        def emby_fetcher(path: str):
+            paths.append(path)
+            if "AnyProviderIdEqualTo=tmdb%3A223911" in path:
+                return {"Items": [{"Id": "xian-ni", "Name": "仙逆", "Type": "Series", "ProviderIds": {"Tmdb": "223911"}}]}
+            if "ParentId=xian-ni" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "Season 1"}]}
+            if "ParentId=xian-ni" in path and "IncludeItemTypes=Episode" in path:
+                return {"Items": [{"Id": "e1", "ParentIndexNumber": 1, "IndexNumber": 1, "Name": "第1集"}], "TotalRecordCount": 1}
+            raise AssertionError(f"unexpected path: {path}")
+
+        service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
+        result = service.query_library_exists_by_tmdb({"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911"})
+
+        self.assertTrue(result["exists"])
+        self.assertEqual(result["embyItem"]["Id"], "xian-ni")
+        self.assertEqual(len(paths), 3)
+
+    def test_query_library_exists_falls_back_to_title_only_after_exact_miss(self) -> None:
+        paths = []
+
+        def emby_fetcher(path: str):
+            paths.append(path)
+            if "AnyProviderIdEqualTo=tmdb%3A223911" in path:
+                return {"Items": []}
+            if "SearchTerm=%E4%BB%99%E9%80%86" in path:
+                return {"Items": [{"Id": "xian-ni", "Name": "仙逆", "Type": "Series", "ProductionYear": 2023, "ProviderIds": {}}]}
+            if "ParentId=xian-ni" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "Season 1"}]}
+            if "ParentId=xian-ni" in path and "IncludeItemTypes=Episode" in path:
+                return {"Items": [{"Id": "e1", "ParentIndexNumber": 1, "IndexNumber": 1, "Name": "第1集"}], "TotalRecordCount": 1}
+            raise AssertionError(f"unexpected path: {path}")
+
+        service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
+        result = service.query_library_exists({"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911"})
+
+        self.assertTrue(result["exists"])
+        self.assertIn("AnyProviderIdEqualTo=tmdb%3A223911", paths[0])
+        self.assertTrue(any("SearchTerm=%E4%BB%99%E9%80%86" in path for path in paths))
+
     def test_library_inventory_reports_actual_emby_query_count(self) -> None:
         paths = []
 
@@ -249,15 +346,54 @@ class MediaIdentityServiceTests(unittest.TestCase):
             paths.append(path)
             if "AnyProviderIdEqualTo=tmdb%3A224839" in path:
                 return {"Items": [{"Id": "series-1", "Name": "遮天", "Type": "Series", "ProviderIds": {"Tmdb": "224839"}}]}
-            if path.startswith("/Shows/series-1/Episodes?"):
+            if "ParentId=series-1" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "Season 1"}]}
+            if "ParentId=series-1" in path and "IncludeItemTypes=Episode" in path:
                 return {"Items": [{"Id": "e1", "SeriesId": "series-1", "ParentIndexNumber": 1, "IndexNumber": 1}], "TotalRecordCount": 1}
             raise AssertionError(f"unexpected path: {path}")
 
         service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
         result = service.query_library_exists({"title": "遮天", "type": "series", "tmdbId": "224839"})
 
-        self.assertEqual(result["embyQueryCount"], 2)
-        self.assertEqual(len(paths), 2)
+        self.assertEqual(result["embyQueryCount"], 3)
+        self.assertEqual(len(paths), 3)
+
+    def test_query_library_exists_by_tmdb_filters_broken_provider_query_client_side(self) -> None:
+        def emby_fetcher(path: str):
+            if "AnyProviderIdEqualTo=tmdb%3A281233" in path:
+                return {
+                    "Items": [
+                        {"Id": "dark", "Name": "暗黑", "Type": "Series", "ProviderIds": {"Tmdb": "70523"}},
+                        {"Id": "guangyin", "Name": "光阴之外", "Type": "Series", "ProviderIds": {"Tmdb": "281233"}},
+                    ]
+                }
+            if "ParentId=guangyin" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "第 1 季"}]}
+            if "ParentId=guangyin" in path and "IncludeItemTypes=Episode" in path:
+                return {"Items": [{"Id": "ep1", "ParentIndexNumber": 1, "IndexNumber": 1, "Name": "第1集"}], "TotalRecordCount": 1}
+            raise AssertionError(f"unexpected path: {path}")
+
+        service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
+        result = service.query_library_exists_by_tmdb({"title": "光阴之外", "year": "2025", "type": "series", "tmdbId": "281233"})
+
+        self.assertTrue(result["exists"])
+        self.assertEqual(result["embyItem"]["Id"], "guangyin")
+
+    def test_query_library_exists_by_tmdb_can_fetch_item_by_emby_id_via_items_query(self) -> None:
+        def emby_fetcher(path: str):
+            if path.startswith("/Items?Ids=122937&"):
+                return {"Items": [{"Id": "122937", "Name": "光阴之外", "Type": "Series", "ProductionYear": 2025, "ProviderIds": {"Tmdb": "281233"}}]}
+            if "ParentId=122937" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "第 1 季"}]}
+            if "ParentId=122937" in path and "IncludeItemTypes=Episode" in path:
+                return {"Items": [{"Id": "ep1", "ParentIndexNumber": 1, "IndexNumber": 1, "Name": "第1集"}], "TotalRecordCount": 1}
+            raise AssertionError(f"unexpected path: {path}")
+
+        service = MediaIdentityService(emby_fetcher=emby_fetcher, tmdb_fetcher=None, cache_path=self.cache_path)
+        result = service.query_library_exists_by_tmdb({"title": "光阴之外", "year": "2025", "type": "series", "tmdbId": "281233", "embyId": "122937", "forceEmbyItem": True})
+
+        self.assertTrue(result["exists"])
+        self.assertEqual(result["embyItem"]["Id"], "122937")
 
     def test_future_episodes_are_not_reported_missing(self) -> None:
         expected = {

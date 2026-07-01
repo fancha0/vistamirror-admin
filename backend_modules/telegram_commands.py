@@ -17,9 +17,17 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Union
 
-from .ai_assistant import apply_ai_env_overrides, chat_completion, normalize_ai_config, stream_chat_completion
+from .ai_agent_service import AIAgentService
+from .ai_chat_service import AIChatService
+from .ai_assistant import normalize_ai_config
 from .ai_conversation_store import AiConversationStore
-from .ai_intent_router import AiIntentRouter
+from .ai_media_host import AIMediaHost
+from .ai_missing_episode_support import is_missing_episode_meta_question
+from .ai_query_service import AIQueryService
+from .ai_runtime_service import AIRuntimeService
+from .ai_subagent_registry import AISubagentRegistry
+from .ai_tool_registry import AIToolRegistry
+from .telegram_message_renderer import TelegramMessageRenderer
 from .drive115_service import Drive115Service, apply_drive115_env_overrides, default_drive115_config, extract_115_share, normalize_drive115_config
 from .hdhive_service import HDHiveError, HDHiveService, apply_hdhive_env_overrides, default_hdhive_config, normalize_hdhive_config
 from .media_identity_service import MediaIdentityService
@@ -52,30 +60,6 @@ LOGGER = logging.getLogger(__name__)
 CommandReply = Union[str, dict[str, Any]]
 DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console"
 MARKDOWN_V2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
-AI_TOOL_REGISTRY: list[dict[str, Any]] = [
-    {"name": "media.identity", "kind": "read", "description": "通过 TMDB 与 Emby ProviderIds 确认作品身份。"},
-    {"name": "media.detail", "kind": "read", "description": "查询作品简介、演员、评分和本地入库状态。"},
-    {"name": "series.inventory", "kind": "read", "description": "查询 Emby 实际单集、最新集和缺失集。"},
-    {"name": "library.search", "kind": "read", "description": "查询媒体库资源、简介、评分、季集数和分类列表。"},
-    {"name": "playback.history", "kind": "read", "description": "查询最近播放、用户观看和播放排行。"},
-    {"name": "library.latest", "kind": "read", "description": "查询最近入库资源。"},
-    {"name": "playback.now", "kind": "read", "description": "查询当前正在播放。"},
-    {"name": "missing.summary", "kind": "read", "description": "查询缺集巡检缓存摘要。"},
-    {"name": "tasks.status", "kind": "read", "description": "查询任务中心状态。"},
-    {"name": "logs.summary", "kind": "read", "description": "查询系统日志摘要。"},
-    {"name": "invites.summary", "kind": "read", "description": "查询邀请码和注册入口状态。"},
-    {"name": "users.summary", "kind": "read", "description": "查询 Emby 用户摘要。"},
-    {"name": "ranking.annual", "kind": "read", "description": "查询年度/近期播放排行摘要。"},
-    {"name": "quality.summary", "kind": "read", "description": "查询媒体质量、分辨率和编码摘要。"},
-    {"name": "risk.summary", "kind": "read", "description": "查询异常日志、失败任务和风险概览。"},
-    {"name": "clients.summary", "kind": "read", "description": "查询客户端、设备和在线会话。"},
-    {"name": "settings.summary", "kind": "read", "description": "查询系统、机器人、AI 配置摘要，仅返回脱敏状态。"},
-    {"name": "tasks.run", "kind": "confirm", "description": "确认后运行 Emby 计划任务。"},
-    {"name": "missing.scan", "kind": "confirm", "description": "确认后触发缺集巡检。"},
-    {"name": "invites.generate", "kind": "confirm", "description": "确认后生成邀请码。"},
-    {"name": "invites.sync", "kind": "confirm", "description": "确认后同步邀请码状态摘要。"},
-    {"name": "bot.status", "kind": "confirm", "description": "确认后刷新机器人状态摘要。"},
-]
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
     "apiKey": "APP_EMBY_API_KEY",
@@ -1583,12 +1567,30 @@ class TelegramCommandService:
                 message_id=message_id if isinstance(message_id, int) else 0,
             )
             return
+        if data.startswith("missing_identity:"):
+            self._handle_missing_identity_callback(
+                data=data,
+                token=token,
+                callback_id=callback_id,
+                chat_id=str(chat_id) if chat_id not in (None, "") else "",
+                message_id=message_id if isinstance(message_id, int) else 0,
+            )
+            return
         if data.startswith("missing_search:"):
             self._handle_missing_search_callback(
                 data=data,
                 token=token,
                 callback_id=callback_id,
                 chat_id=str(chat_id) if chat_id not in (None, "") else "",
+            )
+            return
+        if data.startswith("missing_identity:"):
+            self._handle_missing_identity_callback(
+                data=data,
+                token=token,
+                callback_id=callback_id,
+                chat_id=str(chat_id) if chat_id not in (None, "") else "",
+                message_id=message_id if isinstance(message_id, int) else 0,
             )
             return
         if data != "recent_playback:refresh":
@@ -1716,6 +1718,146 @@ class TelegramCommandService:
             LOGGER.warning("Telegram missing search list callback failed: %s", err)
             try:
                 self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="生成失败，请稍后重试")
+            except Exception:
+                pass
+
+    def _handle_missing_identity_callback(self, *, data: str, token: str, callback_id: str, chat_id: str, message_id: int) -> None:
+        parts = str(data or "").split(":")
+        action = parts[1] if len(parts) >= 3 else ""
+        action_id = parts[2] if len(parts) >= 3 else ""
+        extra = parts[3] if len(parts) >= 4 else ""
+        self._cleanup_pending_ai_actions()
+        pending = self._pending_ai_actions.get(action_id)
+        if not isinstance(pending, dict) or str(pending.get("type") or "") != "missing_episode_identity":
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="身份确认已过期，请重新查询缺集")
+            except Exception:
+                pass
+            return
+        if pending.get("chatId") and str(pending.get("chatId")) != str(chat_id):
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="这不是当前会话的身份确认")
+            except Exception:
+                pass
+            return
+
+        from .ai_tools.missing_episode_tool import MissingEpisodeTool
+
+        renderer = self._telegram_renderer(chat_id=chat_id)
+        conversation_key = str(pending.get("conversationKey") or "").strip()
+        question = str(pending.get("question") or "查看一下缺失集").strip() or "查看一下缺失集"
+        target_identity = pending.get("targetIdentity") if isinstance(pending.get("targetIdentity"), dict) else {}
+        emby_identity = pending.get("embyIdentity") if isinstance(pending.get("embyIdentity"), dict) else {}
+        candidates = [row for row in pending.get("candidates", []) if isinstance(row, dict)]
+
+        if action == "candidates":
+            reply = renderer.missing_episode_identity_candidates_reply(
+                {
+                    "title": target_identity.get("title") or pending.get("title") or "未知作品",
+                    "targetTitle": target_identity.get("title") or pending.get("title") or "未知作品",
+                    "candidates": candidates,
+                    "actionId": action_id,
+                }
+            )
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="已显示候选")
+                self._send_command_reply(token=token, chat_id=chat_id, reply=reply)
+            except Exception:
+                pass
+            return
+
+        if action == "reselect":
+            if not candidates:
+                try:
+                    self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="当前没有可选候选，请带年份重新查询")
+                except Exception:
+                    pass
+                return
+            reply = renderer.missing_episode_identity_candidates_reply(
+                {
+                    "title": target_identity.get("title") or pending.get("title") or "未知作品",
+                    "targetTitle": target_identity.get("title") or pending.get("title") or "未知作品",
+                    "candidates": candidates,
+                    "actionId": action_id,
+                }
+            )
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="请选择正确作品")
+                if chat_id and message_id:
+                    self.sender.edit_message_text(
+                        token=token,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=str(reply.get("text") or ""),
+                        reply_markup=reply.get("reply_markup") if isinstance(reply.get("reply_markup"), dict) else None,
+                        parse_mode="",
+                    )
+            except Exception:
+                pass
+            return
+
+        if action == "continue" and isinstance(emby_identity, dict) and emby_identity.get("embyId"):
+            identity = dict(emby_identity)
+            callback_text = "已按 Emby 条目继续查询"
+            note = "已按 Emby 命中条目继续查询"
+        elif action == "pick":
+            try:
+                index = int(extra)
+            except Exception:
+                index = -1
+            if index < 0 or index >= len(candidates):
+                try:
+                    self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="候选无效，请重新选择")
+                except Exception:
+                    pass
+                return
+            selected = candidates[index]
+            identity = {
+                "title": str(target_identity.get("title") or selected.get("title") or "未知作品").strip(),
+                "year": str(target_identity.get("year") or selected.get("year") or "").strip(),
+                "type": str(target_identity.get("type") or "series").strip() or "series",
+                "tmdbId": str(target_identity.get("tmdbId") or selected.get("tmdbId") or "").strip(),
+                "embyId": str(selected.get("embyItemId") or "").strip(),
+                "forceEmbyItem": True,
+            }
+            callback_text = "已按所选作品继续查询"
+            note = f"已按本地 Emby 条目继续查询：{selected.get('title') or '未知作品'}"
+        else:
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="暂不支持该操作")
+            except Exception:
+                pass
+            return
+
+        try:
+            reply = MissingEpisodeTool(
+                self,
+                conversation_key=conversation_key,
+                chat_id=chat_id,
+                rich=True,
+            ).invoke_from_identity(
+                question,
+                identity=identity,
+                search_count=0,
+                forced_confidence_cap="medium" if action in {"continue", "pick"} else "",
+                identity_note=note,
+            )
+            if action in {"continue", "pick"}:
+                self._pending_ai_actions.pop(action_id, None)
+            self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text=callback_text)
+            if chat_id and message_id and isinstance(reply, dict):
+                self.sender.edit_message_text(
+                    token=token,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=str(reply.get("text") or ""),
+                    reply_markup=reply.get("reply_markup") if isinstance(reply.get("reply_markup"), dict) else None,
+                    parse_mode=str(reply.get("parse_mode") or ""),
+                )
+        except Exception as err:
+            LOGGER.exception("Telegram missing identity callback failed: %s", err)
+            try:
+                self.sender.answer_callback_query(token=token, callback_query_id=callback_id, text="继续查询失败")
             except Exception:
                 pass
 
@@ -1900,34 +2042,19 @@ class TelegramCommandService:
         body: Any,
         reply_markup: dict[str, Any] | None = None,
     ) -> None:
-        reply = self._ai_markdown_reply(title, body, reply_markup=reply_markup)
-        text = str(reply.get("text") or "")
-        fallback_text = str(reply.get("fallback_text") or text)
-        safe_reply_markup = reply.get("reply_markup") if isinstance(reply.get("reply_markup"), dict) else None
         try:
-            self.sender.edit_message_text(
+            self._telegram_renderer(chat_id=chat_id).edit_ai_message(
                 token=token,
                 chat_id=chat_id,
                 message_id=message_id,
-                text=text,
-                reply_markup=safe_reply_markup,
-                parse_mode="MarkdownV2",
+                title=title,
+                body=body,
+                reply_markup=reply_markup,
             )
         except Exception as err:
             if "message is not modified" in str(err).lower():
                 return
-            LOGGER.warning("Telegram MarkdownV2 edit failed, fallback to plain text: %s", err)
-            try:
-                self.sender.edit_message_text(
-                    token=token,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=fallback_text,
-                    reply_markup=safe_reply_markup,
-                )
-            except Exception as fallback_err:
-                if "message is not modified" not in str(fallback_err).lower():
-                    raise
+            raise
 
     def _send_command_reply(self, *, token: str, chat_id: str, reply: CommandReply) -> None:
         if isinstance(reply, str):
@@ -2107,6 +2234,108 @@ class TelegramCommandService:
             language=language,
             region=region,
         )
+
+    def _ai_tool_registry(
+        self,
+        *,
+        conversation_key: str = "",
+        chat_id: str = "",
+        rich: bool = False,
+    ) -> AIToolRegistry:
+        from .ai_registry_host import AIRegistryHost
+
+        return AIRegistryHost(self).tool_registry(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        )
+
+    def _ai_subagent_registry(
+        self,
+        *,
+        conversation_key: str = "",
+        chat_id: str = "",
+        rich: bool = False,
+    ) -> AISubagentRegistry:
+        from .ai_registry_host import AIRegistryHost
+
+        return AIRegistryHost(self).subagent_registry(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        )
+
+    def _ai_tool_provider(
+        self,
+        *,
+        conversation_key: str = "",
+        chat_id: str = "",
+        rich: bool = False,
+    ) -> AIToolProvider:
+        return self._ai_runtime_service(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        ).tool_provider()
+
+    def _ai_query_service(
+        self,
+        *,
+        conversation_key: str = "",
+        chat_id: str = "",
+        rich: bool = False,
+    ) -> AIQueryService:
+        return self._ai_runtime_service(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        ).query_service()
+
+    def _ai_runtime_service(
+        self,
+        *,
+        conversation_key: str = "",
+        chat_id: str = "",
+        rich: bool = False,
+    ) -> AIRuntimeService:
+        return AIRuntimeService(
+            self,
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        )
+
+    def _ai_context_service(
+        self,
+        *,
+        conversation_key: str = "",
+        chat_id: str = "",
+    ) -> AIContextService:
+        return self._ai_runtime_service(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+        ).context_service()
+
+    def _telegram_renderer(self, *, chat_id: str = "") -> TelegramMessageRenderer:
+        return TelegramMessageRenderer(self, chat_id=chat_id)
+
+    def _ai_orchestrator(self, *, conversation_key: str = "") -> AIOrchestrator:
+        return self._ai_runtime_service(conversation_key=conversation_key).orchestrator()
+
+    def _dispatch_ai_agent(
+        self,
+        question: str,
+        *,
+        ai_config: dict[str, Any],
+        conversation_key: str = "",
+        chat_id: str = "",
+        rich: bool = False,
+    ) -> AIAgentService:
+        return self._ai_runtime_service(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        ).build_agent(ai_config=ai_config)
 
     def _emby_fetch_bytes(self, path: str, *, max_bytes: int = 10 * 1024 * 1024) -> tuple[bytes, str]:
         base_url, api_key = self._emby_context()
@@ -2407,63 +2636,9 @@ class TelegramCommandService:
         return "\n".join(lines)
 
     def _format_recent_library_row(self, row: dict[str, Any]) -> str:
-        item_type = str(row.get("Type") or "").strip().lower()
-        name = str(row.get("Name") or "").strip() or "未命名内容"
+        from .ai_media_service_adapter import AIMediaServiceAdapter
 
-        if item_type == "movie":
-            return f"• 🏷️《{name}》【电影完整版】✅已入库"
-
-        if item_type == "episode":
-            series_name = str(row.get("SeriesName") or "").strip() or "未知剧名"
-            season = self._coerce_index_number(row.get("ParentIndexNumber"))
-            episode = self._coerce_index_number(row.get("IndexNumber"))
-            season_text = str(season) if season is not None else "X"
-            episode_text = str(episode) if episode is not None else "X"
-            return f"• 🏷️《{series_name}》第{season_text}季 第{episode_text}集「{name}」✅已入库"
-
-        # Series 类型通常只有剧名，需要补查“最新一集”来拿季/集和标题。
-        if item_type == "series":
-            series_name = name
-            detail = self._resolve_latest_episode_for_series(row)
-            if detail:
-                season_text, episode_text, episode_title = detail
-                return f"• 🏷️《{series_name}》第{season_text}季 第{episode_text}集「{episode_title}」✅已入库"
-            return f"• 🏷️《{series_name}》第X季 第X集「最新更新」✅已入库"
-
-        season = self._coerce_index_number(row.get("ParentIndexNumber"))
-        episode = self._coerce_index_number(row.get("IndexNumber"))
-        season_text = str(season) if season is not None else "X"
-        episode_text = str(episode) if episode is not None else "X"
-        return f"• 🏷️《{name}》第{season_text}季 第{episode_text}集「最新更新」✅已入库"
-
-    def _resolve_latest_episode_for_series(self, row: dict[str, Any]) -> tuple[int, int, str] | None:
-        series_id = str(row.get("Id") or "").strip()
-        if not series_id:
-            return None
-        path = (
-            "/Items?"
-            f"ParentId={urllib.parse.quote(series_id, safe='')}"
-            "&Recursive=true"
-            "&IncludeItemTypes=Episode"
-            "&SortBy=DateCreated"
-            "&SortOrder=Descending"
-            "&Limit=1"
-            "&Fields=Name,SeriesName,ParentIndexNumber,IndexNumber"
-        )
-        try:
-            payload = self._emby_get(path)
-        except Exception:
-            return None
-        items = payload.get("Items") if isinstance(payload, dict) else []
-        if not isinstance(items, list) or not items:
-            return None
-        first = items[0] if isinstance(items[0], dict) else {}
-        season = self._coerce_index_number(first.get("ParentIndexNumber"))
-        episode = self._coerce_index_number(first.get("IndexNumber"))
-        if season is None or episode is None:
-            return None
-        title = str(first.get("Name") or "最新更新").strip() or "最新更新"
-        return season, episode, title
+        return AIMediaServiceAdapter(self).format_recent_library_row(row)
 
     @staticmethod
     def _coerce_index_number(value: Any) -> int | None:
@@ -2992,73 +3167,15 @@ class TelegramCommandService:
         hdhive_match = re.match(r"^\s*(?:请)?(?:用)?(?:影巢|hdhive)(?:搜索|搜|查找|查)\s*(.+)$", question, flags=re.IGNORECASE)
         if hdhive_match:
             return self._cmd_hdhive_search(hdhive_match.group(1).strip())
-        store = _read_store(self.store_path)
-        ai_config = apply_ai_env_overrides(store.get("aiConfig"))
-        if not bool(ai_config.get("enabled")):
-            return self._ai_markdown_reply("🧠 AI 助手未启用", "请先在系统设置里启用并保存 AI 配置。")
-        if not str(ai_config.get("apiKey") or "").strip() or not str(ai_config.get("baseUrl") or "").strip():
-            return self._ai_markdown_reply("🧠 AI 配置不完整", "请先填写 Base URL、API Key 和模型名称。")
-
-        safety_reply = self._build_ai_safety_reply(question)
-        if safety_reply:
-            return self._ai_markdown_reply("🧠 AI 安全限制", safety_reply)
-
-        question, route_reply = self._prepare_ai_routed_question(
-            question,
+        ai_config = AIChatService.load_config(self)
+        invalid = AIChatService.validate_config(self, ai_config)
+        if invalid:
+            return invalid
+        return AIChatService(
+            self,
+            question=question,
             ai_config=ai_config,
-            conversation_key="",
-        )
-        if route_reply:
-            return self._ai_markdown_reply("🧠 AI 媒体问答", route_reply)
-
-        execution_reply = self._build_ai_execution_proposal(question)
-        if execution_reply:
-            return execution_reply
-
-        episode_reply = self._build_ai_episode_query_reply(question)
-        if episode_reply:
-            return self._ai_markdown_reply("🧠 AI 媒体问答", episode_reply)
-
-        messages = self._build_ai_messages(question, ai_config=ai_config)
-        try:
-            started = time.time()
-            answer = chat_completion(config=ai_config, messages=messages, timeout_seconds=45)
-            elapsed_ms = int((time.time() - started) * 1000)
-        except Exception as err:
-            if self._is_ai_context_limit_error(err):
-                try:
-                    messages = self._shrink_ai_messages(messages)
-                    answer = chat_completion(config=ai_config, messages=messages, timeout_seconds=45)
-                    elapsed_ms = int((time.time() - started) * 1000)
-                except Exception as retry_err:
-                    err = retry_err
-                else:
-                    err = None
-            if err is None:
-                pass
-            else:
-                self._log_project_event(
-                    level="warning",
-                    module="webhook",
-                    action="telegram_ai_failed",
-                    message="Telegram AI 问答失败。",
-                    detail={"model": str(ai_config.get("model") or ""), "error": str(err)},
-                )
-                return self._ai_markdown_reply("🧠 AI 问答失败", str(err))
-
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="telegram_ai_success",
-            message="Telegram AI 问答已返回。",
-            detail={
-                "model": str(ai_config.get("model") or ""),
-                "elapsedMs": elapsed_ms,
-                "estimatedContextTokens": sum(self._estimate_ai_tokens(str(row.get("content") or "")) for row in messages),
-            },
-        )
-        self._remember_ai_exchange(chat_id="", question=question, answer=answer)
-        return self._ai_markdown_reply("🧠 AI 媒体问答", self._truncate_text(answer, 3400))
+        ).run_non_streaming()
 
     def _dispatch_ai_streaming(
         self,
@@ -3074,123 +3191,17 @@ class TelegramCommandService:
         hdhive_match = re.match(r"^\s*(?:请)?(?:用)?(?:影巢|hdhive)(?:搜索|搜|查找|查)\s*(.+)$", question, flags=re.IGNORECASE)
         if hdhive_match:
             return self._cmd_hdhive_search(hdhive_match.group(1).strip())
-        store = _read_store(self.store_path)
-        ai_config = apply_ai_env_overrides(store.get("aiConfig"))
-        if not bool(ai_config.get("enabled")):
-            return self._ai_markdown_reply("🧠 AI 助手未启用", "请先在系统设置里启用并保存 AI 配置。")
-        if not str(ai_config.get("apiKey") or "").strip() or not str(ai_config.get("baseUrl") or "").strip():
-            return self._ai_markdown_reply("🧠 AI 配置不完整", "请先填写 Base URL、API Key 和模型名称。")
-
-        if self._is_ai_context_status_request(question):
-            return self._ai_markdown_reply("🧠 AI 当前上下文", self._format_ai_context_status(conversation_key, ai_config=ai_config))
-        if self._is_ai_context_reset_request(question):
-            existed = self._ai_conversations.clear(conversation_key)
-            self._ai_chat_history.pop(chat_id, None)
-            message = "已清除当前聊天的 AI 上下文。" if existed else "当前聊天没有可清除的 AI 上下文。"
-            return self._ai_markdown_reply("🧠 AI 上下文", message)
-
-        safety_reply = self._build_ai_safety_reply(question)
-        if safety_reply:
-            return self._ai_markdown_reply("🧠 AI 安全限制", safety_reply)
-
-        question, route_reply = self._prepare_ai_routed_question(
-            question,
+        ai_config = AIChatService.load_config(self)
+        invalid = AIChatService.validate_config(self, ai_config)
+        if invalid:
+            return invalid
+        return AIChatService(
+            self,
+            question=question,
             ai_config=ai_config,
             conversation_key=conversation_key,
-        )
-        if route_reply:
-            self._remember_ai_exchange(chat_id=chat_id, question=str(args or "").strip(), answer=route_reply)
-            self._ai_conversations.remember(conversation_key, question=str(args or "").strip(), answer=route_reply)
-            return self._ai_markdown_reply("🧠 AI 媒体问答", route_reply)
-
-        execution_reply = self._build_ai_execution_proposal(question)
-        if execution_reply:
-            return execution_reply
-
-        media_detail_reply = self._build_ai_media_detail_reply(question, conversation_key=conversation_key)
-        if media_detail_reply:
-            self._remember_ai_exchange(chat_id=chat_id, question=question, answer=media_detail_reply)
-            self._ai_conversations.remember(conversation_key, question=question, answer=media_detail_reply)
-            return self._ai_markdown_reply("🧠 AI 媒体问答", media_detail_reply)
-
-        missing_reply = self._build_ai_missing_episode_reply(question, conversation_key=conversation_key, rich=True, chat_id=chat_id)
-        if missing_reply:
-            memory_text = str(missing_reply.get("memory_text") or missing_reply.get("fallback_text") or "") if isinstance(missing_reply, dict) else str(missing_reply)
-            self._remember_ai_exchange(chat_id=chat_id, question=question, answer=memory_text)
-            self._ai_conversations.remember(conversation_key, question=question, answer=memory_text)
-            return missing_reply if isinstance(missing_reply, dict) else self._ai_markdown_reply("🧠 AI 媒体问答", missing_reply)
-
-        episode_reply = self._build_ai_episode_query_reply(question, conversation_key=conversation_key)
-        if episode_reply:
-            self._remember_ai_exchange(chat_id=chat_id, question=question, answer=episode_reply)
-            self._ai_conversations.remember(conversation_key, question=question, answer=episode_reply)
-            return self._ai_markdown_reply("🧠 AI 媒体问答", episode_reply)
-
-        messages = self._build_ai_messages(question, chat_id=chat_id, conversation_key=conversation_key, ai_config=ai_config)
-        message_id = self._send_ai_markdown_message(
-            token=token,
             chat_id=chat_id,
-            title="🧠 AI 媒体问答",
-            body="正在思考...",
-        )
-        if not message_id:
-            return self._cmd_ai(args)
-        started = time.time()
-        try:
-            answer = self._stream_ai_answer_to_telegram(
-                token=token,
-                chat_id=chat_id,
-                message_id=message_id,
-                ai_config=ai_config,
-                messages=messages,
-            )
-        except Exception as stream_err:
-            LOGGER.warning("Telegram AI streaming failed, fallback to plain completion: %s", stream_err)
-            try:
-                fallback_messages = self._shrink_ai_messages(messages) if self._is_ai_context_limit_error(stream_err) else messages
-                answer = chat_completion(config=ai_config, messages=fallback_messages, timeout_seconds=45)
-                self._edit_ai_markdown_message(
-                    token=token,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    title="🧠 AI 媒体问答",
-                    body=self._truncate_text(answer, 3400),
-                )
-                self._remember_ai_exchange(chat_id=chat_id, question=question, answer=answer)
-                self._ai_conversations.remember(conversation_key, question=question, answer=answer)
-            except Exception as err:
-                self._log_project_event(
-                    level="warning",
-                    module="webhook",
-                    action="telegram_ai_failed",
-                    message="Telegram AI 问答失败。",
-                    detail={"model": str(ai_config.get("model") or ""), "error": str(err)},
-                )
-                self._edit_ai_markdown_message(
-                    token=token,
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    title="🧠 AI 问答失败",
-                    body=str(err),
-                )
-                return None
-
-        elapsed_ms = int((time.time() - started) * 1000)
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="telegram_ai_success",
-            message="Telegram AI 问答已返回。",
-            detail={
-                "model": str(ai_config.get("model") or ""),
-                "elapsedMs": elapsed_ms,
-                "streaming": True,
-                "estimatedContextTokens": sum(self._estimate_ai_tokens(str(row.get("content") or "")) for row in messages),
-            },
-        )
-        self._remember_ai_exchange(chat_id=chat_id, question=question, answer=answer)
-        self._ai_conversations.remember(conversation_key, question=question, answer=answer)
-        return None
+        ).run_streaming()
 
     def _prepare_ai_routed_question(
         self,
@@ -3199,58 +3210,10 @@ class TelegramCommandService:
         ai_config: dict[str, Any],
         conversation_key: str,
     ) -> tuple[str, str]:
-        original = str(question or "").strip()
-        active = self._get_ai_active_media(conversation_key)
-        router = AiIntentRouter(chat_completion)
-        route = router.route(original, config=ai_config, active_media=active)
-        intent = str(route.get("intent") or "general_chat")
-        media_intents = {
-            "media_missing_episodes",
-            "media_episode_progress",
-            "media_detail",
-            "media_search",
-            "media_correction",
-        }
-        immediate = ""
-        if intent in media_intents:
-            route, immediate = self._validate_ai_media_route(
-                original,
-                route=route,
-                conversation_key=conversation_key,
-            )
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="telegram_ai_intent_routed",
-            message="Telegram AI 意图识别完成。",
-            detail={
-                "intent": intent,
-                "mediaTitle": str(route.get("mediaTitle") or ""),
-                "useActiveMedia": bool(route.get("useActiveMedia")),
-                "isCorrection": bool(route.get("isCorrection")),
-                "confidence": route.get("confidence"),
-                "source": str(route.get("source") or "fallback"),
-                "validated": bool(route.get("validated")),
-                "routerError": str(route.get("routerError") or ""),
-            },
+        return self._ai_orchestrator(conversation_key=conversation_key).prepare_routed_question(
+            question,
+            ai_config=ai_config,
         )
-        if immediate:
-            return original, immediate
-
-        title = str(route.get("mediaTitle") or "").strip()
-        if bool(route.get("useActiveMedia")) and not title:
-            title = str(active.get("title") or "").strip()
-        if intent == "media_missing_episodes":
-            return (f"查看一下{title}的缺失集" if title else "查看一下缺失的集"), ""
-        if intent == "media_episode_progress":
-            return (f"{title}现在最新多少集" if title else "它现在最新多少集"), ""
-        if intent == "media_detail":
-            return (f"{title}的简介详情" if title else "它的简介详情"), ""
-        if intent == "media_search" and title:
-            return f"媒体库里有没有{title}", ""
-        if intent == "media_correction" and title:
-            return original, f"已确认，你要查询的是《{title}》。"
-        return original, ""
 
     def _validate_ai_media_route(
         self,
@@ -3259,63 +3222,10 @@ class TelegramCommandService:
         route: dict[str, Any],
         conversation_key: str,
     ) -> tuple[dict[str, Any], str]:
-        output = dict(route)
-        active = self._get_ai_active_media(conversation_key)
-        if bool(output.get("useActiveMedia")):
-            active_title = str(active.get("title") or "").strip()
-            if not active_title:
-                return output, "当前没有记住正在讨论的作品，请带上片名再查询。"
-            output["mediaTitle"] = active_title
-            output["validated"] = True
-            return output, ""
-
-        llm_title = str(output.get("mediaTitle") or "").strip()
-        rule_title = self._extract_ai_media_keyword(question)
-        candidates = AiIntentRouter.title_candidates(
-            question=question,
-            llm_title=llm_title,
-            rule_title=rule_title,
+        return self._ai_orchestrator(conversation_key=conversation_key).validate_media_route(
+            question,
+            route=route,
         )
-        if not candidates:
-            if bool(output.get("isCorrection")):
-                return output, "我知道刚才理解错了，但还没识别出你要查询的片名。请直接发送作品名称。"
-            return output, "请带上要查询的影视名称。"
-
-        service = self._media_identity_service()
-        preferred_type = "series" if str(output.get("mediaType") or "") == "tv" else str(output.get("mediaType") or "")
-        ambiguous_candidates: list[dict[str, Any]] = []
-        for candidate in candidates:
-            try:
-                resolution = service.resolve(candidate, preferred_type=preferred_type)
-            except Exception:
-                continue
-            rows = resolution.get("candidates") if isinstance(resolution.get("candidates"), list) else []
-            if resolution.get("ambiguous") and rows:
-                ambiguous_candidates = rows
-                continue
-            identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
-            emby_item = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
-            resolved_title = str(identity.get("title") or emby_item.get("Name") or "").strip()
-            if not resolved_title:
-                continue
-            output["mediaTitle"] = resolved_title
-            output["mediaType"] = "tv" if str(identity.get("type") or emby_item.get("Type") or "").lower() in {"series", "tv"} else "movie"
-            output["validated"] = True
-            output["resolvedIdentity"] = {
-                "title": resolved_title,
-                "year": identity.get("year") or emby_item.get("ProductionYear"),
-                "type": str(identity.get("type") or "series"),
-                "tmdbId": str(identity.get("tmdbId") or ""),
-                "embySeriesId": str(emby_item.get("Id") or identity.get("embyId") or ""),
-            }
-            if bool(output.get("isCorrection")) or str(output.get("intent")) == "media_correction":
-                self._ai_conversations.set_active_media(conversation_key, output["resolvedIdentity"])
-            return output, ""
-
-        if ambiguous_candidates:
-            return output, self._format_ai_identity_candidates(candidates[0], ambiguous_candidates)
-        shown = candidates[-1] if len(candidates) > 1 else candidates[0]
-        return output, f"没有在 Emby 或 TMDB 中确认《{shown}》。请检查片名，或用书名号明确输入，例如《仙逆》。"
 
     def _build_ai_messages(
         self,
@@ -3325,38 +3235,10 @@ class TelegramCommandService:
         conversation_key: str = "",
         ai_config: dict[str, Any] | None = None,
     ) -> list[dict[str, str]]:
-        context_parts = [
-            self._build_ai_media_context(question=question),
-            self._build_ai_recent_operations_context(),
-        ]
-        active_context = self._build_ai_active_media_context(conversation_key)
-        conversation_context = self._build_ai_conversation_context(chat_id=chat_id, conversation_key=conversation_key)
-        if conversation_context:
-            context_parts.append(conversation_context)
-        if active_context:
-            context_parts.append(active_context)
-        context = self._limit_ai_context_text("\n\n".join(part for part in context_parts if part), ai_config=ai_config)
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "你是镜界 Vistamirror 的媒体库 AI 助手。"
-                    "请用简洁中文回答，优先依据提供的媒体库上下文。"
-                    "如果上下文里有“当前媒体库统计”或“命中资源详情”，必须直接使用这些准确数字回答；"
-                    "如果上下文里有“最终判断”，必须按最终判断回答，并可简短说明冲突来源；"
-                    "如果上下文里包含任务、日志、缺集或播放历史摘要，也要优先引用这些项目资料。"
-                    "如果用户问“刚才”“执行了吗”“扫描了吗”“上一个操作怎么样”，必须优先查看最近项目操作和会话历史。"
-                    "如果最近操作显示已提交扫描或任务，直接说明目标、时间和结果。"
-                    "如果用户用“它/这个/那个”追问，要结合最近会话历史判断指代对象。"
-                    "如果上下文不足，要明确说明不确定，不要编造不存在的片名或数据。"
-                    "不要输出任何 Token、API Key、密码或密钥。"
-                    "如果用户请求删除、清空、改密钥或改密码，应拒绝并建议到后台手动操作。"
-                    "最终回答要适合 Telegram MarkdownV2 代码块展示，内容短段落、列表清晰。"
-                    "不要输出 Markdown 包裹语法，由后端统一包装。"
-                ),
-            },
-            {"role": "user", "content": f"媒体库上下文：\n{context}\n\n用户问题：{question}"},
-        ]
+        return self._ai_context_service(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+        ).build_messages(question, ai_config=ai_config)
 
     def _remember_ai_exchange(self, *, chat_id: str, question: str, answer: str) -> None:
         safe_chat_id = str(chat_id or "").strip()
@@ -3374,79 +3256,13 @@ class TelegramCommandService:
         self._ai_chat_history[safe_chat_id] = rows[-10:]
 
     def _build_ai_conversation_context(self, *, chat_id: str, conversation_key: str = "") -> str:
-        persistent = self._ai_conversations.get(conversation_key)
-        persistent_rows = persistent.get("recent") if isinstance(persistent.get("recent"), list) else []
-        if persistent_rows:
-            lines = ["最近 Telegram 对话上下文："]
-            summary = str(persistent.get("summary") or "").strip()
-            if summary:
-                lines.append("长期摘要：")
-                lines.append(summary)
-            for row in persistent_rows:
-                if not isinstance(row, dict):
-                    continue
-                lines.append(f"- {row.get('time', '')} 用户：{row.get('user', '')}")
-                lines.append(f"  AI：{row.get('assistant', '')}")
-            return "\n".join(lines)
-        safe_chat_id = str(chat_id or "").strip()
-        rows = self._ai_chat_history.get(safe_chat_id) if safe_chat_id else []
-        if not rows:
-            return ""
-        lines = ["最近 Telegram 对话上下文："]
-        for row in rows[-6:]:
-            if not isinstance(row, dict):
-                continue
-            lines.append(f"- {row.get('time', '')} 用户：{row.get('user', '')}")
-            lines.append(f"  AI：{row.get('assistant', '')}")
-        return "\n".join(lines)
+        return self._ai_context_service(conversation_key=conversation_key, chat_id=chat_id).build_conversation_context()
 
     def _build_ai_active_media_context(self, conversation_key: str) -> str:
-        session = self._ai_conversations.get(conversation_key)
-        media = session.get("activeMedia") if isinstance(session.get("activeMedia"), dict) else {}
-        if not media:
-            return ""
-        return "\n".join(
-            [
-                "当前对话媒体：",
-                f"- 标题：{media.get('title') or '未知'}",
-                f"- Emby Series ID：{media.get('embySeriesId') or '未知'}",
-                f"- TMDB ID：{media.get('tmdbId') or '未知'}",
-                f"- 最新单集：{media.get('latestEpisode') or '未知'}",
-                f"- 实际可读取：{media.get('actualEpisodeCount') or 0} 集",
-                f"- TMDB 应有：{media.get('expectedEpisodeCount') or 0} 集",
-                f"- 当前缺失：{media.get('missingEpisodeCount') or 0} 集",
-                "- 规则：用户说“它/这部/这个/缺失的集”时指向该媒体。",
-            ]
-        )
+        return self._ai_context_service(conversation_key=conversation_key).build_active_media_context()
 
     def _build_ai_recent_operations_context(self) -> str:
-        try:
-            events, _total = read_project_events(self.event_log_path, limit=60)
-        except Exception as err:
-            return f"最近项目操作：读取失败（{err}）。"
-        important_actions = {
-            "telegram_library_scan_submitted",
-            "telegram_library_scan_failed",
-            "telegram_library_scan_reply_sent",
-            "telegram_library_scan_list_ready",
-            "telegram_command_reply_failed",
-            "telegram_ai_success",
-            "telegram_ai_failed",
-            "telegram_callback_failed",
-            "client_sync_event",
-        }
-        rows = [event for event in events if isinstance(event, dict) and str(event.get("action") or "") in important_actions]
-        if not rows:
-            return "最近项目操作：暂无可用记录。"
-        lines = ["最近项目操作："]
-        for event in rows[:12]:
-            action = str(event.get("action") or "").strip()
-            message = str(event.get("message") or "").strip()
-            detail = event.get("detail") if isinstance(event.get("detail"), dict) else {}
-            summary = self._format_ai_event_detail(action=action, detail=detail)
-            suffix = f"；{summary}" if summary else ""
-            lines.append(f"- {event.get('time', '')} {message or action}{suffix}")
-        return "\n".join(lines)
+        return self._ai_context_service().build_recent_operations_context()
 
     @staticmethod
     def _format_ai_event_detail(*, action: str, detail: dict[str, Any]) -> str:
@@ -3552,15 +3368,12 @@ class TelegramCommandService:
         )
 
     def _send_ai_markdown_message(self, *, token: str, chat_id: str, title: str, body: Any) -> int:
-        reply = self._ai_markdown_reply(title, body)
-        text = str(reply.get("text") or "")
-        fallback_text = str(reply.get("fallback_text") or text)
-        try:
-            result = self.sender.send_text(token=token, chat_id=chat_id, text=text, parse_mode="MarkdownV2")
-        except Exception as err:
-            LOGGER.warning("Telegram MarkdownV2 placeholder failed, fallback to plain text: %s", err)
-            result = self.sender.send_text(token=token, chat_id=chat_id, text=fallback_text)
-        return self._extract_telegram_message_id(result)
+        return self._telegram_renderer(chat_id=chat_id).send_ai_message(
+            token=token,
+            chat_id=chat_id,
+            title=title,
+            body=body,
+        )
 
     @staticmethod
     def _extract_telegram_message_id(result: Any) -> int:
@@ -3580,558 +3393,74 @@ class TelegramCommandService:
         ai_config: dict[str, Any],
         messages: list[dict[str, str]],
     ) -> str:
-        if not message_id:
-            raise RuntimeError("Telegram 占位消息发送失败，无法流式编辑")
-        chunks: list[str] = []
-        last_edit_at = 0.0
-        min_interval = 1.8
-        for chunk in stream_chat_completion(config=ai_config, messages=messages, timeout_seconds=60):
-            chunks.append(chunk)
-            answer = self._truncate_text("".join(chunks), 3400)
-            now = time.time()
-            if now - last_edit_at < min_interval:
-                continue
-            self._edit_ai_markdown_message(
-                token=token,
-                chat_id=chat_id,
-                message_id=message_id,
-                title="🧠 AI 媒体问答",
-                body=answer or "正在生成...",
-            )
-            last_edit_at = now
-        final_answer = self._truncate_text("".join(chunks).strip(), 3400)
-        if not final_answer:
-            raise RuntimeError("AI 流式返回内容为空")
-        self._edit_ai_markdown_message(
+        return self._telegram_renderer(chat_id=chat_id).stream_ai_answer_to_telegram(
             token=token,
             chat_id=chat_id,
             message_id=message_id,
-            title="🧠 AI 媒体问答",
-            body=final_answer,
+            ai_config=ai_config,
+            messages=messages,
         )
-        return final_answer
+
+    @staticmethod
+    def _normalize_ai_reply_text(body: Any, *, title: str = "") -> str:
+        return TelegramMessageRenderer.normalize_ai_reply_text(body, title=title)
 
     def _ai_markdown_reply(self, title: str, body: Any, *, reply_markup: dict[str, Any] | None = None) -> dict[str, Any]:
-        plain = f"{title}\n\n{body}"
-        return {
-            "text": _format_copy_block(title, body),
-            "parse_mode": "MarkdownV2",
-            "fallback_text": plain,
-            "reply_markup": reply_markup if isinstance(reply_markup, dict) else None,
-        }
+        return self._telegram_renderer().ai_markdown_reply(title, body, reply_markup=reply_markup)
 
     def _missing_episode_report_reply(self, report: dict[str, Any], *, chat_id: str = "") -> dict[str, Any]:
-        title = str(report.get("title") or "未知作品").strip()
-        year = str(report.get("year") or "年份未知").strip()
-        missing_text = str(report.get("missingText") or "无").strip()
-        future_text = str(report.get("futureText") or "").strip()
-        unknown_text = str(report.get("unknownText") or "").strip()
-        search_count = max(0, int(report.get("searchCount") or 0))
-        data_query_count = max(0, int(report.get("dataQueryCount") or 0))
-        table = "\n".join(
-            [
-                "项目       | 详情",
-                "-----------+----------------",
-                f"TMDB ID    | {report.get('tmdbId') or '-'}",
-                f"登记       | {int(report.get('registeredCount') or 0)} 集",
-                f"已播出     | {int(report.get('airedCount') or 0)} 集",
-                f"Emby 已有  | {int(report.get('localCount') or 0)} 集",
-                f"缺失       | {missing_text}",
-                f"最后播出   | {report.get('lastAiredDate') or '-'}",
-            ]
-        )
-        intro = _escape_markdown_v2(f"（执行 {search_count} 次搜索，查询 {data_query_count} 次数据）")
-        heading = _escape_markdown_v2(f"《{title}》（{year}）缺集情况：")
-        outside = [f"缺失的剧集：{missing_text if report.get('missingLabels') else '无'}"]
-        if future_text:
-            outside.append(f"未来未播：{future_text}（不计入缺失）")
-        if unknown_text:
-            outside.append(f"播出日期未知：{unknown_text}（暂不计入缺失）")
-        if report.get("missingLabels"):
-            outside.extend(["", "需要生成这些缺失集的搜索清单吗？"])
-        markdown = f"{intro}\n\n*{heading}*\n\n```text\n{_escape_markdown_v2_code(table)}\n```"
-        if outside:
-            markdown += "\n" + "\n".join(_escape_markdown_v2(line) for line in outside)
-        fallback = f"（执行 {search_count} 次搜索，查询 {data_query_count} 次数据）\n\n《{title}》（{year}）缺集情况：\n\n{table}\n\n" + "\n".join(outside)
-        reply_markup = None
-        labels = [str(value or "").strip() for value in report.get("missingLabels", []) if str(value or "").strip()]
-        if labels:
-            action_id = secrets.token_urlsafe(8)
-            self._pending_missing_searches[action_id] = {
-                "title": title,
-                "labels": labels,
-                "chatId": str(chat_id or ""),
-                "createdAt": time.time(),
-            }
-            self._cleanup_pending_missing_searches()
-            reply_markup = {"inline_keyboard": [[{"text": "生成搜索清单", "callback_data": f"missing_search:{action_id}"}]]}
-        return {
-            "text": markdown,
-            "parse_mode": "MarkdownV2",
-            "fallback_text": fallback,
-            "reply_markup": reply_markup,
-            "memory_text": str(report.get("memoryText") or fallback),
-        }
+        return self._telegram_renderer(chat_id=chat_id).missing_episode_report_reply(report)
 
     def _build_ai_media_context(self, *, question: str = "") -> str:
-        parts: list[str] = []
-        base_url, api_key = self._emby_context()
-        if base_url and api_key:
-            parts.append("Emby 连接状态：已配置。")
-        else:
-            parts.append("Emby 连接状态：未配置或不可用。")
-        parts.append(self._build_ai_tool_registry_context())
-
-        stats_context = self._build_ai_library_stats_context()
-        if stats_context:
-            parts.append(stats_context)
-
-        focus_context = self._build_ai_focus_media_context(question)
-        if focus_context:
-            parts.append(focus_context)
-
-        listing_context = self._build_ai_category_listing_context(question)
-        if listing_context:
-            parts.append(listing_context)
-
-        project_contexts = self._build_ai_project_tool_contexts(question)
-        parts.extend(project_contexts)
-
-        try:
-            latest, _tried, _err = self._fetch_latest_items_with_fallback(limit=8)
-            rows = latest if isinstance(latest, list) else []
-            if rows:
-                latest_lines = [self._format_recent_library_row(row) for row in rows[:8] if isinstance(row, dict)]
-                parts.append("最近入库：\n" + "\n".join(latest_lines))
-            else:
-                parts.append("最近入库：暂无可用数据。")
-        except Exception as err:
-            parts.append(f"最近入库：读取失败（{err}）。")
-
-        try:
-            service = PlaybackHistoryService(fetcher=self._emby_get, event_logger=None)
-            result = service.collect(limit=8, scan_limit=600)
-            rows = result.get("rows") if isinstance(result, dict) else []
-            if rows:
-                playback_lines = [self._format_recent_playback_row(row) for row in rows[:8] if isinstance(row, dict)]
-                parts.append("最近播放：\n" + "\n".join(playback_lines))
-            else:
-                parts.append("最近播放：暂无可用数据。")
-        except Exception as err:
-            parts.append(f"最近播放：读取失败（{err}）。")
-
-        return "\n\n".join(parts)
+        return self._ai_context_service().build_media_context(question=question)
 
     def _build_ai_project_tool_contexts(self, question: str) -> list[str]:
-        text = str(question or "").lower()
-        contexts: list[str] = []
-        if re.search(r"正在播放|当前播放|谁在看|在线|播放中", text):
-            contexts.append(self._build_ai_now_playing_context())
-        if re.search(r"播放历史|最近.*看|看了什么|播放记录|播放最多|观看历史", text):
-            contexts.append(self._build_ai_playback_history_context())
-        if re.search(r"任务|扫描|计划任务|后台任务|task|scheduled", text):
-            contexts.append(self._build_ai_tasks_context())
-        if re.search(r"缺集|缺少|漏集|巡检|missing", text):
-            contexts.append(self._build_ai_missing_context())
-        if re.search(r"日志|报错|错误|失败|异常|log|error", text):
-            contexts.append(self._build_ai_logs_context())
-        if re.search(r"邀请|邀请码|注册|invite", text):
-            contexts.append(self._build_ai_invites_context())
-        if re.search(r"用户|账号|会员|user", text):
-            contexts.append(self._build_ai_users_context())
-        if re.search(r"排行|排名|年度|最多|榜|ranking", text):
-            contexts.append(self._build_ai_ranking_context())
-        if re.search(r"质量|分辨率|码率|编码|4k|1080|720|hdr|quality", text):
-            contexts.append(self._build_ai_quality_context())
-        if re.search(r"风险|异常|失败|告警|问题|健康|risk", text):
-            contexts.append(self._build_ai_risk_context())
-        if re.search(r"客户端|设备|终端|在线|client|device|session", text):
-            contexts.append(self._build_ai_clients_context())
-        if re.search(r"配置|设置|token|api key|apikey|密码|密钥|secret|config", text):
-            contexts.append(self._build_ai_settings_context())
-        return [item for item in contexts if item]
+        return self._ai_context_service().build_project_tool_contexts(question)
 
     def _build_ai_tool_registry_context(self) -> str:
-        readable = [tool for tool in AI_TOOL_REGISTRY if tool.get("kind") == "read"]
-        confirm = [tool for tool in AI_TOOL_REGISTRY if tool.get("kind") == "confirm"]
-        return "\n".join(
-            [
-                "AI 工具注册表：",
-                "- 只读工具：" + "、".join(str(tool.get("name")) for tool in readable),
-                "- 需确认工具：" + "、".join(str(tool.get("name")) for tool in confirm),
-                "- 规则：查询类直接回答；执行类必须让用户点击确认；敏感字段只说明已配置/未配置。",
-            ]
-        )
+        return self._ai_context_service().build_tool_registry_context()
 
     def _build_ai_now_playing_context(self) -> str:
-        try:
-            sessions = self._emby_get("/Sessions")
-        except Exception as err:
-            return f"当前播放：读取失败（{self._format_emby_error(err)}）。"
-        rows = sessions if isinstance(sessions, list) else []
-        active: list[str] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            item = row.get("NowPlayingItem") if isinstance(row.get("NowPlayingItem"), dict) else {}
-            name = str(item.get("Name") or "").strip()
-            if not name:
-                continue
-            user_name = str(row.get("UserName") or row.get("UserId") or "未知用户").strip()
-            client = str(row.get("Client") or row.get("DeviceName") or "未知客户端").strip()
-            active.append(f"- {user_name} 正在看 {self._format_now_playing_title(item)}（{client}）")
-        return "当前播放：\n" + ("\n".join(active[:8]) if active else "暂无活跃播放。")
+        return self._ai_context_service().build_now_playing_context()
 
     def _build_ai_playback_history_context(self) -> str:
-        try:
-            service = PlaybackHistoryService(fetcher=self._emby_get, event_logger=None)
-            result = service.collect(limit=20, scan_limit=800)
-            rows = result.get("rows") if isinstance(result, dict) else []
-        except Exception as err:
-            return f"播放历史：读取失败（{err}）。"
-        if not isinstance(rows, list) or not rows:
-            return "播放历史：暂无可用记录。"
-        media_counts: dict[str, int] = {}
-        user_counts: dict[str, int] = {}
-        lines = []
-        for row in rows[:10]:
-            if not isinstance(row, dict):
-                continue
-            media = self._format_recent_playback_filename_with_status(row)[0]
-            user = str(row.get("username") or row.get("user") or "未知用户").strip()
-            media_counts[media] = int(media_counts.get(media) or 0) + 1
-            user_counts[user] = int(user_counts.get(user) or 0) + 1
-            lines.append(self._format_recent_playback_row(row))
-        top_media = sorted(media_counts.items(), key=lambda item: item[1], reverse=True)[:5]
-        top_users = sorted(user_counts.items(), key=lambda item: item[1], reverse=True)[:5]
-        summary = [
-            "播放历史摘要：",
-            f"- 最近记录数：{len(rows)}",
-            "- 最近记录：",
-            *[f"  {line}" for line in lines[:8]],
-        ]
-        if top_media:
-            summary.append("- 最近高频影片：" + "、".join(f"{name} {count}次" for name, count in top_media))
-        if top_users:
-            summary.append("- 最近活跃用户：" + "、".join(f"{name} {count}次" for name, count in top_users))
-        return "\n".join(summary)
+        return self._ai_query_service().build_playback_history_context()
+
+    def _build_ai_recent_library_summary_reply(self) -> str:
+        return self._ai_query_service().build_recent_library_summary_reply()
 
     def _build_ai_tasks_context(self) -> str:
-        try:
-            tasks = self._fetch_scheduled_tasks()
-        except Exception as err:
-            return f"任务中心：读取失败（{self._format_emby_error(err)}）。"
-        if not tasks:
-            return "任务中心：没有读取到计划任务。"
-        running = [task for task in tasks if str(task.get("State") or "").lower() == "running"]
-        lines = [
-            "任务中心：",
-            f"- 任务总数：{len(tasks)}",
-            f"- 正在运行：{len(running)} 个",
-        ]
-        for task in tasks[:12]:
-            if not isinstance(task, dict):
-                continue
-            name = str(task.get("Name") or task.get("Key") or task.get("Id") or "未命名任务").strip()
-            state = str(task.get("State") or "Idle").strip()
-            last = task.get("LastExecutionResult") if isinstance(task.get("LastExecutionResult"), dict) else {}
-            last_status = str(last.get("Status") or "").strip() or "无记录"
-            last_end = str(last.get("EndTimeUtc") or last.get("EndTime") or "").strip()
-            lines.append(f"- {name}：{state}，上次结果 {last_status}{f'，结束 {last_end}' if last_end else ''}")
-        return "\n".join(lines)
+        return self._ai_context_service().build_tasks_context()
 
     def _build_ai_missing_context(self) -> str:
-        cache = self._read_missing_scan_cache()
-        if not cache:
-            return "缺集巡检：暂无缓存，请先在后台或通过确认执行触发缺集巡检。"
-        summary = cache.get("summary") if isinstance(cache.get("summary"), dict) else {}
-        rows = cache.get("rows") if isinstance(cache.get("rows"), list) else []
-        lines = [
-            "缺集巡检摘要：",
-            f"- 扫描剧集：{summary.get('scannedSeries', 0)}",
-            f"- 缺集剧集：{summary.get('missingSeries', 0)}",
-            f"- 缺失集数：{summary.get('missingEpisodeCount', 0)}",
-            f"- 未匹配：{summary.get('unknownMatchCount', 0)}",
-        ]
-        for row in rows[:8]:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("seriesName") or "未知剧集").strip()
-            season = row.get("seasonNo")
-            missing = row.get("missingEpisodes") if isinstance(row.get("missingEpisodes"), list) else []
-            status = str(row.get("status") or "").strip()
-            lines.append(f"- {name} S{season}：{status}，缺 {missing[:12]}")
-        return "\n".join(lines)
+        return self._ai_context_service().build_missing_context()
 
     def _build_ai_logs_context(self) -> str:
-        try:
-            events, total = read_project_events(self.event_log_path, limit=30)
-        except Exception as err:
-            return f"系统日志摘要：读取失败（{err}）。"
-        if not events:
-            return "系统日志摘要：暂无日志。"
-        levels: dict[str, int] = {}
-        modules: dict[str, int] = {}
-        lines = ["系统日志摘要：", f"- 日志总数：{total}"]
-        for event in events:
-            level = str(event.get("level") or "info")
-            module = str(event.get("module") or "system")
-            levels[level] = int(levels.get(level) or 0) + 1
-            modules[module] = int(modules.get(module) or 0) + 1
-        lines.append("- 级别分布：" + "、".join(f"{key} {value}" for key, value in sorted(levels.items())))
-        lines.append("- 模块分布：" + "、".join(f"{key} {value}" for key, value in sorted(modules.items())))
-        lines.append("- 最近日志：")
-        for event in events[:8]:
-            message = str(event.get("message") or event.get("action") or "").strip()
-            lines.append(f"  {event.get('time', '')} [{event.get('level', '')}/{event.get('module', '')}] {message[:120]}")
-        return "\n".join(lines)
+        return self._ai_context_service().build_logs_context()
 
     def _build_ai_invites_context(self) -> str:
-        store = _read_store(self.store_path)
-        invites = store.get("invites") if isinstance(store.get("invites"), list) else []
-        active = used = expired = 0
-        rows = []
-        now = datetime.now()
-        for invite in invites:
-            if not isinstance(invite, dict):
-                continue
-            status = str(invite.get("status") or "").strip()
-            expires_at = str(invite.get("expiresAt") or "").strip()
-            is_used = bool(str(invite.get("usedAt") or invite.get("createdUserId") or invite.get("usedUsername") or "").strip()) or status in {"已用", "used"}
-            is_expired = False
-            if expires_at:
-                try:
-                    is_expired = datetime.fromisoformat(expires_at).date() < now.date()
-                except Exception:
-                    is_expired = False
-            if is_used:
-                used += 1
-                status_text = "已用"
-            elif is_expired:
-                expired += 1
-                status_text = "过期"
-            else:
-                active += 1
-                status_text = "可用"
-            rows.append(f"- {invite.get('code', '')}：{status_text}，标签 {invite.get('label') or '-'}，到期 {expires_at or '未设置'}")
-        return "\n".join(["邀请码摘要：", f"- 总数：{len(invites)}", f"- 可用：{active}", f"- 已用：{used}", f"- 过期：{expired}", *rows[:10]])
+        return self._ai_context_service().build_invites_context()
 
     def _build_ai_users_context(self) -> str:
-        try:
-            payload = self._emby_get("/Users")
-        except Exception as err:
-            return f"用户管理摘要：读取失败（{self._format_emby_error(err)}）。"
-        rows = payload.get("Items") if isinstance(payload, dict) else payload
-        users = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-        lines = ["用户管理摘要：", f"- 用户总数：{len(users)}"]
-        for user in users[:15]:
-            name = str(user.get("Name") or user.get("Username") or user.get("Id") or "未知用户").strip()
-            policy = user.get("Policy") if isinstance(user.get("Policy"), dict) else {}
-            disabled = bool(policy.get("IsDisabled"))
-            admin = bool(policy.get("IsAdministrator"))
-            lines.append(f"- {name}：{'管理员' if admin else '普通用户'}，{'禁用' if disabled else '启用'}")
-        return "\n".join(lines)
+        return self._ai_context_service().build_users_context()
 
     def _build_ai_ranking_context(self) -> str:
-        try:
-            service = PlaybackHistoryService(fetcher=self._emby_get, event_logger=None)
-            result = service.collect(limit=80, scan_limit=2000)
-            rows = result.get("rows") if isinstance(result, dict) else []
-        except Exception as err:
-            return f"播放排行摘要：读取失败（{err}）。"
-        media_counts: dict[str, int] = {}
-        user_counts: dict[str, int] = {}
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            media = self._format_recent_playback_filename_with_status(row)[0]
-            user = str(row.get("username") or row.get("user") or "未知用户").strip()
-            media_counts[media] = int(media_counts.get(media) or 0) + 1
-            user_counts[user] = int(user_counts.get(user) or 0) + 1
-        media_top = sorted(media_counts.items(), key=lambda item: item[1], reverse=True)[:10]
-        user_top = sorted(user_counts.items(), key=lambda item: item[1], reverse=True)[:10]
-        lines = ["播放排行摘要：", f"- 样本记录：{len(rows) if isinstance(rows, list) else 0}"]
-        lines.append("- 影片排行：" + ("、".join(f"{name} {count}次" for name, count in media_top) if media_top else "暂无"))
-        lines.append("- 用户排行：" + ("、".join(f"{name} {count}次" for name, count in user_top) if user_top else "暂无"))
-        return "\n".join(lines)
+        return self._ai_context_service().build_ranking_context()
 
     def _build_ai_quality_context(self) -> str:
-        try:
-            query = urllib.parse.urlencode(
-                {
-                    "Recursive": "true",
-                    "IncludeItemTypes": "Movie,Episode",
-                    "Fields": "Name,Type,SeriesName,MediaSources,MediaStreams,Width,Height",
-                    "Limit": "800",
-                }
-            )
-            payload = self._emby_get(f"/Items?{query}")
-        except Exception as err:
-            return f"质量盘点摘要：读取失败（{self._format_emby_error(err)}）。"
-        rows = payload.get("Items") if isinstance(payload, dict) else payload
-        items = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-        buckets = {"4K": 0, "1080p": 0, "720p": 0, "其他": 0}
-        hdr_count = 0
-        for item in items:
-            quality = self._format_media_quality(item)
-            low = quality.lower()
-            if "4k" in low:
-                buckets["4K"] += 1
-            elif "1080" in low:
-                buckets["1080p"] += 1
-            elif "720" in low:
-                buckets["720p"] += 1
-            else:
-                buckets["其他"] += 1
-            if "hdr" in low or "dovi" in low:
-                hdr_count += 1
-        return "\n".join(
-            [
-                "质量盘点摘要：",
-                f"- 样本资源：{len(items)}",
-                f"- 4K：{buckets['4K']}",
-                f"- 1080p：{buckets['1080p']}",
-                f"- 720p：{buckets['720p']}",
-                f"- 其他/未知：{buckets['其他']}",
-                f"- HDR/DoVi：{hdr_count}",
-            ]
-        )
+        return self._ai_context_service().build_quality_context()
 
     def _build_ai_risk_context(self) -> str:
-        contexts = [self._build_ai_logs_context(), self._build_ai_tasks_context()]
-        try:
-            events, _total = read_project_events(self.event_log_path, limit=100)
-            error_count = sum(1 for event in events if str(event.get("level") or "") == "error")
-            warning_count = sum(1 for event in events if str(event.get("level") or "") == "warning")
-            contexts.insert(0, f"风险概览：最近日志中 error {error_count} 条，warning {warning_count} 条。")
-        except Exception:
-            pass
-        return "\n\n".join(contexts)
+        return self._ai_context_service().build_risk_context()
 
     def _build_ai_clients_context(self) -> str:
-        try:
-            sessions = self._emby_get("/Sessions")
-        except Exception as err:
-            return f"客户端摘要：读取失败（{self._format_emby_error(err)}）。"
-        rows = sessions if isinstance(sessions, list) else []
-        lines = ["客户端摘要：", f"- 在线会话：{len(rows)}"]
-        for row in rows[:12]:
-            if not isinstance(row, dict):
-                continue
-            user = str(row.get("UserName") or row.get("UserId") or "未知用户").strip()
-            client = str(row.get("Client") or "未知客户端").strip()
-            device = str(row.get("DeviceName") or row.get("DeviceId") or "未知设备").strip()
-            item = row.get("NowPlayingItem") if isinstance(row.get("NowPlayingItem"), dict) else {}
-            now = self._format_now_playing_title(item) if item else "未播放"
-            lines.append(f"- {user}：{client} / {device} / {now}")
-        return "\n".join(lines)
+        return self._ai_context_service().build_clients_context()
 
     def _build_ai_settings_context(self) -> str:
-        store = _read_store(self.store_path)
-        emby = _apply_emby_env_overrides(store.get("embyConfig"))
-        bot = normalize_bot_config(store.get("botConfig"))
-        ai = apply_ai_env_overrides(store.get("aiConfig"))
-        return "\n".join(
-            [
-                "系统设置摘要（已脱敏）：",
-                f"- Emby 地址：{'已配置' if str(emby.get('serverUrl') or '').strip() else '未配置'}",
-                f"- Emby API Key：{'已配置' if str(emby.get('apiKey') or '').strip() else '未配置'}",
-                f"- TMDB Token：{'已配置' if str(emby.get('tmdbToken') or os.environ.get('APP_TMDB_TOKEN') or os.environ.get('TMDB_TOKEN') or '').strip() else '未配置'}",
-                f"- Telegram Token：{'已配置' if str(bot.get('telegramToken') or '').strip() else '未配置'}",
-                f"- Telegram Chat ID：{'已配置' if str(bot.get('telegramChatId') or '').strip() else '未配置'}",
-                f"- AI 助手：{'启用' if ai.get('enabled') else '关闭'}",
-                f"- AI Base URL：{'已配置' if str(ai.get('baseUrl') or '').strip() else '未配置'}",
-                f"- AI API Key：{'已配置' if str(ai.get('apiKey') or '').strip() else '未配置'}",
-                f"- AI 模型：{str(ai.get('model') or '未配置')}",
-            ]
-        )
+        return self._ai_context_service().build_settings_context()
 
     def _build_ai_execution_proposal(self, question: str) -> CommandReply | None:
-        text = str(question or "").strip()
-        query_intent = bool(re.search(r"列出|列出来|全部列|查询|查找|看看|看一下|有哪些|哪些|显示|统计|清单|列表|片单|多少|什么|是否|有没有", text, flags=re.IGNORECASE))
-        if query_intent:
-            return None
-        if self._is_library_scan_request(text):
-            keyword = self._extract_library_scan_keyword(text)
-            return self._cmd_scan_library(keyword)
-        has_execute_intent = bool(re.search(r"执行|触发|启动|运行|生成|创建|新增|同步|开始.*任务|运行.*任务|执行.*任务|触发.*任务|run|start|generate|create|sync", text, flags=re.IGNORECASE))
-        scan_execute_intent = bool(re.search(r"(开始|执行|运行|触发).{0,12}(媒体库)?扫描(任务)?", text, flags=re.IGNORECASE))
-        refresh_execute_intent = bool(re.search(r"(刷新|执行|运行|触发).{0,12}(缺集|巡检|webhook|机器人.*状态)", text, flags=re.IGNORECASE))
-        if not (has_execute_intent or scan_execute_intent or refresh_execute_intent):
-            return None
-
-        action: dict[str, Any] | None = None
-        if re.search(r"邀请码|邀请|invite", text, flags=re.IGNORECASE) and re.search(r"生成|创建|新增|发一个|来一个|generate|create", text, flags=re.IGNORECASE):
-            quantity_match = re.search(r"(\d{1,2})\s*(个|条|枚)?", text)
-            quantity = int(quantity_match.group(1)) if quantity_match else 1
-            quantity = max(1, min(quantity, 10))
-            action = {
-                "type": "invite_generate",
-                "label": f"生成 {quantity} 个邀请码",
-                "summary": "将生成新的可用邀请码并保存到后端。",
-                "quantity": quantity,
-            }
-        elif re.search(r"邀请码|邀请|invite", text, flags=re.IGNORECASE) and re.search(r"同步|刷新|sync", text, flags=re.IGNORECASE):
-            action = {
-                "type": "invite_sync",
-                "label": "同步邀请码状态摘要",
-                "summary": "将重新读取邀请码存储并返回可用/已用/过期统计，不修改媒体服务器配置。",
-            }
-        elif re.search(r"缺集|漏集|巡检|missing", text, flags=re.IGNORECASE):
-            action = {
-                "type": "missing_scan",
-                "label": "触发缺集巡检",
-                "summary": "将扫描 Emby 剧集并结合 TMDB 判断缺失集数。耗时可能较长。",
-            }
-        elif re.search(r"webhook|机器人.*状态|状态刷新", text, flags=re.IGNORECASE):
-            action = {
-                "type": "webhook_status",
-                "label": "刷新机器人 Webhook 状态",
-                "summary": "将读取当前 Bot Webhook/轮询状态并返回摘要，不修改配置。",
-            }
-        elif re.search(r"任务|扫描|计划任务|媒体库|scheduled|task", text, flags=re.IGNORECASE):
-            task = self._match_scheduled_task_for_question(text)
-            if task:
-                task_id = str(task.get("Id") or task.get("Key") or "").strip()
-                task_name = str(task.get("Name") or task.get("Key") or task_id).strip()
-                action = {
-                    "type": "scheduled_task",
-                    "label": f"运行计划任务：{task_name}",
-                    "summary": f"将触发 Emby 计划任务“{task_name}”。",
-                    "taskId": task_id,
-                    "taskName": task_name,
-                }
-            else:
-                return self._ai_markdown_reply(
-                    "🧠 AI 执行建议",
-                    "没有匹配到可执行的 Emby 计划任务。\n你可以说：帮我运行媒体库扫描任务。",
-                )
-
-        if not action:
-            return None
-
-        action_id = uuid.uuid4().hex[:12]
-        action["createdAt"] = time.time()
-        self._pending_ai_actions[action_id] = action
-        self._cleanup_pending_ai_actions()
-        body_lines = [
-            f"操作：{action['label']}",
-            f"说明：{action['summary']}",
-            "",
-            "点击“确认执行”才会真正运行；取消则不做任何改变。",
-        ]
-        return self._ai_markdown_reply(
-            "🧠 AI 需要你确认后再执行",
-            "\n".join(body_lines),
-            reply_markup={
-                "inline_keyboard": [
-                    [
-                        {"text": "确认执行", "callback_data": f"ai_exec:ok:{action_id}"},
-                        {"text": "取消", "callback_data": f"ai_exec:cancel:{action_id}"},
-                    ]
-                ]
-            },
-        )
+        return self._ai_orchestrator().build_execution_proposal(question)
 
     def _cleanup_pending_ai_actions(self) -> None:
         now = time.time()
@@ -4303,10 +3632,7 @@ class TelegramCommandService:
         return value[:80]
 
     def _build_ai_safety_reply(self, question: str) -> str:
-        text = str(question or "").strip()
-        if re.search(r"删除|清空|重置|改.*(token|api key|apikey|密钥|密码)|修改.*(token|api key|apikey|密钥|密码)|显示.*(token|api key|apikey|密钥|密码)|告诉我.*(token|api key|apikey|密钥|密码)", text, flags=re.IGNORECASE):
-            return "这类删除、清空、重置、修改或查看密钥/密码的操作不能由 AI 执行。\n请到后台页面手动操作；我只能告诉你这些敏感项是否已配置。"
-        return ""
+        return self._ai_runtime_service().support_service().build_safety_reply(question)
 
     def _fetch_scheduled_tasks(self) -> list[dict[str, Any]]:
         payload = self._emby_get("/ScheduledTasks")
@@ -4351,18 +3677,7 @@ class TelegramCommandService:
         return scored[0][1] if scored else None
 
     def _build_ai_bot_status_context(self) -> str:
-        store = _read_store(self.store_path)
-        bot = normalize_bot_config(store.get("botConfig"))
-        return "\n".join(
-            [
-                "机器人状态：",
-                f"- 指令轮询：{'开启' if bot.get('enableCommands', True) else '关闭'}",
-                f"- 播放通知：{'开启' if bot.get('enablePlayback', True) else '关闭'}",
-                f"- 入库通知：{'开启' if bot.get('enableLibrary', True) else '关闭'}",
-                f"- Telegram Token：{'已配置' if str(bot.get('telegramToken') or '').strip() else '未配置'}",
-                f"- Chat ID：{'已配置' if str(bot.get('telegramChatId') or '').strip() else '未配置'}",
-            ]
-        )
+        return self._ai_runtime_service().support_service().build_bot_status_context()
 
     def _generate_ai_invites(self, *, quantity: int = 1) -> list[dict[str, Any]]:
         safe_quantity = max(1, min(10, int(quantity or 1)))
@@ -4455,197 +3770,13 @@ class TelegramCommandService:
         return output
 
     def _build_ai_library_stats_context(self) -> str:
-        try:
-            counts = self._emby_get("/Items/Counts")
-        except Exception as err:
-            return f"当前媒体库统计：读取失败（{self._format_emby_error(err)}）。"
-        if not isinstance(counts, dict):
-            return "当前媒体库统计：暂无可用数据。"
-
-        def _count(*keys: str) -> int:
-            for key in keys:
-                value = counts.get(key)
-                if isinstance(value, (int, float)) and int(value) >= 0:
-                    return int(value)
-            return 0
-
-        movie_count = _count("MovieCount", "movies", "Movies")
-        series_count = _count("SeriesCount", "series", "Series")
-        episode_count = _count("EpisodeCount", "episodes", "Episodes")
-        music_video_count = _count("MusicVideoCount", "musicVideos", "MusicVideos")
-        trailer_count = _count("TrailerCount", "trailers", "Trailers")
-        total = movie_count + series_count + episode_count + music_video_count + trailer_count
-        if total <= 0:
-            total = _count("ItemCount", "TotalItemCount", "total", "Total")
-
-        rows = [
-            "当前媒体库统计：",
-            f"- 电影：{movie_count} 部",
-            f"- 剧集：{series_count} 部",
-            f"- 单集：{episode_count} 集",
-        ]
-        if music_video_count:
-            rows.append(f"- 音乐视频：{music_video_count} 个")
-        if trailer_count:
-            rows.append(f"- 预告片：{trailer_count} 个")
-        if total:
-            rows.append(f"- 可统计资源合计：{total} 个")
-        return "\n".join(rows)
+        return self._ai_runtime_service().support_service().build_library_stats_context()
 
     def _build_ai_media_detail_reply(self, question: str, *, conversation_key: str = "") -> str:
-        text = str(question or "").strip()
-        if not re.search(r"简介|剧情|详情|演员|主演|评分", text):
-            return ""
-        active = self._get_ai_active_media(conversation_key)
-        if self._is_ai_reference_question(text) and active.get("title"):
-            keywords = [str(active.get("title") or "").strip()]
-            preferred_type = str(active.get("type") or "")
-        else:
-            keywords = self._extract_ai_media_keywords(text)
-            preferred_type = ""
-        if not keywords:
-            return "当前没有记住正在讨论的作品，请带上片名再查询。"
-        keyword = keywords[0]
-        try:
-            service = self._media_identity_service()
-            resolution = service.resolve(keyword, preferred_type=preferred_type)
-        except Exception as err:
-            return f"查询《{keyword}》详情失败：{self._format_emby_error(err)}"
-        if resolution.get("ambiguous") and not resolution.get("embyItem"):
-            return self._format_ai_identity_candidates(keyword, resolution.get("candidates"))
-        identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
-        emby_item = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
-        if not identity and not emby_item:
-            return f"当前 TMDB 和 Emby 都没有找到《{keyword}》。"
-        tmdb_detail: dict[str, Any] = {}
-        try:
-            tmdb_detail = service.get_media_detail(str(identity.get("tmdbId") or ""), str(identity.get("type") or ""))
-        except Exception as err:
-            LOGGER.warning("TG AI TMDB detail fallback: title=%s err=%s", keyword, err)
-        title = str(identity.get("title") or emby_item.get("Name") or keyword).strip()
-        year = str(identity.get("year") or emby_item.get("ProductionYear") or "").strip()
-        overview = str(tmdb_detail.get("overview") or emby_item.get("Overview") or identity.get("overview") or "").strip()
-        rating = tmdb_detail.get("vote_average")
-        if rating in (None, ""):
-            rating = emby_item.get("CommunityRating") or identity.get("rating")
-        credits = tmdb_detail.get("credits") if isinstance(tmdb_detail.get("credits"), dict) else {}
-        cast = credits.get("cast") if isinstance(credits.get("cast"), list) else []
-        cast_names = [str(row.get("name") or "").strip() for row in cast[:8] if isinstance(row, dict) and str(row.get("name") or "").strip()]
-        type_label = "剧集" if str(identity.get("type") or "") == "series" else "电影"
-        lines = [f"《{title}》详情：", f"- 年份：{year or '未知'}", f"- 类型：{type_label}"]
-        if rating not in (None, ""):
-            try:
-                lines.append(f"- 评分：{float(rating):.1f}")
-            except Exception:
-                lines.append(f"- 评分：{rating}")
-        if cast_names:
-            lines.append(f"- 主演：{'、'.join(cast_names)}")
-        lines.append(f"- 简介：{overview[:900] if overview else '暂无简介'}")
-        lines.append(f"- 本地状态：{'已入库' if emby_item else '未入库'}")
-        self._ai_conversations.set_active_media(
-            conversation_key,
-            {
-                "title": title,
-                "year": year,
-                "type": identity.get("type"),
-                "embySeriesId": emby_item.get("Id") if str(identity.get("type") or "") == "series" else "",
-                "tmdbId": identity.get("tmdbId"),
-            },
-        )
-        return "\n".join(lines)
+        return self._ai_query_service(conversation_key=conversation_key).build_media_detail_reply(question)
 
     def _build_ai_episode_query_reply(self, question: str, *, conversation_key: str = "") -> str:
-        text = str(question or "").strip()
-        if not self._is_ai_episode_count_question(text):
-            return ""
-        keywords = self._extract_ai_media_keywords(text)
-        active_media = self._get_ai_active_media(conversation_key)
-        if self._is_ai_reference_question(text) and active_media.get("title"):
-            keywords = [str(active_media.get("title") or "").strip()]
-        if not keywords:
-            return "没有识别到要查询的剧集名称，请带上片名再试。"
-
-        keyword = keywords[0]
-        try:
-            resolution = self._media_identity_service().resolve(keyword, preferred_type="series")
-        except Exception as err:
-            return f"查询《{keyword}》失败：{self._format_emby_error(err)}"
-        if resolution.get("ambiguous") and not resolution.get("embyItem"):
-            return self._format_ai_identity_candidates(keyword, resolution.get("candidates"))
-        series = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
-        identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
-        if not series:
-            self._log_ai_media_query_diagnostic(
-                question=text,
-                keyword=keyword,
-                candidates=keywords,
-                detail={"result": "not_found"},
-            )
-            return f"当前 Emby 可读范围内没有找到《{keyword}》。"
-        if str(series.get("Type") or "").strip().lower() == "episode":
-            series = self._resolve_ai_series_search_item(series, items=[series], keyword=keyword)
-        if str(series.get("Type") or "").strip().lower() != "series":
-            title = str(series.get("Name") or keyword).strip()
-            return f"媒体库中找到了《{title}》，但它不是可统计单集的剧集资源。"
-
-        item_id = str(series.get("Id") or "").strip()
-        detail = dict(series)
-        if item_id:
-            try:
-                payload = self._emby_get(
-                    f"/Items/{urllib.parse.quote(item_id, safe='')}?Fields=Name,Type,ProductionYear,PremiereDate,ChildCount,RecursiveItemCount,Status,ProviderIds"
-                )
-                if isinstance(payload, dict):
-                    detail.update(payload)
-            except Exception as err:
-                LOGGER.warning("TG AI series detail fallback: item_id=%s err=%s", item_id, err)
-
-        title = str(detail.get("Name") or keyword).strip()
-        identity = identity or self._resolve_ai_media_identity(keyword=keyword, detail=detail)
-        season_count, actual_count, _season_lines, latest_text, source_note = self._resolve_ai_series_counts(
-            item_id=item_id,
-            detail=detail,
-            keyword=keyword,
-            title=title,
-            identity=identity,
-        )
-        latest_label = self._format_ai_latest_episode_label(latest_text)
-        lines = [f"《{title}》媒体库查询结果："]
-        if latest_label:
-            lines.append(f"- 本地最新已入库：{latest_label}")
-        else:
-            lines.append("- 本地最新已入库：未读取到有效季集编号")
-        lines.append(f"- 实际可读取单集：{actual_count} 集")
-        if season_count > 1:
-            lines.append(f"- 可读取季数：{season_count} 季")
-        if source_note:
-            lines.append(f"- 核对说明：{source_note}")
-        self._log_ai_media_query_diagnostic(
-            question=text,
-            keyword=keyword,
-            candidates=keywords,
-            detail={
-                "result": "matched",
-                "title": title,
-                "embySeriesId": item_id,
-                "actualEpisodeCount": actual_count,
-                "latestEpisode": latest_text,
-            },
-        )
-        self._ai_conversations.set_active_media(
-            conversation_key,
-            {
-                "title": title,
-                "year": identity.get("year"),
-                "type": "series",
-                "embySeriesId": item_id,
-                "tmdbId": identity.get("tmdbId"),
-                "latestEpisode": latest_text,
-                "actualEpisodeCount": actual_count,
-                "seasonCount": season_count,
-            },
-        )
-        return "\n".join(lines)
+        return self._ai_query_service(conversation_key=conversation_key).build_episode_query_reply(question)
 
     def _build_ai_missing_episode_reply(
         self,
@@ -4655,231 +3786,19 @@ class TelegramCommandService:
         rich: bool = False,
         chat_id: str = "",
     ) -> CommandReply:
-        text = str(question or "").strip()
-        request = self._parse_ai_missing_episode_request(text)
-        if not request:
-            return ""
-
-        started = time.time()
-        active = self._get_ai_active_media(conversation_key)
-        use_active = request.get("mode") == "context"
-        keyword = str(active.get("title") if use_active else request.get("title") or "").strip()
-        if not keyword:
-            return "当前没有记住正在讨论的剧集，请带上片名。"
-
-        service = self._media_identity_service()
-        search_count = 0
-        identity: dict[str, Any] = {}
-        if use_active and active.get("tmdbId"):
-            identity = {
-                "title": keyword,
-                "year": active.get("year"),
-                "type": "series",
-                "tmdbId": str(active.get("tmdbId") or ""),
-                "embyId": str(active.get("embySeriesId") or ""),
-            }
-        else:
-            try:
-                search_count = 1
-                candidates = service.search_media(keyword, media_type="tv")
-            except Exception as err:
-                return f"TMDB 搜索《{keyword}》失败：{self._format_emby_error(err)}"
-            if not candidates:
-                return f"TMDB 没有找到《{keyword}》，无法计算预期缺集。"
-            if len(candidates) > 1 and int(candidates[0].get("score") or 0) == int(candidates[1].get("score") or 0) and candidates[0].get("year") != candidates[1].get("year"):
-                return self._format_ai_identity_candidates(keyword, candidates)
-            identity = dict(candidates[0])
-
-        try:
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="MediaInventory") as executor:
-                detail_future = executor.submit(service.query_media_detail, str(identity.get("tmdbId") or ""), "tv")
-                library_future = executor.submit(service.query_library_exists, identity)
-                expected = detail_future.result()
-                existing = library_future.result()
-        except Exception as err:
-            return f"查询《{keyword}》集数失败：{self._format_emby_error(err)}"
-
-        if not existing.get("exists"):
-            return f"TMDB 已识别《{identity.get('title') or keyword}》，但 Emby 媒体库中未找到该剧集。"
-        emby_item = existing.get("embyItem") if isinstance(existing.get("embyItem"), dict) else {}
-        series_id = str(emby_item.get("Id") or identity.get("embyId") or "").strip()
-        title = str(identity.get("title") or emby_item.get("Name") or keyword).strip()
-
-        if expected.get("ok"):
-            comparison = service.compare_episode_inventory(expected, existing)
-            missing = comparison.get("missing") if isinstance(comparison.get("missing"), list) else []
-            missing_text = self._format_inventory_episode_labels(comparison.get("missingLabels"), fallback=missing)
-            future = comparison.get("future") if isinstance(comparison.get("future"), list) else []
-            future_text = self._format_inventory_episode_labels(comparison.get("futureLabels"), fallback=future)
-            unknown_air_date = comparison.get("unknownAirDate") if isinstance(comparison.get("unknownAirDate"), list) else []
-            unknown_text = self._format_inventory_episode_labels(comparison.get("unknownAirDateLabels"), fallback=unknown_air_date)
-            lines = [
-                f"《{title}》缺集查询结果：",
-                f"- TMDB：已播出 {comparison.get('expectedCount', 0)} 集，登记 {comparison.get('registeredCount', 0)} 集",
-                f"- Emby：已有 {comparison.get('localEpisodeCount', comparison.get('existingCount', 0))} 集",
-                f"- 缺失：{missing_text if missing else '无'}",
-                f"- 编号模式：{'全局连续编号' if comparison.get('mode') == 'global' else '标准分季编号'}",
-            ]
-            if future:
-                lines.append(f"- 未来未播：{future_text}（不计入缺失）")
-            if unknown_air_date:
-                lines.append(f"- 播出日期未知：{unknown_text}（暂不计入缺失）")
-            extras = comparison.get("extras") if isinstance(comparison.get("extras"), list) else []
-            if extras:
-                lines.append(
-                    f"- 超出 TMDB 范围：{self._format_inventory_episode_labels(comparison.get('extraLabels'), fallback=extras)}"
-                )
-            unmapped = comparison.get("unmapped") if isinstance(comparison.get("unmapped"), list) else []
-            if unmapped:
-                lines.append(f"- 无法映射：{len(unmapped)} 集（Emby 与 TMDB 季集编号不一致）")
-            if comparison.get("specials"):
-                lines.append(f"- 特别篇：{len(comparison.get('specials') or [])} 集（不参与缺集计算）")
-            expected_count = int(comparison.get("expectedCount") or 0)
-            existing_count = int(comparison.get("existingCount") or 0)
-            missing_count = len(missing)
-            numbering_mode = str(comparison.get("mode") or "")
-        else:
-            episodes = self._fetch_ai_series_episodes(item_id=series_id)
-            fallback = self._analyze_ai_local_episode_gaps(episodes)
-            local_count = sum(len(values) for values in fallback["seasonMap"].values())
-            lines = [
-                f"《{title}》缺集查询结果：",
-                "- TMDB：详情不可用，无法计算预期差集",
-                f"- Emby：已有 {local_count} 集",
-                f"- 本地内部断档：{self._format_missing_episode_map(fallback['missing']) if fallback['missing'] else '无'}",
-            ]
-            expected_count = 0
-            existing_count = local_count
-            missing_count = sum(len(values) for values in fallback["missing"].values())
-            numbering_mode = str(fallback["mode"])
-
-        self._log_ai_missing_query_diagnostic(
-            question=text,
-            keyword=keyword,
-            used_context=bool(use_active),
-            series_id=series_id,
-            result="matched",
-            numbering_mode=numbering_mode,
-            tmdb_id=str(identity.get("tmdbId") or ""),
-            expected_count=expected_count,
-            existing_count=existing_count,
-            missing_count=missing_count,
-            elapsed_ms=int((time.time() - started) * 1000),
-        )
-
-        data_query_count = int(expected.get("tmdbQueryCount") or 0) + int(existing.get("embyQueryCount") or 0)
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="telegram_missing_report_ready",
-            message="Telegram 缺集富文本报告已生成。",
-            detail={
-                "title": title,
-                "tmdbId": str(identity.get("tmdbId") or ""),
-                "searchCount": search_count,
-                "tmdbQueryCount": int(expected.get("tmdbQueryCount") or 0),
-                "embyQueryCount": int(existing.get("embyQueryCount") or 0),
-                "dataQueryCount": data_query_count,
-                "missingCount": missing_count,
-            },
-        )
-
-        self._ai_conversations.set_active_media(
-            conversation_key,
-            {
-                "title": title,
-                "year": identity.get("year"),
-                "type": "series",
-                "embySeriesId": series_id,
-                "tmdbId": identity.get("tmdbId"),
-                "actualEpisodeCount": existing_count,
-                "expectedEpisodeCount": expected_count,
-                "missingEpisodeCount": missing_count,
-                "seasonCount": len(existing.get("seasonMap") or {}),
-            },
-        )
-        memory_text = "\n".join(lines)
-        if rich and expected.get("ok"):
-            return self._missing_episode_report_reply(
-                {
-                    "title": title,
-                    "year": identity.get("year"),
-                    "tmdbId": identity.get("tmdbId"),
-                    "registeredCount": comparison.get("registeredCount", 0),
-                    "airedCount": comparison.get("expectedCount", 0),
-                    "localCount": comparison.get("localEpisodeCount", comparison.get("existingCount", 0)),
-                    "missingText": missing_text if missing else "无",
-                    "missingLabels": comparison.get("missingLabels") if missing else [],
-                    "futureText": future_text if future else "",
-                    "unknownText": unknown_text if unknown_air_date else "",
-                    "lastAiredDate": expected.get("lastAiredDate"),
-                    "searchCount": search_count,
-                    "dataQueryCount": data_query_count,
-                    "memoryText": memory_text,
-                },
-                chat_id=chat_id,
-            )
-        return memory_text
+        return self._ai_query_service(
+            conversation_key=conversation_key,
+            chat_id=chat_id,
+            rich=rich,
+        ).build_missing_episode_reply(question)
 
     @staticmethod
     def _parse_ai_missing_episode_request(question: str) -> dict[str, str]:
-        text = re.sub(r"^/ai(?:@\w+)?\s*", "", str(question or "").strip(), flags=re.IGNORECASE)
-        if not re.search(r"缺失.*集|缺少.*集|缺哪.*集|漏.*集|缺集", text):
-            return {}
-        value = re.sub(
-            r"^(?:帮我|请|麻烦你|你帮我)?\s*(?:查看一下|看一下|查一下|看下|查下|看看|继续查)?\s*",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if re.match(r"^(?:它|这个|这部|那个|那部)?\s*(?:的)?(?:缺失|缺少|缺哪|漏掉|漏)(?:的|哪几|哪些)?集", value):
-            return {"mode": "context", "title": ""}
-        match = re.match(
-            r"^(?P<title>.+?)(?:的)?(?:缺失|缺少|缺哪|漏掉|漏)(?:的|哪几|哪些)?集",
-            value,
-        )
-        if not match:
-            return {}
-        title = str(match.group("title") or "").strip().strip("，。！？?：:；;、《》「」“”\"'")
-        title = re.sub(r"的$", "", title).strip()
-        return {"mode": "explicit", "title": title} if title else {"mode": "context", "title": ""}
+        return AIQueryService.parse_missing_episode_request(question)
 
     @classmethod
     def _analyze_ai_local_episode_gaps(cls, episodes: list[dict[str, Any]]) -> dict[str, Any]:
-        season_map: dict[int, set[int]] = {}
-        for row in episodes:
-            if not isinstance(row, dict):
-                continue
-            season = cls._coerce_index_number(row.get("ParentIndexNumber"))
-            episode = cls._coerce_index_number(row.get("IndexNumber"))
-            if season is None or episode is None or season <= 0 or episode <= 0:
-                continue
-            season_map.setdefault(season, set()).add(episode)
-        blocks = sorted(
-            ((season, min(values), max(values)) for season, values in season_map.items() if values),
-            key=lambda row: (row[1], row[2], row[0]),
-        )
-        global_mode = False
-        if len(blocks) >= 2 and blocks[0][1] == 1:
-            global_mode = all(current[1] > previous[2] for previous, current in zip(blocks, blocks[1:]))
-        elif len(blocks) == 1 and blocks[0][1] > 1:
-            global_mode = True
-
-        missing: dict[int, list[int]] = {}
-        if global_mode:
-            present = set().union(*season_map.values()) if season_map else set()
-            if present:
-                gaps = sorted(set(range(min(present), max(present) + 1)).difference(present))
-                if gaps:
-                    missing[0] = gaps
-        else:
-            for season, present in season_map.items():
-                if not present:
-                    continue
-                gaps = sorted(set(range(min(present), max(present) + 1)).difference(present))
-                if gaps:
-                    missing[season] = gaps
-        return {"mode": "global" if global_mode else "seasonal", "seasonMap": season_map, "missing": missing}
+        return AIQueryService.analyze_local_episode_gaps(episodes)
 
     def _log_ai_missing_query_diagnostic(
         self,
@@ -4968,6 +3887,8 @@ class TelegramCommandService:
     @staticmethod
     def _is_ai_episode_count_question(question: str) -> bool:
         text = str(question or "").strip()
+        if is_missing_episode_meta_question(text):
+            return False
         return bool(re.search(r"多少集|几集|第几集|哪一集|哪集|更新到|最新.*集|缺.*集", text))
 
     def _get_ai_active_media(self, conversation_key: str) -> dict[str, Any]:
@@ -5050,33 +3971,7 @@ class TelegramCommandService:
         )
 
     def _build_ai_focus_media_context(self, question: str) -> str:
-        keywords = self._extract_ai_media_keywords(question)
-        if not keywords:
-            return ""
-        keyword, items, search_error = self._search_emby_media_candidates(keywords)
-        if search_error:
-            return f"命中资源详情：搜索“{keyword}”失败（{search_error}）。"
-        if not items:
-            return f"命中资源详情：媒体库里没有搜索到“{keyword}”。"
-
-        first = self._pick_best_search_item(items=items, keyword=keyword)
-        if not first:
-            return f"命中资源详情：媒体库里没有搜索到“{keyword}”。"
-        matched_lines = self._format_ai_matched_item_context(first, keyword=keyword)
-        if len(items) > 1:
-            other_names = []
-            first_id = str(first.get("Id") or "").strip()
-            for row in items:
-                if not isinstance(row, dict):
-                    continue
-                if str(row.get("Id") or "").strip() == first_id:
-                    continue
-                name = str(row.get("Name") or "").strip()
-                if name and name not in other_names:
-                    other_names.append(name)
-            if other_names:
-                matched_lines.append(f"其他可能匹配：{'、'.join(other_names[:5])}")
-        return "\n".join(matched_lines)
+        return self._ai_query_service().build_focus_media_context(question)
 
     def _search_emby_media_candidates(self, keywords: list[str]) -> tuple[str, list[dict[str, Any]], str]:
         last_keyword = str(keywords[0] if keywords else "").strip()
@@ -5174,27 +4069,7 @@ class TelegramCommandService:
         return lines
 
     def _build_ai_category_listing_context(self, question: str) -> str:
-        spec = self._parse_ai_category_listing_request(question)
-        if not spec:
-            return ""
-        label = str(spec.get("label") or "媒体资源").strip()
-        try:
-            items, total = self._fetch_ai_category_items(spec=spec, limit=30)
-        except Exception as err:
-            return f"分类资源查询：读取“{label}”失败（{self._format_emby_error(err)}）。"
-        if not items:
-            return f"分类资源查询：当前 Emby 可读范围内未匹配到“{label}”资源。"
-        lines = [
-            f"分类资源查询：{label}",
-            f"- 匹配数量：{total}",
-            f"- 已显示前 {len(items)} 条",
-            "- 资源列表：",
-        ]
-        for idx, item in enumerate(items, start=1):
-            lines.append(f"  {idx}. {self._format_ai_category_item_line(item)}")
-        if total > len(items):
-            lines.append("- 提示：结果较多，建议继续缩小关键词或分类。")
-        return "\n".join(lines)
+        return self._ai_query_service().build_category_listing_context(question)
 
     def _parse_ai_category_listing_request(self, question: str) -> dict[str, Any] | None:
         text = str(question or "").strip()
@@ -5315,23 +4190,7 @@ class TelegramCommandService:
         return f"《{title}》({year})｜{type_label}｜{pack}{suffix}"
 
     def _build_ai_recent_library_hint(self, title: str) -> str:
-        safe_title = str(title or "").strip()
-        if not safe_title:
-            return ""
-        try:
-            latest, _tried, _err = self._fetch_latest_items_with_fallback(limit=20)
-        except Exception:
-            return ""
-        rows = latest if isinstance(latest, list) else []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            item_type = str(row.get("Type") or "").strip().lower()
-            row_title = str(row.get("SeriesName") if item_type == "episode" else row.get("Name") or "").strip()
-            if not row_title or safe_title not in row_title and row_title not in safe_title:
-                continue
-            return self._format_recent_library_row(row)
-        return ""
+        return self._ai_query_service().build_recent_library_hint(title)
 
     def _resolve_ai_media_identity(self, *, keyword: str, detail: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -5767,82 +4626,10 @@ class TelegramCommandService:
         return max(0, season_count), max(0, episode_count), lines
 
     def _extract_ai_media_keyword(self, question: str) -> str:
-        keywords = self._extract_ai_media_keywords(question)
-        return keywords[0] if keywords else ""
+        return AIMediaHost(self).extract_ai_media_keyword(question)
 
     def _extract_ai_media_keywords(self, question: str) -> list[str]:
-        text = str(question or "").strip()
-        if not text:
-            return []
-        quoted = re.search(r"[《「“\"]([^》」”\"]{1,80})[》」”\"]", text)
-        if quoted:
-            keyword = self._clean_ai_keyword(str(quoted.group(1) or ""))
-            return [keyword] if keyword else []
-
-        general_patterns = (
-            r"一共.*(多少|几).*(影视|资源|电影|剧集|影片|媒体)",
-            r"总共.*(多少|几).*(影视|资源|电影|剧集|影片|媒体)",
-            r"现在.*(多少|几).*(影视|资源|电影|剧集|影片|媒体)",
-            r"(媒体库|资源库).*(总数|总量|数量|统计)",
-        )
-        if any(re.search(pattern, text) for pattern in general_patterns):
-            return []
-        if self._parse_ai_category_listing_request(text):
-            return []
-
-        value = re.sub(r"^/ai(?:@\w+)?\s*", "", text, flags=re.IGNORECASE).strip()
-        value = re.sub(
-            r"^(?:帮我|请|麻烦你|你帮我)?\s*(?:查看一下|看一下|查一下|看下|查下|查查|搜索一下|搜索|找一下|看看)?\s*",
-            "",
-            value,
-            flags=re.IGNORECASE,
-        )
-        value = re.sub(
-            r"^(?:我(?:的)?|[咱俺](?:的)?)?(?:媒体库|资源库|库)(?:里|中|里面)?\s*(?:的)?\s*",
-            "",
-            value,
-            flags=re.IGNORECASE,
-        )
-
-        tail_patterns = (
-            r"(?:我(?:的)?|[咱俺](?:的)?)?(?:媒体库|资源库|库)(?:里|中|里面)?",
-            r"(?:现在|目前)?(?:最新的?|已经)?(?:更新到)?(?:第几集|哪一集|哪集|多少集|几集)",
-            r"(?:一共有?|总共有?|共有|现在有|目前有|有)(?:多少集|几集)",
-            r"更新到",
-            r"最新(?:的)?(?:是)?",
-            r"(?:缺失|缺少|缺哪|漏掉|漏)(?:的)?集",
-            r"(?:的)?(?:简介|剧情|详情|演员|主演|评分)",
-            r"有没有|是否有",
-        )
-        split_at = len(value)
-        for pattern in tail_patterns:
-            match = re.search(pattern, value, flags=re.IGNORECASE)
-            if match and match.start() >= 2:
-                split_at = min(split_at, match.start())
-        primary_text = value[:split_at].strip()
-        if split_at < len(value):
-            primary_text = re.sub(r"的$", "", primary_text).strip()
-        primary = self._clean_ai_keyword(primary_text)
-
-        fallback = value
-        fallback = re.sub(
-            r"(?:我(?:的)?|[咱俺](?:的)?)?(?:媒体库|资源库|库)(?:里|中|里面)?",
-            " ",
-            fallback,
-            flags=re.IGNORECASE,
-        )
-        fallback = re.sub(
-            r"(?:现在|目前|最新的?|已经|一共有?|总共有?|共有|更新到|第几集|哪一集|哪集|有多少集|多少集|有几集|几集|缺失的?集|缺少的?集|缺哪几集|漏掉的?集|的?简介|的?剧情|的?详情|的?演员|的?主演|的?评分|有没有|是否有|有吗|吗)",
-            " ",
-            fallback,
-            flags=re.IGNORECASE,
-        )
-        fallback = self._clean_ai_keyword(fallback)
-        keywords: list[str] = []
-        for candidate in (primary, fallback):
-            if candidate and candidate not in keywords:
-                keywords.append(candidate)
-        return keywords
+        return AIMediaHost(self).extract_ai_media_keywords(question)
 
     @staticmethod
     def _clean_ai_keyword(value: str) -> str:
@@ -5851,6 +4638,12 @@ class TelegramCommandService:
         clean = re.sub(r"\s+", " ", clean).strip()
         clean = re.sub(r"(?:了|呢|啊|呀)$", "", clean).strip()
         if len(clean) < 2:
+            return ""
+        if re.fullmatch(r"(?:缺失|缺少|缺哪|漏掉|漏)(?:的)?集", clean):
+            return ""
+        if re.fullmatch(r"(?:简介|剧情|详情|演员|主演|评分)(?:详情)?", clean):
+            return ""
+        if re.fullmatch(r"(?:最新(?:的)?|更新到|多少集|几集|第几集|哪一集|哪集)", clean):
             return ""
         if clean in {"影视资源", "资源", "媒体", "电影", "剧集", "影片", "数量", "总数"}:
             return ""
@@ -6176,34 +4969,9 @@ class TelegramCommandService:
         return f"{minutes}分{seconds:02d}秒"
 
     def _format_recent_playback_filename_with_status(self, row: dict[str, Any]) -> tuple[str, bool, bool]:
-        raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
-        if raw:
-            episode_filename = self._build_recent_playback_episode_filename(raw)
-            if episode_filename:
-                return episode_filename, True, False
-            for key in ("ItemName", "Name", "FileName", "Filename"):
-                value = str(raw.get(key) or "").strip()
-                if value:
-                    parsed = self._parse_episode_from_text(value)
-                    if parsed:
-                        return self._build_recent_playback_episode_filename(parsed), True, False
-                    return self._clean_recent_playback_filename(value), False, False
+        from .ai_media_formatter import AIMediaFormatter
 
-        unified_title = str(row.get("title") or "").strip()
-        if unified_title:
-            parsed = self._parse_episode_from_text(unified_title)
-            if parsed:
-                return self._build_recent_playback_episode_filename(parsed), True, False
-            return self._clean_recent_playback_filename(unified_title), False, True
-
-        fallback = str(row.get("mediaName") or "").strip()
-        if fallback:
-            parsed = self._parse_episode_from_text(fallback)
-            if parsed:
-                return self._build_recent_playback_episode_filename(parsed), True, False
-            return self._clean_recent_playback_filename(fallback), False, True
-
-        return "未知内容", False, True
+        return AIMediaFormatter.format_recent_playback_filename_with_status(row)
 
     @classmethod
     def _build_recent_playback_episode_filename(cls, source: dict[str, Any]) -> str:

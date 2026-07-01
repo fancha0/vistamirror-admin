@@ -77,6 +77,130 @@ class MediaIdentityService:
             "ambiguous": ambiguous,
         }
 
+    def search_local_candidates(
+        self,
+        query: str,
+        *,
+        preferred_type: str = "",
+        tmdb_id: str = "",
+        year: str = "",
+        alternative_titles: list[str] | None = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        keywords: list[str] = []
+        for value in [query, *(alternative_titles or [])]:
+            keyword = str(value or "").strip()
+            if keyword and keyword not in keywords:
+                keywords.append(keyword)
+        if not keywords:
+            return []
+
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        for keyword in keywords:
+            try:
+                rows = self._search_emby(keyword, preferred_type=preferred_type)
+            except Exception:
+                continue
+            for row in rows:
+                item_id = str(row.get("Id") or "").strip()
+                if not item_id:
+                    continue
+                existing = rows_by_id.get(item_id)
+                if existing is None:
+                    rows_by_id[item_id] = dict(row)
+                    continue
+                existing_name = str(existing.get("Name") or existing.get("SeriesName") or "").strip()
+                row_name = str(row.get("Name") or row.get("SeriesName") or "").strip()
+                if len(row_name) > len(existing_name):
+                    rows_by_id[item_id] = dict(row)
+
+        target_title = str(alternative_titles[0] if alternative_titles else query or "").strip()
+        normalized_target = self.normalize_title(target_title or query)
+        desired_year = str(year or "").strip()
+        desired_tmdb = str(tmdb_id or "").strip()
+        candidates: list[dict[str, Any]] = []
+        for row in rows_by_id.values():
+            title = str(row.get("Name") or row.get("SeriesName") or "").strip()
+            normalized_title = self.normalize_title(title)
+            provider_tmdb = self._provider_tmdb_id(row)
+            row_year = str(row.get("ProductionYear") or "")[:4]
+            row_type = self._local_type(str(row.get("Type") or ""))
+            is_series = row_type == "series"
+            episode_count = max(
+                self._coerce_int(row.get("RecursiveItemCount")),
+                self._coerce_int(row.get("ChildCount")),
+            ) if is_series else 0
+            is_title_exact = bool(normalized_target and normalized_title == normalized_target)
+            is_title_similar = bool(normalized_target and normalized_title and (normalized_target in normalized_title or normalized_title in normalized_target))
+            year_delta = 99
+            if desired_year.isdigit() and row_year.isdigit():
+                year_delta = abs(int(desired_year) - int(row_year))
+            score = 0
+            if is_title_exact:
+                score += 1000
+            elif is_title_similar:
+                score += 700
+            if provider_tmdb and desired_tmdb and provider_tmdb == desired_tmdb:
+                score += 300
+            if desired_year and row_year == desired_year:
+                score += 120
+            elif year_delta == 1:
+                score += 60
+            if self._type_matches(str(row.get("Type") or ""), preferred_type):
+                score += 80
+            if is_series:
+                score += 40
+            score += min(40, max(0, episode_count))
+            score_reason_parts: list[str] = []
+            if is_title_exact:
+                score_reason_parts.append("标题完全匹配")
+            elif is_title_similar:
+                score_reason_parts.append("标题相似")
+            else:
+                score_reason_parts.append("标题不稳定")
+            if provider_tmdb and desired_tmdb and provider_tmdb == desired_tmdb:
+                score_reason_parts.append("TMDB 一致")
+            elif provider_tmdb and desired_tmdb and provider_tmdb != desired_tmdb:
+                score_reason_parts.append("TMDB 不一致")
+            else:
+                score_reason_parts.append("TMDB 未绑定")
+            if desired_year and row_year:
+                if row_year == desired_year:
+                    score_reason_parts.append("年份一致")
+                elif year_delta == 1:
+                    score_reason_parts.append("年份接近")
+            if is_series:
+                score_reason_parts.append("Series")
+            if episode_count > 0:
+                score_reason_parts.append(f"{episode_count} 集")
+            candidates.append(
+                {
+                    "embyItemId": str(row.get("Id") or "").strip(),
+                    "title": title or "未知作品",
+                    "year": row_year,
+                    "type": row_type or str(row.get("Type") or "").strip().lower() or "unknown",
+                    "tmdbId": provider_tmdb,
+                    "episodeCount": episode_count,
+                    "score": score,
+                    "scoreReason": " / ".join(score_reason_parts),
+                    "isTitleExact": is_title_exact,
+                    "isTitleSimilar": is_title_similar,
+                    "isSeries": is_series,
+                    "yearDelta": year_delta,
+                }
+            )
+        candidates.sort(
+            key=lambda row: (
+                int(row.get("score") or 0),
+                1 if row.get("isTitleExact") else 0,
+                1 if row.get("tmdbId") and desired_tmdb and row.get("tmdbId") == desired_tmdb else 0,
+                1 if row.get("isSeries") else 0,
+                int(row.get("episodeCount") or 0),
+            ),
+            reverse=True,
+        )
+        return candidates[: max(1, min(20, int(limit or 8)))]
+
     def search_media(self, query: str, *, media_type: str = "") -> list[dict[str, Any]]:
         if not self.tmdb_fetcher:
             return []
@@ -214,20 +338,93 @@ class MediaIdentityService:
             "overview": str(detail.get("overview") or "").strip(),
         }
 
-    def query_library_exists(self, identity: dict[str, Any]) -> dict[str, Any]:
+    def query_library_exists_by_tmdb(self, identity: dict[str, Any]) -> dict[str, Any]:
         metrics = {"embyQueryCount": 0}
-        item = self.find_emby_item(identity, metrics=metrics)
+        tmdb_id = str(identity.get("tmdbId") or "").strip()
+        media_type = str(identity.get("type") or "").strip()
+        emby_id = str(identity.get("embyId") or "").strip()
+        force_emby_item = bool(identity.get("forceEmbyItem"))
+        title = str(identity.get("title") or "").strip()
+
+        item: dict[str, Any] = {}
+        if emby_id:
+            try:
+                payload = self._fetch_emby_item_by_id(emby_id, metrics=metrics)
+                if isinstance(payload, dict) and payload:
+                    provider_tmdb = self._provider_tmdb_id(payload)
+                    if force_emby_item or not tmdb_id or provider_tmdb == tmdb_id:
+                        item = payload
+            except Exception:
+                item = {}
+        elif tmdb_id:
+            try:
+                self._increment_metric(metrics, "embyQueryCount")
+                provider_rows = self._search_emby_by_tmdb_id(tmdb_id, preferred_type=media_type)
+            except Exception:
+                provider_rows = []
+            if provider_rows:
+                item = self._pick_local(provider_rows, title=title, preferred_type=media_type)
         if not item:
-            return {"ok": True, "exists": False, "embyItem": {}, "seasonMap": {}, "specials": [], "duplicates": [], **metrics}
+            return self._empty_library_inventory(metrics)
+        return self._build_library_inventory(item, identity=identity, metrics=metrics)
+
+    def query_library_exists(self, identity: dict[str, Any]) -> dict[str, Any]:
+        exact = self.query_library_exists_by_tmdb(identity)
+        if bool(exact.get("exists")) or bool(identity.get("forceEmbyItem")):
+            return exact
+
+        metrics = {"embyQueryCount": int(exact.get("embyQueryCount") or 0)}
+        title = str(identity.get("title") or "").strip()
+        media_type = str(identity.get("type") or "").strip()
+        year = str(identity.get("year") or "").strip()
+        tmdb_id = str(identity.get("tmdbId") or "").strip()
+        if not title:
+            return self._empty_library_inventory(metrics)
+        try:
+            self._increment_metric(metrics, "embyQueryCount")
+            candidates = self._search_emby(title, preferred_type=media_type)
+        except Exception:
+            candidates = []
+        item = self._pick_fallback_emby_item(
+            candidates,
+            title=title,
+            year=year,
+            tmdb_id=tmdb_id,
+            preferred_type=media_type,
+        )
+        if not item:
+            return self._empty_library_inventory(metrics)
+        return self._build_library_inventory(item, identity=identity, metrics=metrics)
+
+    def _build_library_inventory(
+        self,
+        item: dict[str, Any],
+        *,
+        identity: dict[str, Any],
+        metrics: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         item_id = str(item.get("Id") or "").strip()
         if self._local_type(str(item.get("Type") or identity.get("type") or "")) != "series":
-            return {"ok": True, "exists": True, "embyItem": item, "seasonMap": {}, "specials": [], "duplicates": [], **metrics}
+            return {
+                **self._empty_library_inventory(metrics),
+                "exists": True,
+                "embyItem": item,
+            }
+        seasons = self._fetch_emby_seasons(item_id, metrics=metrics)
         episodes = self._fetch_emby_episodes(item_id, metrics=metrics)
         season_map: dict[int, set[int]] = {}
+        missing_episode_map: dict[int, set[int]] = {}
         specials: list[dict[str, Any]] = []
-        duplicates: list[dict[str, int]] = []
+        duplicates: list[dict[str, Any]] = []
         seen: set[tuple[int, int]] = set()
+        episode_items: list[dict[str, Any]] = []
+        missing_episode_items: list[dict[str, Any]] = []
+        present_episode_rows = 0
         for row in episodes:
+            if not isinstance(row, dict):
+                continue
+            normalized = self._normalize_episode_item(row)
+            episode_items.append(normalized)
             try:
                 season = int(row.get("ParentIndexNumber") or 0)
                 episode = int(row.get("IndexNumber") or 0)
@@ -236,11 +433,32 @@ class MediaIdentityService:
             if episode <= 0:
                 continue
             if season <= 0:
-                specials.append({"season": season, "episode": episode, "name": str(row.get("Name") or "")})
+                if not normalized.get("isMissing") and str(normalized.get("locationType") or "").strip().lower() != "virtual":
+                    present_episode_rows += 1
+                specials.append(
+                    {
+                        "season": season,
+                        "episode": episode,
+                        "name": str(row.get("Name") or ""),
+                        "path": str(row.get("Path") or ""),
+                    }
+                )
                 continue
+            if normalized.get("isMissing") or str(normalized.get("locationType") or "").strip().lower() == "virtual":
+                missing_episode_map.setdefault(season, set()).add(episode)
+                missing_episode_items.append(normalized)
+                continue
+            present_episode_rows += 1
             key = (season, episode)
             if key in seen:
-                duplicates.append({"season": season, "episode": episode})
+                duplicates.append(
+                    {
+                        "season": season,
+                        "episode": episode,
+                        "name": str(row.get("Name") or ""),
+                        "path": str(row.get("Path") or ""),
+                    }
+                )
                 continue
             seen.add(key)
             season_map.setdefault(season, set()).add(episode)
@@ -249,10 +467,32 @@ class MediaIdentityService:
             "exists": True,
             "embyItem": item,
             "seasonMap": season_map,
+            "seasonItems": seasons,
             "specials": specials,
             "duplicates": duplicates,
-            "episodeRows": len(episodes),
+            "episodeRows": present_episode_rows,
+            "episodeItems": episode_items,
+            "missingEpisodeMap": missing_episode_map,
+            "missingEpisodeItems": missing_episode_items,
+            "hasMissingEpisodeData": bool(missing_episode_map),
             **metrics,
+        }
+
+    @staticmethod
+    def _empty_library_inventory(metrics: dict[str, int] | None = None) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "exists": False,
+            "embyItem": {},
+            "seasonMap": {},
+            "seasonItems": [],
+            "specials": [],
+            "duplicates": [],
+            "episodeItems": [],
+            "missingEpisodeMap": {},
+            "missingEpisodeItems": [],
+            "hasMissingEpisodeData": False,
+            **(metrics or {}),
         }
 
     @classmethod
@@ -364,9 +604,11 @@ class MediaIdentityService:
         metrics: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         tmdb_id = str(identity.get("tmdbId") or "").strip()
+        emby_id = str(identity.get("embyId") or "").strip()
         media_type = str(identity.get("type") or "").strip()
         title = str(identity.get("title") or "").strip()
         year = str(identity.get("year") or "").strip()
+        force_emby_item = bool(identity.get("forceEmbyItem"))
         cache_key = self._cache_key(tmdb_id, media_type)
         cached = self._cache.get(cache_key) if cache_key else None
         if isinstance(cached, dict) and cached.get("embyId"):
@@ -377,6 +619,18 @@ class MediaIdentityService:
                 )
                 if isinstance(payload, dict) and (not tmdb_id or self._provider_tmdb_id(payload) == tmdb_id):
                     return payload
+            except Exception:
+                pass
+
+        if emby_id:
+            try:
+                self._increment_metric(metrics, "embyQueryCount")
+                payload = self.emby_fetcher(
+                    f"/Items/{urllib.parse.quote(emby_id, safe='')}?Fields=Name,Type,ProductionYear,ProviderIds,Overview,CommunityRating"
+                )
+                if isinstance(payload, dict) and payload:
+                    if force_emby_item or not tmdb_id or self._provider_tmdb_id(payload) == tmdb_id:
+                        return payload
             except Exception:
                 pass
 
@@ -449,7 +703,7 @@ class MediaIdentityService:
                 "Recursive": "true",
                 "SearchTerm": str(title or "").strip(),
                 "IncludeItemTypes": include_types,
-                "Fields": "Name,Type,SeriesName,SeriesId,ProductionYear,PremiereDate,ProviderIds,Overview,CommunityRating",
+                "Fields": "Name,Type,SeriesName,SeriesId,ProductionYear,PremiereDate,ProviderIds,Overview,CommunityRating,ChildCount,RecursiveItemCount",
                 "Limit": "30",
             }
         )
@@ -464,13 +718,64 @@ class MediaIdentityService:
                 "AnyProviderIdEqualTo": f"tmdb:{str(tmdb_id or '').strip()}",
                 "Recursive": "true",
                 "IncludeItemTypes": include_types,
-                "Fields": "Name,Type,ProductionYear,PremiereDate,ProviderIds,Overview,CommunityRating",
-                "Limit": "30",
+                "Fields": "Name,Type,ProductionYear,PremiereDate,ProviderIds,Overview,CommunityRating,ChildCount,RecursiveItemCount",
+                "Limit": "200",
             }
         )
         payload = self.emby_fetcher(f"/Items?{query}")
         rows = payload.get("Items") if isinstance(payload, dict) else payload
-        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        candidates = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        safe_tmdb = str(tmdb_id or "").strip()
+        if not safe_tmdb:
+            return candidates
+        return [row for row in candidates if self._provider_tmdb_id(row) == safe_tmdb]
+
+    def _fetch_emby_item_by_id(self, item_id: str, *, metrics: dict[str, int] | None = None) -> dict[str, Any]:
+        safe_id = str(item_id or "").strip()
+        if not safe_id:
+            return {}
+        query = urllib.parse.urlencode(
+            {
+                "Ids": safe_id,
+                "Fields": "Name,Type,ProductionYear,ProviderIds,Overview,CommunityRating,ChildCount,RecursiveItemCount",
+            }
+        )
+        self._increment_metric(metrics, "embyQueryCount")
+        payload = self.emby_fetcher(f"/Items?{query}")
+        rows = payload.get("Items") if isinstance(payload, dict) else payload
+        items = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        return items[0] if items else {}
+
+    def _fetch_emby_seasons(self, series_id: str, *, metrics: dict[str, int] | None = None) -> list[dict[str, Any]]:
+        safe_id = urllib.parse.quote(str(series_id or "").strip(), safe="")
+        if not safe_id:
+            return []
+        self._increment_metric(metrics, "embyQueryCount")
+        query = urllib.parse.urlencode(
+            {
+                "ParentId": str(series_id or "").strip(),
+                "IncludeItemTypes": "Season",
+                "Fields": "Name,IndexNumber,Id",
+                "Recursive": "true",
+                "Limit": "100",
+            }
+        )
+        payload = self.emby_fetcher(f"/Items?{query}")
+        rows = payload.get("Items") if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            return []
+        output: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            output.append(
+                {
+                    "season": self._coerce_int(row.get("IndexNumber")),
+                    "name": str(row.get("Name") or "").strip(),
+                    "itemId": str(row.get("Id") or "").strip(),
+                }
+            )
+        return output
 
     def _fetch_emby_episodes(self, series_id: str, *, metrics: dict[str, int] | None = None) -> list[dict[str, Any]]:
         safe_id = urllib.parse.quote(str(series_id or "").strip(), safe="")
@@ -482,13 +787,16 @@ class MediaIdentityService:
         while start < 10000:
             query = urllib.parse.urlencode(
                 {
-                    "Fields": "Name,SeriesId,ParentIndexNumber,IndexNumber",
+                    "ParentId": str(series_id or "").strip(),
+                    "IncludeItemTypes": "Episode",
+                    "Recursive": "true",
+                    "Fields": "Name,SortName,OriginalTitle,Path,SeriesId,ParentIndexNumber,IndexNumber,LocationType,IsMissing,PremiereDate",
                     "StartIndex": str(start),
                     "Limit": str(page_size),
                 }
             )
             self._increment_metric(metrics, "embyQueryCount")
-            payload = self.emby_fetcher(f"/Shows/{safe_id}/Episodes?{query}")
+            payload = self.emby_fetcher(f"/Items?{query}")
             rows = payload.get("Items") if isinstance(payload, dict) else payload
             page = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
             output.extend(page)
@@ -499,6 +807,27 @@ class MediaIdentityService:
                 break
             start += page_size
         return output
+
+    @staticmethod
+    def _normalize_episode_item(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "season": MediaIdentityService._coerce_int(row.get("ParentIndexNumber")),
+            "episode": MediaIdentityService._coerce_int(row.get("IndexNumber")),
+            "name": str(row.get("Name") or "").strip(),
+            "sortName": str(row.get("SortName") or "").strip(),
+            "originalTitle": str(row.get("OriginalTitle") or "").strip(),
+            "path": str(row.get("Path") or "").strip(),
+            "locationType": str(row.get("LocationType") or "").strip(),
+            "isMissing": bool(row.get("IsMissing")),
+            "premiereDate": str(row.get("PremiereDate") or "").strip(),
+        }
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int:
+        try:
+            return int(value or 0)
+        except Exception:
+            return 0
 
     @staticmethod
     def _increment_metric(metrics: dict[str, int] | None, key: str) -> None:
@@ -529,6 +858,40 @@ class MediaIdentityService:
             reverse=True,
         )
         return candidates[0] if candidates else {}
+
+    def _pick_fallback_emby_item(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        title: str,
+        year: str,
+        tmdb_id: str,
+        preferred_type: str,
+    ) -> dict[str, Any]:
+        normalized_title = self.normalize_title(title)
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_title = self.normalize_title(str(row.get("Name") or row.get("SeriesName") or ""))
+            row_tmdb = self._provider_tmdb_id(row)
+            row_year = str(row.get("ProductionYear") or "").strip()
+            score = 0
+            if normalized_title and row_title == normalized_title:
+                score += 120
+            elif normalized_title and row_title and (normalized_title in row_title or row_title in normalized_title):
+                score += 70
+            if year and row_year == year:
+                score += 25
+            if self._type_matches(str(row.get("Type") or ""), preferred_type):
+                score += 20
+            if str(row.get("Type") or "").strip().lower() == "series":
+                score += 15
+            if tmdb_id and row_tmdb == tmdb_id:
+                score += 40
+            scored.append((score, row))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored[0][1] if scored and scored[0][0] >= 55 else {}
 
     @staticmethod
     def _is_ambiguous(candidates: list[dict[str, Any]]) -> bool:

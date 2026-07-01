@@ -71,11 +71,11 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
             if path.startswith("/Items?") and ("IncludeItemTypes=Series%2CMovie%2CEpisode" in path or "IncludeItemTypes=Series" in path):
                 self.assertIn("SearchTerm=%E5%AE%8C%E7%BE%8E%E4%B8%96%E7%95%8C", path)
                 return {"Items": [{"Id": "series-1", "Type": "Series", "Name": "完美世界", "ProviderIds": {}}]}
-            if path.startswith("/Items/series-1"):
-                return {"Id": "series-1", "Type": "Series", "Name": "完美世界", "ProviderIds": {}}
-            if path.startswith("/Shows/series-1/Seasons"):
+            if path.startswith("/Items?Ids=series-1&"):
+                return {"Items": [{"Id": "series-1", "Type": "Series", "Name": "完美世界", "ProviderIds": {}}]}
+            if "ParentId=series-1" in path and "IncludeItemTypes=Season" in path:
                 return {"Items": [{"IndexNumber": 1, "Name": "Season 1"}]}
-            if path.startswith("/Shows/series-1/Episodes"):
+            if "ParentId=series-1" in path and "IncludeItemTypes=Episode" in path:
                 return {"Items": episodes, "TotalRecordCount": len(episodes)}
             if path.startswith("/Items?") and "IncludeItemTypes=Episode" in path:
                 return {"Items": episodes}
@@ -111,11 +111,11 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
         def fake_emby_get(path: str):
             if path.startswith("/Items?") and ("IncludeItemTypes=Series%2CMovie%2CEpisode" in path or "IncludeItemTypes=Series" in path):
                 return {"Items": [{"Id": "series-1", "Type": "Series", "Name": "完美世界", "ProviderIds": {}}]}
-            if path.startswith("/Items/series-1"):
-                return {"Id": "series-1", "Type": "Series", "Name": "完美世界", "ProviderIds": {}}
-            if path.startswith("/Shows/series-1/Seasons"):
+            if path.startswith("/Items?Ids=series-1&"):
+                return {"Items": [{"Id": "series-1", "Type": "Series", "Name": "完美世界", "ProviderIds": {}}]}
+            if "ParentId=series-1" in path and "IncludeItemTypes=Season" in path:
                 return {"Items": [{"IndexNumber": 1, "Name": "Season 1"}]}
-            if path.startswith("/Shows/series-1/Episodes"):
+            if "ParentId=series-1" in path and "IncludeItemTypes=Episode" in path:
                 return {"Items": episodes, "TotalRecordCount": len(episodes)}
             if path.startswith("/Items?") and "IncludeItemTypes=Episode" in path:
                 return {"Items": episodes}
@@ -136,7 +136,7 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
         missing_reply = restarted._build_ai_missing_episode_reply("查看一下缺失的集", conversation_key=conversation_key)
 
         self.assertIn("《完美世界》", missing_reply)
-        self.assertIn("本地内部断档：S01 E02", missing_reply)
+        self.assertIn("本地内部断档：S01E02", missing_reply)
 
     def test_context_budget_no_longer_has_120000_character_cap(self) -> None:
         context = "完" * 150000
@@ -185,11 +185,16 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
 
     def test_missing_request_extracts_explicit_title(self) -> None:
         parsed = self.service._parse_ai_missing_episode_request("查看一下遮天的缺失集")
-        self.assertEqual(parsed, {"mode": "explicit", "title": "遮天"})
+        self.assertEqual(parsed, {"mode": "title", "title": "遮天"})
+        parsed_with_year = self.service._parse_ai_missing_episode_request("查看一下《仙逆》(2023)缺失集")
+        self.assertEqual(parsed_with_year, {"mode": "title", "title": "仙逆", "year": "2023"})
+        meta = self.service._parse_ai_missing_episode_request("查询媒体缺失集的方式")
+        self.assertEqual(meta, {})
 
         followup = self.service._parse_ai_missing_episode_request("查看一下缺失的集")
         self.assertEqual(followup, {"mode": "context", "title": ""})
         self.assertEqual(self.service._extract_ai_media_keyword("查看一下遮天的缺失集"), "遮天")
+        self.assertEqual(self.service._extract_ai_media_keyword("查询媒体缺失集的方式"), "")
 
     def test_explicit_missing_query_never_falls_back_to_active_media(self) -> None:
         conversation_key = "chat:no-cross-title"
@@ -256,6 +261,20 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
             def search_media(self, query: str, *, media_type: str = ""):
                 return [{"title": "遮天", "year": "2023", "type": "series", "tmdbId": "224839", "score": 100, "rating": 8.8}]
 
+            def search_local_candidates(self, query: str, **kwargs):
+                return [{"embyItemId": "zhe-tian", "title": "遮天", "year": "2023", "type": "series", "tmdbId": "224839", "episodeCount": 162, "score": 1180, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 162 集", "isTitleExact": True, "isSeries": True}]
+
+            def query_library_exists_by_tmdb(self, identity):
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "zhe-tian", "Name": "遮天", "Type": "Series", "ProviderIds": {"Tmdb": "224839"}},
+                    "seasonMap": {1: set(range(1, 163))},
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
             def query_media_detail(self, tmdb_id: str, media_type: str):
                 return {
                     "ok": True,
@@ -287,9 +306,8 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
         reply = self.service._build_ai_missing_episode_reply("查看一下遮天的缺失集", conversation_key="chat:zhe-tian")
 
         self.assertIn("TMDB：已播出 162 集，登记 175 集", reply)
-        self.assertIn("Emby：已有 162 集", reply)
-        self.assertIn("缺失：无", reply)
-        self.assertIn("未来未播：E163-E175（不计入缺失）", reply)
+        self.assertIn("成功映射 162 集", reply)
+        self.assertIn("缺集判断：可靠", reply)
 
         rich = self.service._build_ai_missing_episode_reply(
             "查看一下遮天的缺失集",
@@ -299,8 +317,368 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
         )
         self.assertIsInstance(rich, dict)
         self.assertIn("执行 1 次搜索，查询 4 次数据", rich["fallback_text"])
-        self.assertIn("最后播出   | 2026-05-26", rich["fallback_text"])
+        self.assertIn("📝 《遮天》（2023）— 缺失集", rich["fallback_text"])
+        self.assertIn("Emby 媒体库状态：", rich["fallback_text"])
+        self.assertIn("Season 1", rich["fallback_text"])
+        self.assertIn("未来未播：S01E163-E175（不计入缺失）", rich["fallback_text"])
         self.assertIsNone(rich["reply_markup"])
+
+    def test_missing_query_ambiguous_tmdb_prefers_unique_emby_library_hit(self) -> None:
+        class InventoryService:
+            def search_media(self, query: str, *, media_type: str = ""):
+                return [
+                    {"title": "遮天", "year": "2023", "type": "series", "tmdbId": "224839", "score": 100, "rating": 8.8},
+                    {"title": "遮天", "year": "2025", "type": "series", "tmdbId": "278875", "score": 100, "rating": 7.1},
+                    {"title": "黑手遮天", "year": "2023", "type": "series", "tmdbId": "203202", "score": 70, "rating": 6.1},
+                ]
+
+            def query_library_exists_by_tmdb(self, identity):
+                tmdb_id = str(identity.get("tmdbId") or "")
+                if tmdb_id == "224839":
+                    return {
+                        "ok": True,
+                        "exists": True,
+                        "embyItem": {"Id": "zhe-tian", "Name": "遮天", "Type": "Series", "ProviderIds": {"Tmdb": "224839"}},
+                        "seasonMap": {1: set(range(1, 163))},
+                        "specials": [],
+                        "duplicates": [],
+                        "embyQueryCount": 2,
+                    }
+                return {"ok": True, "exists": False, "embyItem": {}, "embyQueryCount": 1}
+
+            def search_local_candidates(self, query: str, **kwargs):
+                raise AssertionError("unique tmdb library hit should bypass local title candidates")
+
+            def query_media_detail(self, tmdb_id: str, media_type: str):
+                return {
+                    "ok": True,
+                    "totalEpisodes": 175,
+                    "registeredEpisodes": 175,
+                    "airedEpisodes": 162,
+                    "seasonCounts": {1: 175},
+                    "registeredSeasonMap": {1: set(range(1, 176))},
+                    "airedSeasonMap": {1: set(range(1, 163))},
+                    "futureSeasonMap": {1: set(range(163, 176))},
+                    "unknownAirDateMap": {},
+                    "lastAiredDate": "2026-05-26",
+                    "tmdbQueryCount": 2,
+                }
+
+            def query_library_exists(self, identity):
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "zhe-tian", "Name": "遮天", "Type": "Series", "ProviderIds": {"Tmdb": "224839"}},
+                    "seasonMap": {1: set(range(1, 163))},
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+            def compare_episode_inventory(self, expected, existing):
+                return MediaIdentityService.compare_episode_inventory(expected, existing)
+
+        self.service._media_identity_service = lambda: InventoryService()
+        rich = self.service._build_ai_missing_episode_reply(
+            "遮天缺失集",
+            conversation_key="chat:zhe-tian",
+            rich=True,
+            chat_id="100",
+        )
+
+        self.assertIn("📝 《遮天》（2023）— 缺失集", rich["fallback_text"])
+        self.assertNotIn("有多个同名候选", rich["fallback_text"])
+        self.assertNotIn("黑手遮天", rich["fallback_text"])
+
+    def test_missing_query_ambiguous_tmdb_reply_excludes_near_match_titles(self) -> None:
+        class InventoryService:
+            def search_media(self, query: str, *, media_type: str = ""):
+                return [
+                    {"title": "遮天", "year": "2023", "type": "series", "tmdbId": "224839", "score": 100, "rating": 8.8},
+                    {"title": "遮天", "year": "2025", "type": "series", "tmdbId": "278875", "score": 100, "rating": 7.1},
+                    {"title": "黑手遮天", "year": "2023", "type": "series", "tmdbId": "203202", "score": 70, "rating": 6.1},
+                    {"title": "素手遮天", "year": "2018", "type": "series", "tmdbId": "196270", "score": 70, "rating": 6.0},
+                ]
+
+            def query_library_exists_by_tmdb(self, identity):
+                return {"ok": True, "exists": False, "embyItem": {}, "embyQueryCount": 1}
+
+        self.service._media_identity_service = lambda: InventoryService()
+        reply = self.service._build_ai_missing_episode_reply("遮天缺失集", conversation_key="chat:zhe-tian")
+
+        self.assertIn("《遮天》有多个同名候选", reply)
+        self.assertIn("TMDB 224839", reply)
+        self.assertIn("TMDB 278875", reply)
+        self.assertNotIn("黑手遮天", reply)
+        self.assertNotIn("素手遮天", reply)
+
+    def test_missing_query_mapping_anomaly_does_not_emit_definite_gap(self) -> None:
+        class InventoryService:
+            def search_media(self, query: str, *, media_type: str = ""):
+                return [{"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "score": 100}]
+
+            def search_local_candidates(self, query: str, **kwargs):
+                return [{"embyItemId": "xian-ni", "title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "episodeCount": 26, "score": 1180, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 26 集", "isTitleExact": True, "isSeries": True}]
+
+            def query_library_exists_by_tmdb(self, identity):
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "xian-ni", "Name": "仙逆", "Type": "Series", "ProviderIds": {"Tmdb": "223911"}},
+                    "seasonMap": {1: set(range(1, 11))},
+                    "episodeRows": 26,
+                    "episodeItems": [
+                        {"season": 1, "episode": number, "name": f"仙逆 第{number}集", "sortName": "", "originalTitle": "", "path": f"/xianni/{number}.mkv"}
+                        for number in range(1, 11)
+                    ]
+                    + [
+                        {"season": 0, "episode": 0, "name": "未映射条目", "sortName": "", "originalTitle": "", "path": f"/xianni/unknown-{number}.mkv"}
+                        for number in range(11, 27)
+                    ],
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+            def query_media_detail(self, tmdb_id: str, media_type: str):
+                return {
+                    "ok": True,
+                    "totalEpisodes": 200,
+                    "registeredEpisodes": 200,
+                    "airedEpisodes": 147,
+                    "seasonCounts": {1: 200},
+                    "registeredSeasonMap": {1: set(range(1, 201))},
+                    "airedSeasonMap": {1: set(range(1, 148))},
+                    "futureSeasonMap": {1: set(range(148, 201))},
+                    "unknownAirDateMap": {},
+                    "lastAiredDate": "2026-06-28",
+                    "tmdbQueryCount": 2,
+                }
+
+            def query_library_exists(self, identity):
+                rows = [
+                    {"season": 1, "episode": number, "name": f"仙逆 第{number}集", "sortName": "", "originalTitle": "", "path": f"/xianni/{number}.mkv"}
+                    for number in range(1, 11)
+                ]
+                rows.extend(
+                    {"season": 0, "episode": 0, "name": "未映射条目", "sortName": "", "originalTitle": "", "path": f"/xianni/unknown-{number}.mkv"}
+                    for number in range(11, 27)
+                )
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "xian-ni", "Name": "仙逆", "Type": "Series"},
+                    "seasonMap": {1: set(range(1, 11))},
+                    "episodeRows": 26,
+                    "episodeItems": rows,
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+        self.service._media_identity_service = lambda: InventoryService()
+        rich = self.service._build_ai_missing_episode_reply(
+            "查看一下仙逆的缺失集",
+            conversation_key="chat:xianni",
+            rich=True,
+            chat_id="100",
+        )
+
+        self.assertIn("⚠️ 待确认", rich["fallback_text"])
+        self.assertIn("当前编号映射异常，以下缺失仅供参考，不建议直接搜索。", rich["fallback_text"])
+        self.assertIn("原因：编号映射异常，无法可靠判断缺集", rich["fallback_text"])
+        self.assertIn("参考缺失：S01E11-E147", rich["fallback_text"])
+        self.assertNotIn("需要生成这些缺失集的搜索清单吗？", rich["fallback_text"])
+        self.assertIsNone(rich["reply_markup"])
+
+    def test_missing_query_prefers_exact_tmdb_library_hit_before_local_candidates(self) -> None:
+        class InventoryService:
+            def search_media(self, query: str, *, media_type: str = ""):
+                return [{"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "score": 100}]
+
+            def query_library_exists_by_tmdb(self, identity):
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "xian-ni", "Name": "仙逆", "Type": "Series", "ProviderIds": {"Tmdb": "223911"}},
+                    "seasonMap": {1: {1, 2, 3}},
+                    "episodeRows": 3,
+                    "episodeItems": [
+                        {"season": 1, "episode": 1, "name": "仙逆 第1集", "sortName": "", "originalTitle": "", "path": "/xianni/1.mkv"},
+                        {"season": 1, "episode": 2, "name": "仙逆 第2集", "sortName": "", "originalTitle": "", "path": "/xianni/2.mkv"},
+                        {"season": 1, "episode": 3, "name": "仙逆 第3集", "sortName": "", "originalTitle": "", "path": "/xianni/3.mkv"},
+                    ],
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+            def search_local_candidates(self, query: str, **kwargs):
+                raise AssertionError("exact tmdb hit should bypass local title fallback")
+
+            def query_media_detail(self, tmdb_id: str, media_type: str):
+                return {
+                    "ok": True,
+                    "totalEpisodes": 3,
+                    "registeredEpisodes": 3,
+                    "airedEpisodes": 3,
+                    "seasonCounts": {1: 3},
+                    "registeredSeasonMap": {1: {1, 2, 3}},
+                    "airedSeasonMap": {1: {1, 2, 3}},
+                    "futureSeasonMap": {},
+                    "unknownAirDateMap": {},
+                    "lastAiredDate": "2026-06-28",
+                    "tmdbQueryCount": 2,
+                }
+
+            def query_library_exists(self, identity):
+                return self.query_library_exists_by_tmdb(identity)
+
+        self.service._media_identity_service = lambda: InventoryService()
+        reply = self.service._build_ai_missing_episode_reply("查看一下仙逆缺失集", conversation_key="chat:xianni")
+
+        self.assertIn("《仙逆》缺集查询结果：", reply)
+        self.assertNotIn("Emby 本地候选", reply)
+
+    def test_missing_query_context_does_not_trust_stale_active_emby_item(self) -> None:
+        conversation_key = "chat:xianni"
+        self.service._ai_conversations.set_active_media(
+            conversation_key,
+            {"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "embySeriesId": "dark"},
+        )
+
+        class InventoryService:
+            def query_library_exists_by_tmdb(self, identity):
+                self_identity = dict(identity)
+                if str(self_identity.get("embyId") or "") == "dark":
+                    return {"ok": True, "exists": False, "embyItem": {}, "embyQueryCount": 1}
+                raise AssertionError(f"unexpected identity: {self_identity}")
+
+            def search_local_candidates(self, query: str, **kwargs):
+                return [
+                    {"embyItemId": "dark", "title": "暗黑", "year": "2017", "type": "series", "tmdbId": "70523", "episodeCount": 26, "score": 920, "scoreReason": "标题不稳定 / TMDB 不一致 / Series / 26 集", "isTitleExact": False, "isSeries": True},
+                    {"embyItemId": "xian-ni", "title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "episodeCount": 147, "score": 1180, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 147 集", "isTitleExact": True, "isSeries": True},
+                ]
+
+        self.service._media_identity_service = lambda: InventoryService()
+
+        rich = self.service._build_ai_missing_episode_reply(
+            "查看一下缺失的集",
+            conversation_key=conversation_key,
+            rich=True,
+            chat_id="100",
+        )
+
+        self.assertIn("没有在 Emby 中找到与 TMDB 223911 完全一致的作品", rich["fallback_text"])
+        self.assertIn("Emby 本地候选", rich["fallback_text"])
+        self.assertNotIn("《仙逆》缺集查询结果：", rich["fallback_text"])
+
+    def test_missing_query_does_not_auto_match_dark_for_xianni(self) -> None:
+        class InventoryService:
+            def search_media(self, query: str, *, media_type: str = ""):
+                return [{"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "score": 100}]
+
+            def query_library_exists_by_tmdb(self, identity):
+                return {"ok": True, "exists": False, "embyItem": {}, "embyQueryCount": 1}
+
+            def search_local_candidates(self, query: str, **kwargs):
+                return [
+                    {"embyItemId": "dark", "title": "暗黑", "year": "2017", "type": "series", "tmdbId": "70523", "episodeCount": 26, "score": 920, "scoreReason": "标题不稳定 / TMDB 不一致 / Series / 26 集", "isTitleExact": False, "isSeries": True},
+                    {"embyItemId": "xian-ni", "title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "episodeCount": 147, "score": 1180, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 147 集", "isTitleExact": True, "isSeries": True},
+                ]
+
+        self.service._media_identity_service = lambda: InventoryService()
+        rich = self.service._build_ai_missing_episode_reply(
+            "查看一下仙逆缺失集",
+            conversation_key="chat:xianni",
+            rich=True,
+            chat_id="100",
+        )
+
+        self.assertIn("Emby 本地候选", rich["fallback_text"])
+        self.assertIn("暗黑", rich["fallback_text"])
+        self.assertIn("仙逆", rich["fallback_text"])
+        self.assertEqual(rich["reply_markup"]["inline_keyboard"][0][0]["callback_data"].split(":")[1], "pick")
+
+    def test_missing_query_prefers_emby_missing_episode_data_when_available(self) -> None:
+        class InventoryService:
+            def search_media(self, query: str, *, media_type: str = ""):
+                return [{"title": "遮天", "year": "2023", "type": "series", "tmdbId": "224839", "score": 100}]
+
+            def search_local_candidates(self, query: str, **kwargs):
+                return [{"embyItemId": "zhe-tian", "title": "遮天", "year": "2023", "type": "series", "tmdbId": "224839", "episodeCount": 162, "score": 1180, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 162 集", "isTitleExact": True, "isSeries": True}]
+
+            def query_library_exists_by_tmdb(self, identity):
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "zhe-tian", "Name": "遮天", "Type": "Series", "ProviderIds": {"Tmdb": "224839"}},
+                    "seasonMap": {1: set(range(1, 161))},
+                    "seasonItems": [{"season": 1, "name": "Season 1", "itemId": "season-1"}],
+                    "episodeRows": 160,
+                    "episodeItems": [
+                        {"season": 1, "episode": number, "name": f"遮天 第{number}集", "sortName": "", "originalTitle": "", "path": f"/zhetian/{number}.mkv"}
+                        for number in range(1, 161)
+                    ],
+                    "missingEpisodeMap": {1: {161, 162}},
+                    "missingEpisodeItems": [
+                        {"season": 1, "episode": 161, "name": "遮天 第161集", "sortName": "", "originalTitle": "", "path": "", "isMissing": True, "locationType": "Virtual"},
+                        {"season": 1, "episode": 162, "name": "遮天 第162集", "sortName": "", "originalTitle": "", "path": "", "isMissing": True, "locationType": "Virtual"},
+                    ],
+                    "hasMissingEpisodeData": True,
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+            def query_media_detail(self, tmdb_id: str, media_type: str):
+                return {
+                    "ok": True,
+                    "totalEpisodes": 175,
+                    "registeredEpisodes": 175,
+                    "airedEpisodes": 162,
+                    "seasonCounts": {1: 175},
+                    "registeredSeasonMap": {1: set(range(1, 176))},
+                    "airedSeasonMap": {1: set(range(1, 163))},
+                    "futureSeasonMap": {1: set(range(163, 176))},
+                    "unknownAirDateMap": {},
+                    "lastAiredDate": "2026-05-26",
+                    "tmdbQueryCount": 2,
+                }
+
+            def query_library_exists(self, identity):
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "zhe-tian", "Name": "遮天", "Type": "Series", "ProviderIds": {"Tmdb": "224839"}},
+                    "seasonMap": {1: set(range(1, 161))},
+                    "seasonItems": [{"season": 1, "name": "Season 1", "itemId": "season-1"}],
+                    "episodeRows": 160,
+                    "episodeItems": [
+                        {"season": 1, "episode": number, "name": f"遮天 第{number}集", "sortName": "", "originalTitle": "", "path": f"/zhetian/{number}.mkv"}
+                        for number in range(1, 161)
+                    ],
+                    "missingEpisodeMap": {1: {161, 162}},
+                    "missingEpisodeItems": [
+                        {"season": 1, "episode": 161, "name": "遮天 第161集", "sortName": "", "originalTitle": "", "path": "", "isMissing": True, "locationType": "Virtual"},
+                        {"season": 1, "episode": 162, "name": "遮天 第162集", "sortName": "", "originalTitle": "", "path": "", "isMissing": True, "locationType": "Virtual"},
+                    ],
+                    "hasMissingEpisodeData": True,
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 3,
+                }
+
+        self.service._media_identity_service = lambda: InventoryService()
+        rich = self.service._build_ai_missing_episode_reply(
+            "查看一下遮天缺失集",
+            conversation_key="chat:zhetian",
+            rich=True,
+            chat_id="100",
+        )
+
+        self.assertIn("📝 《遮天》（2023）— 缺失集", rich["fallback_text"])
+        self.assertIn("161-162", rich["fallback_text"])
 
     def test_missing_report_uses_sectioned_markdown_and_button(self) -> None:
         reply = self.service._missing_episode_report_reply(
@@ -323,10 +701,11 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
             chat_id="100",
         )
 
-        self.assertEqual(reply["parse_mode"], "MarkdownV2")
+        self.assertEqual(reply["parse_mode"], "")
         self.assertIn("执行 1 次搜索，查询 4 次数据", reply["text"])
-        self.assertIn("```text\n项目       | 详情", reply["text"])
-        self.assertIn("缺失的剧集：E158、E161", reply["fallback_text"])
+        self.assertIn("📝 《遮天》（2023）— 缺失集", reply["text"])
+        self.assertIn("Emby 媒体库状态：", reply["text"])
+        self.assertIn("共缺失", reply["fallback_text"])
         self.assertEqual(reply["reply_markup"]["inline_keyboard"][0][0]["text"], "生成搜索清单")
 
     def test_missing_report_without_missing_has_no_button(self) -> None:
@@ -334,6 +713,16 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
             {
                 "title": "遮天",
                 "year": "2023",
+                "seasonRows": [
+                    {
+                        "seasonLabel": "Season 1",
+                        "existingText": "1-33",
+                        "totalText": "33",
+                        "missingText": "无",
+                        "statusText": "✅ 完整",
+                    }
+                ],
+                "summaryText": "全集 33 集均已入库，无缺失。",
                 "missingText": "无",
                 "missingLabels": [],
                 "searchCount": 1,
@@ -343,6 +732,8 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
 
         self.assertIsNone(reply["reply_markup"])
         self.assertNotIn("需要生成", reply["fallback_text"])
+        self.assertIn("✅ 完整", reply["fallback_text"])
+        self.assertIn("全集 33 集均已入库，无缺失。", reply["fallback_text"])
 
     def test_missing_search_callback_generates_at_most_fifty_keywords(self) -> None:
         sent = []
@@ -404,6 +795,150 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
 
         self.assertFalse(sent)
         self.assertIn("已过期", answered[0]["text"])
+
+    def test_missing_identity_continue_callback_uses_emby_identity(self) -> None:
+        answered = []
+        edits = []
+        case = self
+
+        class FakeSender:
+            def answer_callback_query(self, **kwargs):
+                answered.append(kwargs)
+
+            def edit_message_text(self, **kwargs):
+                edits.append(kwargs)
+
+        class InventoryService:
+            def query_media_detail(self, tmdb_id: str, media_type: str):
+                case.assertEqual(tmdb_id, "999999")
+                return {
+                    "ok": True,
+                    "totalEpisodes": 2,
+                    "registeredEpisodes": 2,
+                    "airedEpisodes": 2,
+                    "seasonCounts": {1: 2},
+                    "registeredSeasonMap": {1: {1, 2}},
+                    "airedSeasonMap": {1: {1, 2}},
+                    "futureSeasonMap": {},
+                    "unknownAirDateMap": {},
+                    "lastAiredDate": "2026-06-28",
+                    "tmdbQueryCount": 2,
+                }
+
+            def query_library_exists(self, identity):
+                case.assertTrue(identity.get("forceEmbyItem"))
+                case.assertEqual(identity.get("embyId"), "emby-1")
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "emby-1", "Name": "仙逆", "Type": "Series", "ProductionYear": 2024, "ProviderIds": {"Tmdb": "999999"}},
+                    "seasonMap": {1: {1, 2}},
+                    "episodeRows": 2,
+                    "episodeItems": [
+                        {"season": 1, "episode": 1, "name": "仙逆 第1集", "sortName": "", "originalTitle": "", "path": "/xianni/1.mkv"},
+                        {"season": 1, "episode": 2, "name": "仙逆 第2集", "sortName": "", "originalTitle": "", "path": "/xianni/2.mkv"},
+                    ],
+                    "specials": [],
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+        self.service.sender = FakeSender()
+        self.service._media_identity_service = lambda: InventoryService()
+        self.service._pending_ai_actions["identity-action"] = {
+            "type": "missing_episode_identity",
+            "chatId": "100",
+            "conversationKey": "chat:xianni",
+            "question": "查看一下仙逆缺失集",
+            "targetIdentity": {"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911"},
+            "embyIdentity": {"title": "仙逆", "year": "2024", "type": "series", "tmdbId": "999999", "embyId": "emby-1", "forceEmbyItem": True},
+            "candidates": [{"embyItemId": "emby-1", "title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "episodeCount": 2, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 2 集"}],
+            "createdAt": time.time(),
+        }
+
+        self.service._handle_missing_identity_callback(
+            data="missing_identity:continue:identity-action",
+            token="token",
+            callback_id="callback",
+            chat_id="100",
+            message_id=7,
+        )
+
+        self.assertIn("已按 Emby 条目继续查询", answered[0]["text"])
+        self.assertTrue(edits)
+        self.assertIn("已按 Emby 命中条目继续查询", edits[0]["text"])
+        self.assertIn("⚠️ 待确认", edits[0]["text"])
+
+    def test_missing_identity_reselect_callback_shows_candidate_buttons(self) -> None:
+        answered = []
+        edits = []
+
+        class FakeSender:
+            def answer_callback_query(self, **kwargs):
+                answered.append(kwargs)
+
+            def edit_message_text(self, **kwargs):
+                edits.append(kwargs)
+
+        self.service.sender = FakeSender()
+        self.service._pending_ai_actions["identity-action"] = {
+            "type": "missing_episode_identity",
+            "chatId": "100",
+            "conversationKey": "chat:xianni",
+            "question": "查看一下仙逆缺失集",
+            "targetIdentity": {"title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911"},
+            "candidates": [
+                {"embyItemId": "emby-1", "title": "仙逆", "year": "2023", "type": "series", "tmdbId": "223911", "episodeCount": 147, "scoreReason": "标题完全匹配 / TMDB 一致 / Series / 147 集"},
+                {"embyItemId": "emby-2", "title": "仙逆 特别篇", "year": "2024", "type": "series", "tmdbId": "223912", "episodeCount": 8, "scoreReason": "标题相似 / TMDB 未绑定 / Series / 8 集"},
+            ],
+            "createdAt": time.time(),
+        }
+
+        self.service._handle_missing_identity_callback(
+            data="missing_identity:reselect:identity-action",
+            token="token",
+            callback_id="callback",
+            chat_id="100",
+            message_id=7,
+        )
+
+        self.assertIn("请选择正确作品", answered[0]["text"])
+        self.assertTrue(edits)
+        self.assertIn("请选择正确作品", edits[0]["text"])
+        self.assertEqual(edits[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "missing_identity:pick:identity-action:0")
+
+    def test_callback_router_dispatches_missing_identity_actions(self) -> None:
+        called = {}
+
+        def fake_handler(**kwargs):
+            called.update(kwargs)
+
+        self.service._handle_missing_identity_callback = fake_handler
+        self.service._handle_callback_query(
+            {
+                "id": "cb-1",
+                "data": "missing_identity:pick:identity-action:0",
+                "message": {
+                    "message_id": 7,
+                    "chat": {"id": 100},
+                },
+            },
+            token="token",
+        )
+
+        self.assertEqual(called["data"], "missing_identity:pick:identity-action:0")
+        self.assertEqual(called["token"], "token")
+        self.assertEqual(called["callback_id"], "cb-1")
+        self.assertEqual(called["chat_id"], "100")
+        self.assertEqual(called["message_id"], 7)
+
+    def test_ai_reply_normalizes_plain_text_without_title_or_text_label(self) -> None:
+        reply = self.service._ai_markdown_reply("🧠 AI 媒体问答", "Text\n\n这是正常回答。")
+
+        self.assertEqual(reply["parse_mode"], "")
+        self.assertEqual(reply["text"], "这是正常回答。")
+        self.assertNotIn("AI 媒体问答", reply["text"])
+        self.assertNotIn("Text", reply["text"])
 
 
 if __name__ == "__main__":
