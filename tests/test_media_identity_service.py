@@ -223,9 +223,39 @@ class MediaIdentityServiceTests(unittest.TestCase):
 
         self.assertEqual(detail["totalEpisodes"], 3)
         self.assertEqual(detail["seasonCounts"], {1: 3})
+        self.assertEqual(detail["specialEpisodeCount"], 2)
         self.assertEqual(detail["airedSeasonMap"], {1: {1}})
         self.assertEqual(detail["futureSeasonMap"], {1: {2}})
         self.assertEqual(detail["unknownAirDateMap"], {1: {3}})
+
+    def test_query_library_inventory_excludes_specials_from_episode_rows(self) -> None:
+        def emby_fetcher(path: str):
+            if "AnyProviderIdEqualTo=tmdb%3A79481" in path:
+                return {"Items": [{"Id": "doupo", "Name": "斗破苍穹", "Type": "Series", "ProviderIds": {"Tmdb": "79481"}}]}
+            if "ParentId=doupo" in path and "IncludeItemTypes=Season" in path:
+                return {"Items": [{"Id": "season-1", "IndexNumber": 1, "Name": "Season 1"}]}
+            if "ParentId=doupo" in path and "IncludeItemTypes=Episode" in path:
+                return {
+                    "Items": [
+                        {"ParentIndexNumber": 0, "IndexNumber": 1, "Name": "特别篇1", "LocationType": "", "IsMissing": False},
+                        {"ParentIndexNumber": 1, "IndexNumber": 1, "Name": "正片1", "LocationType": "", "IsMissing": False},
+                        {"ParentIndexNumber": 1, "IndexNumber": 2, "Name": "正片2", "LocationType": "", "IsMissing": False},
+                    ],
+                    "TotalRecordCount": 3,
+                }
+            raise AssertionError(f"unexpected path: {path}")
+
+        service = MediaIdentityService(
+            emby_fetcher=emby_fetcher,
+            tmdb_fetcher=None,
+            cache_path=self.cache_path,
+        )
+
+        payload = service.query_library_exists_by_tmdb({"title": "斗破苍穹", "type": "series", "tmdbId": "79481"})
+
+        self.assertTrue(payload["exists"])
+        self.assertEqual(payload["episodeRows"], 2)
+        self.assertEqual(len(payload["specials"]), 1)
 
     def test_tmdb_provider_lookup_precedes_title_search(self) -> None:
         paths = []

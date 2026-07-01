@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
-from .ai_missing_episode_support import MissingEpisodeResult, MissingEpisodeSeason
+from .ai_missing_episode_support import MissingEpisodeResult, MissingEpisodeSeason, compress_plain_episode_numbers
 
 if TYPE_CHECKING:
     from .media_identity_service import MediaIdentityService
@@ -467,6 +467,10 @@ class AIMediaServiceAdapter:
         data_query_count = int(expected.get("tmdbQueryCount") or 0) + int(existing.get("embyQueryCount") or 0)
         explicit_missing_map = self._normalize_episode_map(existing.get("missingEpisodeMap"))
         explicit_missing_source = bool(existing.get("hasMissingEpisodeData")) and bool(explicit_missing_map)
+        special_rows = self._build_special_season_rows(
+            specials=existing.get("specials"),
+            special_total=int(expected.get("specialEpisodeCount") or 0),
+        )
 
         if not bool(existing.get("exists")):
             return MissingEpisodeResult(
@@ -499,6 +503,7 @@ class AIMediaServiceAdapter:
                 emby_year=emby_year,
                 emby_item_id=emby_item_id,
                 missing_source="",
+                special_rows=special_rows,
             )
 
         raw_season_map = self._normalize_episode_map(existing.get("seasonMap"))
@@ -573,12 +578,14 @@ class AIMediaServiceAdapter:
                 emby_year=emby_year,
                 emby_item_id=emby_item_id,
                 missing_source="emby_missing" if explicit_missing_source else "",
+                special_rows=special_rows,
             )
 
         registered_map = self._normalize_episode_map(expected.get("registeredSeasonMap"))
         aired_map = self._normalize_episode_map(expected.get("airedSeasonMap"))
         future_map = self._normalize_episode_map(expected.get("futureSeasonMap"))
         unknown_map = self._normalize_episode_map(expected.get("unknownAirDateMap"))
+        special_total = int(expected.get("specialEpisodeCount") or 0)
         season_counts = (
             {
                 int(key): int(value)
@@ -615,6 +622,10 @@ class AIMediaServiceAdapter:
         unmapped_count = max(0, local_count - mapped_count)
         comparison_reliable = unmapped_count == 0 and not mapped_payload["extraSamples"]
         mapping_warning = "" if comparison_reliable else "编号映射异常，无法可靠判断缺集"
+        special_rows = self._build_special_season_rows(
+            specials=existing.get("specials"),
+            special_total=special_total,
+        )
 
         seasons: dict[int, MissingEpisodeSeason] = {}
         missing_labels: list[str] = []
@@ -680,6 +691,7 @@ class AIMediaServiceAdapter:
             emby_year=emby_year,
             emby_item_id=emby_item_id,
             missing_source="emby_missing" if explicit_missing_source else "tmdb_aired_diff",
+            special_rows=special_rows,
         )
 
     def missing_episode_report_reply(self, report: dict[str, Any], *, chat_id: str = "") -> "CommandReply":
@@ -1542,6 +1554,31 @@ class AIMediaServiceAdapter:
             else:
                 unmapped.append(sample)
         return {"mappedMap": mapped, "unmappedSamples": unmapped[:5], "extraSamples": extras[:5]}
+
+    @staticmethod
+    def _build_special_season_rows(*, specials: Any, special_total: int) -> list[dict[str, str]]:
+        rows = [row for row in specials if isinstance(row, dict)] if isinstance(specials, list) else []
+        existing_values = sorted(
+            {
+                int(row.get("episode") or 0)
+                for row in rows
+                if int(row.get("episode") or 0) > 0
+                and not bool(row.get("isMissing"))
+                and str(row.get("locationType") or "").strip().lower() != "virtual"
+            }
+        )
+        total = max(int(special_total or 0), max(existing_values, default=0))
+        if total <= 0 and not existing_values:
+            return []
+        return [
+            {
+                "seasonLabel": "S0 特别篇",
+                "existingText": compress_plain_episode_numbers(existing_values) if existing_values else "未入库",
+                "totalText": str(total or len(existing_values)),
+                "missingText": "—",
+                "statusText": "—",
+            }
+        ]
 
     @staticmethod
     def _episode_by_ordinal(registered_map: dict[int, set[int]]) -> dict[int, tuple[int, int]]:

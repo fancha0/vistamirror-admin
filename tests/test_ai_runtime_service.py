@@ -674,6 +674,97 @@ class AIRuntimeServiceTests(unittest.TestCase):
         self.assertEqual(result.mapped_episodes, 1)
         self.assertIn(147, result.seasons[1].existing_episodes)
 
+    def test_media_service_ignores_specials_for_mainline_reliability_and_renders_special_row(self) -> None:
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:runtime",
+            chat_id="100",
+            rich=True,
+        )
+
+        class InventoryService:
+            def query_media_detail(self, tmdb_id: str, media_type: str):
+                return {
+                    "ok": True,
+                    "totalEpisodes": 269,
+                    "registeredEpisodes": 269,
+                    "airedEpisodes": 265,
+                    "seasonCounts": {1: 12, 2: 12, 3: 12, 4: 24, 5: 209},
+                    "registeredSeasonMap": {
+                        1: set(range(1, 13)),
+                        2: set(range(1, 13)),
+                        3: set(range(1, 13)),
+                        4: set(range(1, 25)),
+                        5: set(range(1, 210)),
+                    },
+                    "airedSeasonMap": {
+                        1: set(range(1, 13)),
+                        2: set(range(1, 13)),
+                        3: set(range(1, 13)),
+                        4: set(range(1, 25)),
+                        5: set(range(1, 206)),
+                    },
+                    "futureSeasonMap": {5: set(range(206, 210))},
+                    "unknownAirDateMap": {},
+                    "specialEpisodeCount": 23,
+                    "lastAiredDate": "2026-06-27",
+                    "tmdbQueryCount": 2,
+                }
+
+            def query_library_exists_by_tmdb(self, identity):
+                episode_items = []
+                for season, total in ((1, 12), (2, 12), (3, 12), (4, 24)):
+                    episode_items.extend(
+                        {"season": season, "episode": number, "name": f"S{season:02d}E{number:02d}", "sortName": "", "originalTitle": "", "path": f"/doupo/s{season}/{number}.mkv"}
+                        for number in range(1, total + 1)
+                    )
+                episode_items.extend(
+                    {"season": 5, "episode": number, "name": f"斗破苍穹 第{number}集", "sortName": "", "originalTitle": "", "path": f"/doupo/s5/{number}.mkv"}
+                    for number in range(1, 196)
+                )
+                specials = [
+                    {"season": 0, "episode": number, "name": f"特别篇{number}", "path": f"/doupo/s0/{number}.mkv", "isMissing": False, "locationType": ""}
+                    for number in range(1, 22)
+                ]
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "doupo", "Name": "斗破苍穹", "Type": "Series", "ProviderIds": {"Tmdb": "79481"}},
+                    "seasonMap": {
+                        1: set(range(1, 13)),
+                        2: set(range(1, 13)),
+                        3: set(range(1, 13)),
+                        4: set(range(1, 25)),
+                        5: set(range(1, 196)),
+                    },
+                    "episodeRows": 255,
+                    "episodeItems": episode_items,
+                    "specials": specials,
+                    "duplicates": [],
+                    "embyQueryCount": 2,
+                }
+
+            def query_library_exists(self, identity):
+                return self.query_library_exists_by_tmdb(identity)
+
+        self.service._media_identity_service = lambda: InventoryService()
+
+        result = runtime.host.media_service.build_missing_episode_result(
+            identity={"title": "斗破苍穹", "year": "2017", "type": "series", "tmdbId": "79481"},
+        )
+        report = result.to_report_dict(search_count=1, data_query_count=result.data_query_count)
+        reply = runtime.host.media_service.missing_episode_report_reply(report, chat_id="100")
+
+        self.assertEqual(result.mapping_confidence, "high")
+        self.assertEqual(result.existing_episodes, 255)
+        self.assertEqual(result.mapped_episodes, 255)
+        self.assertEqual(result.unmapped_episodes, 0)
+        self.assertEqual(result.seasons[1].missing_episodes, [])
+        self.assertEqual(result.seasons[5].missing_episodes, list(range(196, 206)))
+        self.assertIn("S0 特别篇", reply["fallback_text"])
+        self.assertIn("Season 5", reply["fallback_text"])
+        self.assertNotIn("⚠️ 待确认", reply["fallback_text"])
+
     def test_missing_episode_tool_requires_confirmed_tmdb_identity(self) -> None:
         runtime = AIRuntimeService(
             self.service,

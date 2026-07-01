@@ -254,6 +254,7 @@ class MediaIdentityService:
         if not detail:
             return {"ok": False, "tmdbId": str(tmdb_id or ""), "totalEpisodes": 0, "seasonCounts": {}, "tmdbQueryCount": tmdb_query_count}
         season_counts: dict[int, int] = {}
+        special_episode_count = 0
         registered_season_map: dict[int, set[int]] = {}
         aired_season_map: dict[int, set[int]] = {}
         future_season_map: dict[int, set[int]] = {}
@@ -269,6 +270,9 @@ class MediaIdentityService:
                 season_no = int(season.get("season_number") or 0)
                 episode_count = int(season.get("episode_count") or 0)
             except Exception:
+                continue
+            if season_no == 0 and episode_count > 0:
+                special_episode_count = episode_count
                 continue
             if season_no > 0 and episode_count > 0:
                 season_counts[season_no] = episode_count
@@ -332,6 +336,7 @@ class MediaIdentityService:
             "airedSeasonMap": aired_season_map,
             "futureSeasonMap": future_season_map,
             "unknownAirDateMap": unknown_air_date_map,
+            "specialEpisodeCount": special_episode_count,
             "seasonErrors": season_errors,
             "lastAiredDate": last_aired_date,
             "tmdbQueryCount": tmdb_query_count,
@@ -433,14 +438,14 @@ class MediaIdentityService:
             if episode <= 0:
                 continue
             if season <= 0:
-                if not normalized.get("isMissing") and str(normalized.get("locationType") or "").strip().lower() != "virtual":
-                    present_episode_rows += 1
                 specials.append(
                     {
                         "season": season,
                         "episode": episode,
                         "name": str(row.get("Name") or ""),
                         "path": str(row.get("Path") or ""),
+                        "isMissing": bool(normalized.get("isMissing")),
+                        "locationType": str(normalized.get("locationType") or "").strip(),
                     }
                 )
                 continue

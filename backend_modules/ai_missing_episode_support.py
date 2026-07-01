@@ -223,6 +223,7 @@ class MissingEpisodeResult:
     identity_note: str = ""
     missing_source: str = ""
     candidate_count: int = 0
+    special_rows: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def reliable(self) -> bool:
@@ -290,7 +291,8 @@ class MissingEpisodeResult:
             for season in sorted(self.seasons)
             for episode in self.seasons[season].unknown_episodes
         ]
-        season_rows = [self.seasons[season].display_row(reliable=self.reliable) for season in sorted(self.seasons)]
+        season_rows = list(self.special_rows)
+        season_rows.extend(self.seasons[season].display_row(reliable=self.reliable) for season in sorted(self.seasons))
         return {
             "title": self.title,
             "year": self.year,
