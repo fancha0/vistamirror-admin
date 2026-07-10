@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from .ai_host_adapter import AIHostAdapter
 from .ai_intent_router import AiIntentRouter
 from .ai_missing_episode_support import is_missing_episode_meta_question
+from .ai_tool_handlers import is_library_directory_question, is_library_exists_question
 from .ai_assistant import chat_completion
 
 if TYPE_CHECKING:
@@ -28,6 +29,8 @@ class AIOrchestrator:
     ) -> tuple[str, str]:
         original = str(question or "").strip()
         if is_missing_episode_meta_question(original):
+            return original, ""
+        if is_library_exists_question(original) or is_library_directory_question(original):
             return original, ""
         active = self.host.conversations.get_active_media(self.conversation_key)
         router = AiIntentRouter(chat_completion)

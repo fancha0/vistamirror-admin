@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .ai_missing_episode_support import is_missing_episode_meta_question
 
-if TYPE_CHECKING:
-    from .telegram_commands import TelegramCommandService
-
 
 class AIMediaHost:
-    def __init__(self, service: "TelegramCommandService") -> None:
-        self._service = service
+    def __init__(self, _service: Any | None = None) -> None:
+        pass
 
     def resolve_year(self, item: dict[str, Any]) -> str:
         year = item.get("ProductionYear")
@@ -70,7 +67,7 @@ class AIMediaHost:
             r"最新(?:的)?(?:是)?",
             r"(?:缺失|缺少|缺哪|漏掉|漏)(?:的)?集",
             r"(?:的)?(?:简介|剧情|详情|演员|主演|评分)",
-            r"有没有|是否有",
+            r"有没有|是否有|有吗|在吗",
         )
         split_at = len(value)
         for pattern in tail_patterns:
@@ -198,7 +195,8 @@ class AIMediaHost:
         if not text:
             return False
         if not re.search(r"列出|列出来|全部|有哪些|查询|查找|看看|看一下|显示|统计|资源|片单|清单|扫描一下", text):
-            return False
+            if not re.search(r"有什么|有啥|哪些", text):
+                return False
         lowered = text.lower()
         needles = (
             "国产动漫",

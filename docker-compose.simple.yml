@@ -14,6 +14,7 @@ services:
       - APP_ADMIN_AUTH_ENABLED=1
       - APP_ADMIN_USERNAME=admin
       - APP_ADMIN_PASSWORD=admin123
+      - VISTAMIRROR_PUBLIC_BASE_URL=
       - APP_HDHIVE_AUTH_MODE=broker
       - APP_HDHIVE_BROKER_URL=
     volumes:

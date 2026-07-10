@@ -86,29 +86,46 @@ class MediaLibrarianToolset(AIToolsetBase):
         keyword = self.extract_media_keyword(question)
         if not keyword:
             return "请带上要确认的影视名称。"
-        resolution = self.host.media_service.media_identity_service().resolve(keyword)
+        service = self.host.media_service.media_identity_service()
+        resolution = service.resolve(keyword)
         if resolution.get("ambiguous"):
             candidates = resolution.get("candidates") if isinstance(resolution.get("candidates"), list) else []
             return self.host.media.format_ai_identity_candidates(keyword, candidates)
         identity = resolution.get("identity") if isinstance(resolution.get("identity"), dict) else {}
         emby_item = resolution.get("embyItem") if isinstance(resolution.get("embyItem"), dict) else {}
-        if not identity or not emby_item:
+        if not identity and not emby_item:
             return f"媒体库中未确认《{keyword}》的有效资源。"
-        inventory = self.host.media_service.media_identity_service().query_library_exists(identity)
-        title = str(identity.get("title") or emby_item.get("Name") or keyword).strip()
+        if not identity and emby_item:
+            identity = {
+                "title": str(emby_item.get("Name") or keyword).strip(),
+                "year": str(emby_item.get("ProductionYear") or "").strip(),
+                "type": "series" if str(emby_item.get("Type") or "").lower() in {"series", "tv"} else "movie",
+                "tmdbId": "",
+                "embyId": str(emby_item.get("Id") or "").strip(),
+                "confidence": "Emby 本地命中",
+            }
+        inventory = service.query_library_exists(identity)
+        matched_item = inventory.get("embyItem") if isinstance(inventory.get("embyItem"), dict) else {}
+        title = str(identity.get("title") or emby_item.get("Name") or matched_item.get("Name") or keyword).strip()
         if not inventory.get("exists"):
             return f"媒体库中未找到《{title}》。"
-        media_type = "剧集" if str(identity.get("type") or "").lower() == "series" else "电影"
+        media_type = "剧集" if str(identity.get("type") or matched_item.get("Type") or "").lower() in {"series", "tv"} else "电影"
         lines = [
             f"媒体库中已存在《{title}》。",
             f"- 类型：{media_type}",
-            f"- Emby ID：{emby_item.get('Id') or '-'}",
+            f"- Emby ID：{matched_item.get('Id') or emby_item.get('Id') or identity.get('embyId') or '-'}",
         ]
         season_map = inventory.get("seasonMap") if isinstance(inventory.get("seasonMap"), dict) else {}
         if season_map:
             season_total = sum(len(values) for values in season_map.values() if isinstance(values, set))
             lines.append(f"- 实际可读取单集：{season_total} 集")
         return "\n".join(lines)
+
+    def query_library_directory(self, question: str) -> str:
+        reply = self.query_service.build_library_directory_reply(question)
+        if reply:
+            return reply
+        return "当前没有识别到有效目录分类。请直接说“我库里有什么亚洲电影 / 华语电影 / 国产动漫 / 剧集”。"
 
     def query_media_detail(self, question: str) -> str:
         return self.query_service.build_media_detail_reply(question)
@@ -144,7 +161,30 @@ def is_hdhive_question(text: str) -> bool:
 
 
 def is_library_exists_question(text: str) -> bool:
-    return bool(re.search(r"媒体库里有没有|库里有没有|是否存在|存在吗|库里有吗|本地有没有", str(text or "")))
+    clean = str(text or "").strip()
+    if not clean:
+        return False
+    if is_library_directory_question(clean):
+        return False
+    return bool(
+        re.search(
+            r"媒体库里有没有|库里有没有|是否存在|存在吗|库里有吗|本地有没有|媒体库里.*有吗|库里.*有吗|有没有.*(这部|这片|这剧|这部片|这部剧)?",
+            clean,
+        )
+    )
+
+
+def is_library_directory_question(text: str) -> bool:
+    clean = str(text or "").strip()
+    if not clean:
+        return False
+    return bool(
+        re.search(
+            r"我库里有什么|媒体库里有什么|库里有什么|库里有哪些|媒体库里有哪些|列出.*(电影|剧集|动漫|纪录片|资源|片单)|.*(电影|剧集|动漫|纪录片|资源|片单).*(有哪些|有什么|列表|清单)",
+            clean,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def is_search_media_question(host: "AIHostAdapter | TelegramCommandService", text: str) -> bool:
@@ -153,6 +193,8 @@ def is_search_media_question(host: "AIHostAdapter | TelegramCommandService", tex
     if not clean:
         return False
     if is_library_exists_question(clean):
+        return False
+    if is_library_directory_question(clean):
         return False
     if adapter.media.is_ai_episode_count_question(clean) or bool(AIQueryService.parse_missing_episode_request(clean)):
         return False

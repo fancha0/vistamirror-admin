@@ -13,8 +13,32 @@ class TelegramSender:
     def __init__(self) -> None:
         self._ssl_ctx = ssl._create_unverified_context()
 
-    def _build_opener(self) -> urllib.request.OpenerDirector:
-        proxy_url = str(os.environ.get("TG_PROXY_URL") or "").strip()
+    def _api_request_compat(self, *, token: str, method: str, payload: dict[str, Any], proxy_url: str = "") -> dict[str, Any]:
+        try:
+            return self.api_request(token=token, method=method, payload=payload, proxy_url=proxy_url)
+        except TypeError as err:
+            if "proxy_url" not in str(err):
+                raise
+            return self.api_request(token=token, method=method, payload=payload)
+
+    def _multipart_request_compat(
+        self,
+        *,
+        token: str,
+        method: str,
+        fields: dict[str, Any],
+        files: dict[str, tuple[str, bytes, str]],
+        proxy_url: str = "",
+    ) -> dict[str, Any]:
+        try:
+            return self.multipart_request(token=token, method=method, fields=fields, files=files, proxy_url=proxy_url)
+        except TypeError as err:
+            if "proxy_url" not in str(err):
+                raise
+            return self.multipart_request(token=token, method=method, fields=fields, files=files)
+
+    def _build_opener(self, *, proxy_url: str = "") -> urllib.request.OpenerDirector:
+        proxy_url = str(proxy_url or os.environ.get("TG_PROXY_URL") or "").strip()
         handlers: list[Any] = [urllib.request.HTTPSHandler(context=self._ssl_ctx)]
         if not proxy_url:
             return urllib.request.build_opener(*handlers)
@@ -28,7 +52,7 @@ class TelegramSender:
         )
         return urllib.request.build_opener(*handlers)
 
-    def api_request(self, *, token: str, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def api_request(self, *, token: str, method: str, payload: dict[str, Any], proxy_url: str = "") -> dict[str, Any]:
         safe_token = str(token or "").strip()
         safe_method = str(method or "").strip()
         if not safe_token or not safe_method:
@@ -41,7 +65,7 @@ class TelegramSender:
             method="POST",
             headers={"Content-Type": "application/json; charset=utf-8"},
         )
-        opener = self._build_opener()
+        opener = self._build_opener(proxy_url=proxy_url)
         try:
             with opener.open(request, timeout=20) as response:
                 body = response.read().decode("utf-8", errors="replace")
@@ -69,6 +93,7 @@ class TelegramSender:
         method: str,
         fields: dict[str, Any],
         files: dict[str, tuple[str, bytes, str]],
+        proxy_url: str = "",
     ) -> dict[str, Any]:
         safe_token = str(token or "").strip()
         safe_method = str(method or "").strip()
@@ -105,7 +130,7 @@ class TelegramSender:
             method="POST",
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         )
-        opener = self._build_opener()
+        opener = self._build_opener(proxy_url=proxy_url)
         try:
             with opener.open(request, timeout=30) as response:
                 body = response.read().decode("utf-8", errors="replace")
@@ -135,6 +160,7 @@ class TelegramSender:
         reply_markup: dict[str, Any] | None = None,
         parse_mode: str = "",
         reply_to_message_id: int = 0,
+        proxy_url: str = "",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
         if parse_mode:
@@ -146,7 +172,7 @@ class TelegramSender:
                 "message_id": int(reply_to_message_id),
                 "allow_sending_without_reply": True,
             }
-        return self.api_request(token=token, method="sendMessage", payload=payload)
+        return self._api_request_compat(token=token, method="sendMessage", payload=payload, proxy_url=proxy_url)
 
     def edit_message_text(
         self,
@@ -157,6 +183,7 @@ class TelegramSender:
         text: str,
         reply_markup: dict[str, Any] | None = None,
         parse_mode: str = "",
+        proxy_url: str = "",
     ) -> None:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -168,18 +195,18 @@ class TelegramSender:
             payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        self.api_request(token=token, method="editMessageText", payload=payload)
+        self._api_request_compat(token=token, method="editMessageText", payload=payload, proxy_url=proxy_url)
 
-    def answer_callback_query(self, *, token: str, callback_query_id: str, text: str = "") -> None:
+    def answer_callback_query(self, *, token: str, callback_query_id: str, text: str = "", proxy_url: str = "") -> None:
         payload: dict[str, Any] = {"callback_query_id": callback_query_id}
         if text:
             payload["text"] = text
             payload["show_alert"] = False
-        self.api_request(token=token, method="answerCallbackQuery", payload=payload)
+        self._api_request_compat(token=token, method="answerCallbackQuery", payload=payload, proxy_url=proxy_url)
 
-    def send_chat_action(self, *, token: str, chat_id: str, action: str = "typing") -> None:
+    def send_chat_action(self, *, token: str, chat_id: str, action: str = "typing", proxy_url: str = "") -> None:
         payload = {"chat_id": chat_id, "action": action or "typing"}
-        self.api_request(token=token, method="sendChatAction", payload=payload)
+        self._api_request_compat(token=token, method="sendChatAction", payload=payload, proxy_url=proxy_url)
 
     def send_photo(
         self,
@@ -190,6 +217,7 @@ class TelegramSender:
         caption: str,
         button_text: str = "",
         button_url: str = "",
+        proxy_url: str = "",
     ) -> None:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -200,7 +228,7 @@ class TelegramSender:
             payload["reply_markup"] = {
                 "inline_keyboard": [[{"text": button_text, "url": button_url}]],
             }
-        self.api_request(token=token, method="sendPhoto", payload=payload)
+        self._api_request_compat(token=token, method="sendPhoto", payload=payload, proxy_url=proxy_url)
 
     def send_photo_file(
         self,
@@ -212,6 +240,7 @@ class TelegramSender:
         filename: str = "poster.jpg",
         content_type: str = "image/jpeg",
         reply_markup: dict[str, Any] | None = None,
+        proxy_url: str = "",
     ) -> None:
         fields: dict[str, Any] = {
             "chat_id": chat_id,
@@ -219,11 +248,12 @@ class TelegramSender:
         }
         if reply_markup:
             fields["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-        self.multipart_request(
+        self._multipart_request_compat(
             token=token,
             method="sendPhoto",
             fields=fields,
             files={"photo": (filename or "poster.jpg", photo_bytes, content_type or "image/jpeg")},
+            proxy_url=proxy_url,
         )
 
     def set_my_commands(self, *, token: str, commands: list[dict[str, str]]) -> None:

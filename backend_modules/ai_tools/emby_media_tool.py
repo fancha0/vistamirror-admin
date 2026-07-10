@@ -55,6 +55,8 @@ class EmbyMediaTool(AIToolBase):
             return self._media_tools.search_media(question)
         if self._operation == "query_library_exists":
             return self._media_tools.query_library_exists(question)
+        if self._operation == "query_library_directory":
+            return self._media_tools.query_library_directory(question)
         if self._operation == "query_media_detail":
             return self._media_tools.query_media_detail(question)
         if self._operation == "query_missing_episodes":

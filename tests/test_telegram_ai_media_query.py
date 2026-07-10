@@ -2,7 +2,9 @@ import pathlib
 import tempfile
 import time
 import unittest
+import json
 
+from backend_modules.ai_runtime_service import AIRuntimeService
 from backend_modules.telegram_commands import TelegramCommandService
 from backend_modules.media_identity_service import MediaIdentityService
 
@@ -182,6 +184,385 @@ class TelegramAiMediaQueryTests(unittest.TestCase):
         self.assertIn("《完美世界》详情", reply)
         self.assertIn("演员甲、演员乙", reply)
         self.assertIn("这是一段剧情简介", reply)
+
+    def test_library_exists_query_keeps_going_when_resolution_has_identity_only(self) -> None:
+        class InventoryService:
+            def resolve(self, query: str, *, preferred_type: str = ""):
+                if query != "釜山行":
+                    raise AssertionError(f"unexpected query: {query}")
+                return {
+                    "identity": {"title": "釜山行", "year": "2016", "type": "movie", "tmdbId": "396535"},
+                    "embyItem": {},
+                    "candidates": [],
+                    "ambiguous": False,
+                }
+
+            def query_library_exists(self, identity):
+                if str(identity.get("tmdbId") or "") != "396535":
+                    raise AssertionError(f"unexpected identity: {identity}")
+                return {
+                    "ok": True,
+                    "exists": True,
+                    "embyItem": {"Id": "busanhaeng", "Name": "釜山行", "Type": "Movie", "ProductionYear": 2016},
+                    "seasonMap": {},
+                }
+
+        self.service._media_identity_service = lambda: InventoryService()
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:exists",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "媒体库里釜山行有吗",
+            allowed_names=provider.allowed_tool_names_for_question("媒体库里釜山行有吗"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_exists")
+        self.assertIn("媒体库中已存在《釜山行》", dispatched[1])
+        self.assertIn("Emby ID：busanhaeng", dispatched[1])
+
+    def test_library_directory_query_dispatches_separately_from_exists_query(self) -> None:
+        def fake_emby_get(path: str):
+            if path == "/Sessions":
+                return [{"UserId": "user-1"}]
+            if path == "/Library/VirtualFolders":
+                return [{"ItemId": "asia-lib", "Name": "亚洲电影", "CollectionType": "movies"}]
+            if path.startswith("/Users/user-1/Items?") and "ParentId=asia-lib" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "movie-1",
+                            "Name": "前往釜山",
+                            "Type": "Movie",
+                            "ProductionYear": 2016,
+                            "Path": "/媒体库/电影/亚洲电影/前往釜山 (2016)",
+                            "Genres": ["惊悚"],
+                        },
+                        {
+                            "Id": "movie-2",
+                            "Name": "釜山行2：半岛",
+                            "Type": "Movie",
+                            "ProductionYear": 2020,
+                            "Path": "/媒体库/电影/亚洲电影/釜山行2：半岛 (2020)",
+                            "Genres": ["动作"],
+                        },
+                    ]
+                }
+            raise AssertionError(f"unexpected path: {path}")
+
+        self.service._emby_get = fake_emby_get
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么亚洲电影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么亚洲电影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("分类资源查询：亚洲电影", dispatched[1])
+        self.assertIn("查询来源：库节点目录", dispatched[1])
+        self.assertIn("前往釜山", dispatched[1])
+        self.assertIn("釜山行2：半岛", dispatched[1])
+
+    def test_library_directory_query_reports_unconfigured_when_no_directory_or_library_matches(self) -> None:
+        def fake_emby_get(path: str):
+            if path == "/Sessions":
+                return [{"UserId": "user-1"}]
+            if path == "/Library/VirtualFolders":
+                return [{"ItemId": "movies", "Name": "电影", "CollectionType": "movies"}]
+            if path.startswith("/Users/user-1/Items?") and "ParentId=movies" in path:
+                return {"Items": []}
+            raise AssertionError(f"unexpected path: {path}")
+
+        self.service._emby_get = fake_emby_get
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-fallback",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么亚洲电影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么亚洲电影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("未配置目录分类：亚洲电影", dispatched[1])
+        self.assertIn("未找到对应目录或库节点", dispatched[1])
+        self.assertNotIn("Emby 元数据匹配", dispatched[1])
+
+    def test_library_directory_query_prefers_local_directory_config_when_present(self) -> None:
+        media_root = pathlib.Path(self.temp_dir.name) / "media-root"
+        asia_dir = media_root / "电影" / "亚洲电影"
+        asia_dir.mkdir(parents=True)
+        (asia_dir / "前往釜山 (2016)").mkdir()
+        (asia_dir / "首尔之春 (2023)").mkdir()
+        self.service.store_path.write_text(
+            json.dumps(
+                {
+                    "libraryDirectoryConfig": {
+                        "roots": [
+                            {"path": str(media_root), "name": "本地媒体库", "enabled": True},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.service._emby_get = lambda path: self.fail(f"filesystem query should not hit emby: {path}")
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-local",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么亚洲电影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么亚洲电影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("分类资源查询：亚洲电影", dispatched[1])
+        self.assertIn("查询来源：本地目录", dispatched[1])
+        self.assertIn("前往釜山", dispatched[1])
+        self.assertIn("首尔之春", dispatched[1])
+        self.assertNotIn("Emby 元数据匹配", dispatched[1])
+
+    def test_library_directory_query_supports_configured_alias_categories(self) -> None:
+        media_root = pathlib.Path(self.temp_dir.name) / "media-root"
+        korea_dir = media_root / "电影" / "亚洲电影" / "韩国电影"
+        korea_dir.mkdir(parents=True)
+        (korea_dir / "首尔之春 (2023)").mkdir()
+        self.service.store_path.write_text(
+            json.dumps(
+                {
+                    "libraryDirectoryConfig": {
+                        "roots": [
+                            {
+                                "path": str(media_root),
+                                "enabled": True,
+                                "maxDepth": 4,
+                                "categories": [
+                                    {
+                                        "label": "亚洲电影",
+                                        "aliases": ["韩影", "韩国电影"],
+                                        "path": "电影/亚洲电影/韩国电影",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.service._emby_get = lambda path: self.fail(f"alias-based filesystem query should not hit emby: {path}")
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-alias",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么韩影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么韩影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("查询来源：本地目录", dispatched[1])
+        self.assertIn("首尔之春", dispatched[1])
+        self.assertNotIn("Emby 元数据匹配", dispatched[1])
+
+    def test_library_directory_query_can_follow_structured_alias_path_without_recursive_scan(self) -> None:
+        media_root = pathlib.Path(self.temp_dir.name) / "media-root"
+        korea_dir = media_root / "电影" / "亚洲电影" / "韩国电影"
+        korea_dir.mkdir(parents=True)
+        (korea_dir / "首尔之春 (2023)").mkdir()
+        self.service.store_path.write_text(
+            json.dumps(
+                {
+                    "libraryDirectoryConfig": {
+                        "roots": [
+                            {"path": str(media_root), "enabled": True},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.service._emby_get = lambda path: self.fail(f"structured filesystem query should not hit emby: {path}")
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-structured-alias",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么韩影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么韩影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("查询来源：本地目录", dispatched[1])
+        self.assertIn("首尔之春", dispatched[1])
+        self.assertNotIn("Emby 元数据匹配", dispatched[1])
+
+    def test_library_directory_query_supports_legacy_directories_config_field(self) -> None:
+        media_root = pathlib.Path(self.temp_dir.name) / "media-root"
+        asia_dir = media_root / "电影" / "亚洲电影"
+        asia_dir.mkdir(parents=True)
+        (asia_dir / "前往釜山 (2016)").mkdir()
+        self.service.store_path.write_text(
+            json.dumps(
+                {
+                    "libraryDirectoryConfig": {
+                        "directories": [
+                            {"path": str(media_root), "enabled": True},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.service._emby_get = lambda path: self.fail(f"legacy filesystem query should not hit emby: {path}")
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-legacy",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么亚洲电影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么亚洲电影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("查询来源：本地目录", dispatched[1])
+        self.assertIn("前往釜山", dispatched[1])
+        self.assertNotIn("Emby 元数据匹配", dispatched[1])
+
+    def test_library_directory_query_exact_emby_library_name_is_allowed_fallback(self) -> None:
+        def fake_emby_get(path: str):
+            if path == "/Sessions":
+                return [{"UserId": "user-1"}]
+            if path == "/Library/VirtualFolders":
+                return [{"ItemId": "asia-lib", "Name": "亚洲电影", "CollectionType": "movies"}]
+            if path.startswith("/Users/user-1/Items?") and "ParentId=asia-lib" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "movie-1",
+                            "Name": "前往釜山",
+                            "Type": "Movie",
+                            "ProductionYear": 2016,
+                            "Path": "/媒体库/电影/亚洲电影/前往釜山 (2016)",
+                            "Genres": ["惊悚"],
+                        }
+                    ]
+                }
+            raise AssertionError(f"unexpected path: {path}")
+
+        self.service._emby_get = fake_emby_get
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-library-only",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么亚洲电影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么亚洲电影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("查询来源：库节点目录", dispatched[1])
+        self.assertIn("前往釜山", dispatched[1])
+        self.assertNotIn("Emby 元数据匹配", dispatched[1])
+
+    def test_library_directory_query_strict_mode_does_not_match_deep_unconfigured_folder_by_name(self) -> None:
+        media_root = pathlib.Path(self.temp_dir.name) / "media-root"
+        deep_dir = media_root / "收藏" / "旧分类" / "亚洲电影"
+        deep_dir.mkdir(parents=True)
+        (deep_dir / "不该命中的影片 (2024)").mkdir()
+        self.service.store_path.write_text(
+            json.dumps(
+                {
+                    "libraryDirectoryConfig": {
+                        "roots": [
+                            {"path": str(media_root), "enabled": True},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def fake_emby_get(path: str):
+            if path == "/Sessions":
+                return [{"UserId": "user-1"}]
+            if path == "/Library/VirtualFolders":
+                return [{"ItemId": "movies", "Name": "电影", "CollectionType": "movies"}]
+            if path.startswith("/Users/user-1/Items?") and "ParentId=movies" in path:
+                return {"Items": []}
+            raise AssertionError(f"unexpected path: {path}")
+
+        self.service._emby_get = fake_emby_get
+        runtime = AIRuntimeService(
+            self.service,
+            conversation_key="chat:directory-no-deep-scan",
+            chat_id="100",
+            rich=True,
+        )
+        provider = runtime.tool_provider()
+        registry = provider.build_registry()
+
+        dispatched = registry.dispatch(
+            "我库里有什么亚洲电影",
+            allowed_names=provider.allowed_tool_names_for_question("我库里有什么亚洲电影"),
+        )
+
+        self.assertIsNotNone(dispatched)
+        self.assertEqual(dispatched[0].name, "query_library_directory")
+        self.assertIn("未配置目录分类：亚洲电影", dispatched[1])
+        self.assertNotIn("不该命中的影片", dispatched[1])
 
     def test_missing_request_extracts_explicit_title(self) -> None:
         parsed = self.service._parse_ai_missing_episode_request("查看一下遮天的缺失集")

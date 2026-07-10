@@ -3,12 +3,16 @@ const STORAGE_KEYS = {
   invites: "embyPulseInvites",
   renewals: "embyPulseRenewals",
   botConfig: "embyPulseBotConfig",
+  notificationConfig: "vistamirrorNotificationConfig",
   aiConfig: "vistamirrorAiConfig",
+  coverStudioConfig: "vistamirrorCoverStudioConfig",
+  libraryDirectoryConfig: "vistamirrorLibraryDirectoryConfig",
   drive115Config: "vistamirrorDrive115Config",
   hdhiveConfig: "vistamirrorHDHiveConfig",
   activeView: "embyPulseActiveView",
   inviteSyncEndpoint: "embyPulseInviteSyncEndpoint",
-  qualityLastScanAt: "embyPulseQualityLastScanAt"
+  qualityLastScanAt: "embyPulseQualityLastScanAt",
+  sidebarCollapsed: "vistamirrorSidebarCollapsed"
 };
 
 const DEFAULT_BOT_CONFIG = {
@@ -33,8 +37,124 @@ const DEFAULT_BOT_CONFIG = {
   wechatSecret: "",
   wechatToUser: "@all",
   wechatCallbackToken: "",
-  wechatCallbackAes: ""
+  wechatCallbackAes: "",
+  libraryTemplates: {
+    single:
+      "🎬 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}",
+    grouped:
+      "📺 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}"
+  }
 };
+
+const DEFAULT_NOTIFICATION_CONFIG = {
+  enabled: true,
+  channels: {
+    telegram: {
+      enabled: true,
+      botToken: "",
+      chatId: "",
+      enableCommands: true,
+      proxyUrl: ""
+    },
+    wecom: {
+      enabled: false,
+      corpId: "",
+      agentId: "",
+      secret: "",
+      toUser: "@all",
+      callbackToken: "",
+      callbackAes: "",
+      callbackUrl: "",
+      proxyUrl: ""
+    }
+  },
+  routes: {
+    telegram: {
+      "playback.start": true,
+      "playback.pause": true,
+      "playback.resume": true,
+      "playback.stop": true,
+      "library.single": true,
+      "library.grouped": true
+    },
+    wecom: {
+      "playback.start": false,
+      "playback.pause": false,
+      "playback.resume": false,
+      "playback.stop": false,
+      "library.single": false,
+      "library.grouped": false
+    }
+  },
+  templates: {
+    telegram: {
+      "playback.start":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "playback.pause":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "playback.resume":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "playback.stop":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "library.single": DEFAULT_BOT_CONFIG.libraryTemplates.single,
+      "library.grouped": DEFAULT_BOT_CONFIG.libraryTemplates.grouped
+    },
+    wecom: {
+      "playback.start":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "playback.pause":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "playback.resume":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "playback.stop":
+        "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+      "library.single": DEFAULT_BOT_CONFIG.libraryTemplates.single,
+      "library.grouped": DEFAULT_BOT_CONFIG.libraryTemplates.grouped
+    }
+  },
+  display: {
+    telegram: {
+      "playback.start": { label: "开始播放", description: "用户开始播放媒体时发送通知。" },
+      "playback.pause": { label: "暂停播放", description: "用户暂停播放时发送通知。" },
+      "playback.resume": { label: "恢复播放", description: "用户恢复播放时发送通知。" },
+      "playback.stop": { label: "停止播放", description: "用户停止播放时发送通知。" },
+      "library.single": { label: "入库通知", description: "单个电影或单集入库时发送通知。" },
+      "library.grouped": { label: "剧集聚合入库", description: "同一剧集短时间多集入库时合并发送。" }
+    },
+    wecom: {
+      "playback.start": { label: "开始播放", description: "用户开始播放媒体时发送通知。" },
+      "playback.pause": { label: "暂停播放", description: "用户暂停播放时发送通知。" },
+      "playback.resume": { label: "恢复播放", description: "用户恢复播放时发送通知。" },
+      "playback.stop": { label: "停止播放", description: "用户停止播放时发送通知。" },
+      "library.single": { label: "入库通知", description: "单个电影或单集入库时发送通知。" },
+      "library.grouped": { label: "剧集聚合入库", description: "同一剧集短时间多集入库时合并发送。" }
+    }
+  },
+  runtime: {
+    dedupeSeconds: 10,
+    playback: {
+      showIp: true,
+      showIpGeo: true,
+      showOverview: true,
+      userScope: {
+        mode: "all",
+        selectedUserNames: [],
+        selectedUsersMeta: []
+      }
+    }
+  }
+};
+
+const DEFAULT_NOTIFICATION_CAPABILITIES = {
+  channels: {
+    telegram: { label: "Telegram", supportsCommands: true },
+    wecom: { label: "企业微信", supportsCommands: false }
+  },
+  events: [],
+  upcomingEvents: []
+};
+
+const TOPBAR_VISIBLE_VIEWS = new Set(["logs", "user-center", "task-center", "media-config", "ai-config"]);
 
 const DEFAULT_AI_CONFIG = {
   enabled: false,
@@ -52,6 +172,106 @@ const DEFAULT_DRIVE115_CONFIG = {
   defaultCid: "0",
   hasCookie: false,
   cookieMasked: ""
+};
+
+const DEFAULT_COVER_STUDIO_CONFIG = {
+  currentPresetId: "default",
+  lastViewId: "",
+  draft: {
+    viewId: "",
+    templateKey: "fan_spread",
+    pickMode: "random",
+    titleText: "",
+    subtitleText: "",
+    fontKey: "hiragino",
+    titleFontSize: 108,
+    subtitleFontSize: 44,
+    presetName: "默认封面",
+    titleAlign: "left",
+    overlayStrength: 0,
+    posterCount: 5,
+    accentTone: "blue",
+    posterRotation: 42,
+    titleYOffset: 0,
+    lockedItemIds: []
+  },
+  presets: [
+    {
+      id: "default",
+      name: "默认封面",
+      templateKey: "fan_spread",
+      pickMode: "random",
+      titleText: "",
+      subtitleText: "",
+      fontKey: "hiragino",
+      titleFontSize: 108,
+      subtitleFontSize: 44,
+      titleAlign: "left",
+      overlayStrength: 0,
+      posterCount: 5,
+      accentTone: "blue",
+      posterRotation: 42,
+      titleYOffset: 0,
+      lockedItemIds: []
+    }
+  ],
+  backups: {}
+};
+
+const DEFAULT_COVER_STUDIO_MODES = [
+  {
+    key: "fan_spread",
+    label: "扇形展开",
+    description: "多张海报像扇面一样展开，适合动画和剧集类视图。",
+    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 6, accentTone: "gold", posterRotation: 68, titleYOffset: -12 }
+  },
+  {
+    key: "banner_showcase",
+    label: "横幅橱窗",
+    description: "大背景主视觉加底部海报陈列，适合做流媒体风格分类封面。",
+    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "gold", posterRotation: 18, titleYOffset: 0 }
+  },
+  {
+    key: "hero_showcase",
+    label: "主视觉橱窗",
+    description: "强化主视觉人物与灯光层次，适合剧集与国漫的首页封面。",
+    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "blue", posterRotation: 12, titleYOffset: 0 }
+  },
+  {
+    key: "gallery_wall_showcase",
+    label: "海报陈列墙",
+    description: "用更规整的海报橱窗形成分类感，适合电影库与动漫库封面。",
+    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 6, accentTone: "emerald", posterRotation: 8, titleYOffset: 0 }
+  },
+  {
+    key: "immersive_stage",
+    label: "沉浸展映台",
+    description: "深色影院舞台感与倒影灯光更强，适合突出沉浸式流媒体封面。",
+    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "rose", posterRotation: 16, titleYOffset: 0 }
+  }
+];
+
+const DEFAULT_COVER_STUDIO_ACCENT_TONES = [
+  { key: "blue", label: "海蓝" },
+  { key: "gold", label: "鎏金" },
+  { key: "emerald", label: "翡翠" },
+  { key: "rose", label: "玫瑰" },
+  { key: "neutral", label: "冷灰" }
+];
+
+const DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS = [
+  { key: "left", label: "左对齐" },
+  { key: "center", label: "居中" },
+  { key: "right", label: "右对齐" }
+];
+
+const DEFAULT_LIBRARY_DIRECTORY_CONFIG = {
+  roots: []
 };
 
 const DEFAULT_HDHIVE_CONFIG = {
@@ -76,7 +296,7 @@ const DEFAULT_HDHIVE_CONFIG = {
   user: {}
 };
 
-const DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console";
+const DEFAULT_EMBY_CLIENT_NAME = "VistaMirror User Console";
 const MEDIA_SERVER_TYPES = ["emby", "jellyfin"];
 const MEDIA_SERVER_META = {
   emby: {
@@ -108,7 +328,10 @@ const appState = {
   invites: loadJson(STORAGE_KEYS.invites, []),
   renewals: loadJson(STORAGE_KEYS.renewals, {}),
   botConfig: loadJson(STORAGE_KEYS.botConfig, DEFAULT_BOT_CONFIG),
+  notificationConfig: loadJson(STORAGE_KEYS.notificationConfig, DEFAULT_NOTIFICATION_CONFIG),
   aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
+  coverStudioConfig: loadJson(STORAGE_KEYS.coverStudioConfig, DEFAULT_COVER_STUDIO_CONFIG),
+  libraryDirectoryConfig: loadJson(STORAGE_KEYS.libraryDirectoryConfig, DEFAULT_LIBRARY_DIRECTORY_CONFIG),
   drive115Config: loadJson(STORAGE_KEYS.drive115Config, DEFAULT_DRIVE115_CONFIG),
   hdhiveConfig: loadJson(STORAGE_KEYS.hdhiveConfig, DEFAULT_HDHIVE_CONFIG),
   hdhiveResources: [],
@@ -152,6 +375,15 @@ const appState = {
   playbackHistoryDebug: {},
   playbackHistoryWarning: "",
   playbackHistoryLoading: false,
+  coverStudioFonts: [],
+  coverStudioModes: [],
+  coverStudioAccentTones: [],
+  coverStudioTitleAlignOptions: [],
+  coverStudioViews: [],
+  coverStudioPreviewToken: "",
+  coverStudioPreviewDataUrl: "",
+  coverStudioSelectedItems: [],
+  coverStudioLoading: false,
   missingRows: [],
   missingSummary: {
     scannedSeries: 0,
@@ -189,6 +421,7 @@ const appState = {
   userConfigEditingId: null,
   createUserDraft: buildDefaultCreateUserDraft(),
   activeView: localStorage.getItem(STORAGE_KEYS.activeView) || "",
+  sidebarCollapsed: localStorage.getItem(STORAGE_KEYS.sidebarCollapsed) === "1",
   inviteSyncEndpoint: localStorage.getItem(STORAGE_KEYS.inviteSyncEndpoint) || "",
   botWebhookUrl: "",
   botWebhookState: null,
@@ -208,8 +441,14 @@ const appState = {
   adminCredentialLoading: false,
   botWebhookRefreshPromise: null,
   botWebhookStatusTimer: null,
+  notificationCapabilities: DEFAULT_NOTIFICATION_CAPABILITIES,
+  notificationChannelMenuOpen: false,
+  notificationChannelModalChannel: "",
+  notificationChannelDraftChannel: "",
   qualityRescanPromise: null,
   qualityLastScanAt: Number(localStorage.getItem(STORAGE_KEYS.qualityLastScanAt) || 0) || 0,
+  liveSessionsRefreshPromise: null,
+  liveSessionsTimer: null,
   authEnabled: false,
   authenticated: false,
   authUser: "",
@@ -218,9 +457,9 @@ const appState = {
 
 let postAuthBootstrapPromise = null;
 
-if (appState.activeView === "project-logs") {
-  appState.activeView = "settings";
-  localStorage.setItem(STORAGE_KEYS.activeView, "settings");
+if (appState.activeView === "project-logs" || appState.activeView === "settings") {
+  appState.activeView = "media-config";
+  localStorage.setItem(STORAGE_KEYS.activeView, "media-config");
 }
 
 function normalizeAppConfig(rawConfig) {
@@ -261,6 +500,8 @@ function normalizeBotConfig(rawConfig) {
   const defaults = DEFAULT_BOT_CONFIG;
   const notifyEventsSource =
     config.notifyEvents && typeof config.notifyEvents === "object" ? config.notifyEvents : defaults.notifyEvents;
+  const templateSource =
+    config.libraryTemplates && typeof config.libraryTemplates === "object" ? config.libraryTemplates : defaults.libraryTemplates;
   let dedupeSeconds = Number.parseInt(String(config.eventDedupSeconds ?? defaults.eventDedupSeconds), 10);
   if (!Number.isFinite(dedupeSeconds)) {
     dedupeSeconds = defaults.eventDedupSeconds;
@@ -288,9 +529,240 @@ function normalizeBotConfig(rawConfig) {
     wechatSecret: String(config.wechatSecret || defaults.wechatSecret).trim(),
     wechatToUser: String(config.wechatToUser || defaults.wechatToUser).trim() || defaults.wechatToUser,
     wechatCallbackToken: String(config.wechatCallbackToken || defaults.wechatCallbackToken).trim(),
-    wechatCallbackAes: String(config.wechatCallbackAes || defaults.wechatCallbackAes).trim()
+    wechatCallbackAes: String(config.wechatCallbackAes || defaults.wechatCallbackAes).trim(),
+    libraryTemplates: {
+      single: String(templateSource.single || defaults.libraryTemplates.single).replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
+      grouped: String(templateSource.grouped || defaults.libraryTemplates.grouped).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    }
   };
 }
+
+function normalizePlaybackUserScope(rawScope, defaultScope = DEFAULT_NOTIFICATION_CONFIG.runtime.playback.userScope) {
+  const source = rawScope && typeof rawScope === "object" ? rawScope : {};
+  const fallback = defaultScope && typeof defaultScope === "object" ? defaultScope : { mode: "all", selectedUserNames: [], selectedUsersMeta: [] };
+  const mode = String(source.mode ?? fallback.mode ?? "all").trim().toLowerCase();
+  const nextMode = mode === "selected" ? "selected" : "all";
+  const selectedUserNames = [];
+  const seenNames = new Set();
+  const rawNames = Array.isArray(source.selectedUserNames) ? source.selectedUserNames : Array.isArray(fallback.selectedUserNames) ? fallback.selectedUserNames : [];
+  rawNames.forEach((value) => {
+    const safeValue = String(value || "").trim();
+    const safeKey = safeValue.toLowerCase();
+    if (!safeValue || seenNames.has(safeKey)) {
+      return;
+    }
+    seenNames.add(safeKey);
+    selectedUserNames.push(safeValue);
+  });
+  const selectedUsersMeta = [];
+  const seenMeta = new Set();
+  const rawMeta = Array.isArray(source.selectedUsersMeta) ? source.selectedUsersMeta : Array.isArray(fallback.selectedUsersMeta) ? fallback.selectedUsersMeta : [];
+  rawMeta.forEach((row) => {
+    if (!row || typeof row !== "object") {
+      return;
+    }
+    const id = String(row.id || row.userId || "").trim();
+    const name = String(row.name || row.userName || "").trim();
+    if (!id && !name) {
+      return;
+    }
+    const metaKey = `${name.toLowerCase()}::${id.toLowerCase()}`;
+    if (seenMeta.has(metaKey)) {
+      return;
+    }
+    seenMeta.add(metaKey);
+    if (name && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase());
+      selectedUserNames.push(name);
+    }
+    selectedUsersMeta.push({ id, name });
+  });
+  return {
+    mode: nextMode,
+    selectedUserNames,
+    selectedUsersMeta
+  };
+}
+
+function normalizeNotificationConfig(rawConfig, legacyBotConfig = DEFAULT_BOT_CONFIG) {
+  const legacy = normalizeBotConfig(rawConfig?.botConfig || legacyBotConfig || DEFAULT_BOT_CONFIG);
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const channelSource = config.channels && typeof config.channels === "object" ? config.channels : {};
+  const routeSource = config.routes && typeof config.routes === "object" ? config.routes : {};
+  const templateSource = config.templates && typeof config.templates === "object" ? config.templates : {};
+  const displaySource = config.display && typeof config.display === "object" ? config.display : {};
+  const runtimeSource = config.runtime && typeof config.runtime === "object" ? config.runtime : {};
+  const playbackRuntimeSource =
+    runtimeSource.playback && typeof runtimeSource.playback === "object" ? runtimeSource.playback : {};
+  const legacyDerived = {
+    enabled: Boolean(legacy.enableCore),
+    channels: {
+      telegram: {
+        enabled: Boolean(legacy.enableCore),
+        botToken: String(legacy.telegramToken || "").trim(),
+        chatId: String(legacy.telegramChatId || "").trim(),
+        enableCommands: Boolean(legacy.enableCommands),
+        proxyUrl: ""
+      },
+      wecom: {
+        enabled: false,
+        corpId: String(legacy.wechatCorpId || "").trim(),
+        agentId: String(legacy.wechatAgentId || "").trim(),
+        secret: String(legacy.wechatSecret || "").trim(),
+        toUser: String(legacy.wechatToUser || "@all").trim() || "@all",
+        callbackToken: String(legacy.wechatCallbackToken || "").trim(),
+        callbackAes: String(legacy.wechatCallbackAes || "").trim(),
+        callbackUrl: "",
+        proxyUrl: ""
+      }
+    },
+    routes: {
+      telegram: {
+        "playback.start": Boolean(legacy.enablePlayback && legacy.notifyEvents?.start),
+        "playback.pause": Boolean(legacy.enablePlayback && legacy.notifyEvents?.pause),
+        "playback.resume": Boolean(legacy.enablePlayback && legacy.notifyEvents?.resume),
+        "playback.stop": Boolean(legacy.enablePlayback && legacy.notifyEvents?.stop),
+        "library.single": Boolean(legacy.enableLibrary),
+        "library.grouped": Boolean(legacy.enableLibrary)
+      },
+      wecom: { ...DEFAULT_NOTIFICATION_CONFIG.routes.wecom }
+    },
+    templates: {
+      telegram: {
+        ...DEFAULT_NOTIFICATION_CONFIG.templates.telegram,
+        "library.single": String(legacy.libraryTemplates?.single || DEFAULT_NOTIFICATION_CONFIG.templates.telegram["library.single"]),
+        "library.grouped": String(legacy.libraryTemplates?.grouped || DEFAULT_NOTIFICATION_CONFIG.templates.telegram["library.grouped"])
+      },
+      wecom: {
+        ...DEFAULT_NOTIFICATION_CONFIG.templates.wecom,
+        "library.single": String(legacy.libraryTemplates?.single || DEFAULT_NOTIFICATION_CONFIG.templates.wecom["library.single"]),
+        "library.grouped": String(legacy.libraryTemplates?.grouped || DEFAULT_NOTIFICATION_CONFIG.templates.wecom["library.grouped"])
+      }
+    },
+    runtime: {
+      dedupeSeconds: Number(legacy.eventDedupSeconds || 10) || 10,
+      playback: {
+        showIp: Boolean(legacy.showIp),
+        showIpGeo: Boolean(legacy.showIpGeo),
+        showOverview: Boolean(legacy.showOverview),
+        userScope: normalizePlaybackUserScope(null)
+      }
+    }
+  };
+  let dedupeSeconds = Number.parseInt(
+    String(runtimeSource.dedupeSeconds ?? legacyDerived.runtime.dedupeSeconds ?? DEFAULT_NOTIFICATION_CONFIG.runtime.dedupeSeconds),
+    10
+  );
+  if (!Number.isFinite(dedupeSeconds)) {
+    dedupeSeconds = DEFAULT_NOTIFICATION_CONFIG.runtime.dedupeSeconds;
+  }
+  dedupeSeconds = Math.max(1, Math.min(120, dedupeSeconds));
+  const normalizeTemplates = (channelKey) => {
+    const defaults = DEFAULT_NOTIFICATION_CONFIG.templates[channelKey];
+    const source = templateSource[channelKey] && typeof templateSource[channelKey] === "object" ? templateSource[channelKey] : {};
+    const legacyTemplates = legacyDerived.templates[channelKey];
+    const next = {};
+    Object.keys(defaults).forEach((eventKey) => {
+      const value = source[eventKey] ?? legacyTemplates[eventKey] ?? defaults[eventKey];
+      next[eventKey] = String(value || defaults[eventKey]).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    });
+    return next;
+  };
+  const normalizeRoutes = (channelKey) => {
+    const defaults = DEFAULT_NOTIFICATION_CONFIG.routes[channelKey];
+    const source = routeSource[channelKey] && typeof routeSource[channelKey] === "object" ? routeSource[channelKey] : {};
+    const legacyRoutes = legacyDerived.routes[channelKey];
+    const next = {};
+    Object.keys(defaults).forEach((eventKey) => {
+      next[eventKey] = Boolean(source[eventKey] ?? legacyRoutes[eventKey] ?? defaults[eventKey]);
+    });
+    return next;
+  };
+  const normalizeDisplay = (channelKey) => {
+    const defaults = DEFAULT_NOTIFICATION_CONFIG.display[channelKey];
+    const source = displaySource[channelKey] && typeof displaySource[channelKey] === "object" ? displaySource[channelKey] : {};
+    const next = {};
+    Object.keys(defaults).forEach((eventKey) => {
+      const value = source[eventKey] && typeof source[eventKey] === "object" ? source[eventKey] : {};
+      const fallback = defaults[eventKey] || { label: eventKey, description: "" };
+      next[eventKey] = {
+        label: String(value.label ?? fallback.label ?? eventKey).trim() || String(fallback.label || eventKey),
+        description: String(value.description ?? fallback.description ?? "").trim()
+      };
+    });
+    return next;
+  };
+  return {
+    enabled: Boolean(config.enabled ?? legacyDerived.enabled ?? DEFAULT_NOTIFICATION_CONFIG.enabled),
+    channels: {
+      telegram: {
+        enabled: Boolean(channelSource.telegram?.enabled ?? legacyDerived.channels.telegram.enabled),
+        botToken: String(channelSource.telegram?.botToken ?? legacyDerived.channels.telegram.botToken ?? "").trim(),
+        chatId: String(channelSource.telegram?.chatId ?? legacyDerived.channels.telegram.chatId ?? "").trim(),
+        enableCommands: Boolean(channelSource.telegram?.enableCommands ?? legacyDerived.channels.telegram.enableCommands),
+        proxyUrl: String(channelSource.telegram?.proxyUrl ?? legacyDerived.channels.telegram.proxyUrl ?? "").trim()
+      },
+      wecom: {
+        enabled: Boolean(channelSource.wecom?.enabled ?? legacyDerived.channels.wecom.enabled),
+        corpId: String(channelSource.wecom?.corpId ?? legacyDerived.channels.wecom.corpId ?? "").trim(),
+        agentId: String(channelSource.wecom?.agentId ?? legacyDerived.channels.wecom.agentId ?? "").trim(),
+        secret: String(channelSource.wecom?.secret ?? legacyDerived.channels.wecom.secret ?? "").trim(),
+        toUser: String(channelSource.wecom?.toUser ?? legacyDerived.channels.wecom.toUser ?? "@all").trim() || "@all",
+        callbackToken: String(channelSource.wecom?.callbackToken ?? legacyDerived.channels.wecom.callbackToken ?? "").trim(),
+        callbackAes: String(channelSource.wecom?.callbackAes ?? legacyDerived.channels.wecom.callbackAes ?? "").trim(),
+        callbackUrl: String(channelSource.wecom?.callbackUrl ?? legacyDerived.channels.wecom.callbackUrl ?? "").trim(),
+        proxyUrl: String(channelSource.wecom?.proxyUrl ?? legacyDerived.channels.wecom.proxyUrl ?? "").trim()
+      }
+    },
+    routes: {
+      telegram: normalizeRoutes("telegram"),
+      wecom: normalizeRoutes("wecom")
+    },
+    templates: {
+      telegram: normalizeTemplates("telegram"),
+      wecom: normalizeTemplates("wecom")
+    },
+    display: {
+      telegram: normalizeDisplay("telegram"),
+      wecom: normalizeDisplay("wecom")
+    },
+    runtime: {
+      dedupeSeconds,
+      playback: {
+        showIp: Boolean(playbackRuntimeSource.showIp ?? legacyDerived.runtime.playback.showIp),
+        showIpGeo: Boolean(playbackRuntimeSource.showIpGeo ?? legacyDerived.runtime.playback.showIpGeo),
+        showOverview: Boolean(playbackRuntimeSource.showOverview ?? legacyDerived.runtime.playback.showOverview),
+        userScope: normalizePlaybackUserScope(playbackRuntimeSource.userScope, legacyDerived.runtime.playback.userScope)
+      }
+    }
+  };
+}
+
+function getNotificationEventPresentation(channel, eventDef, config = appState.notificationConfig) {
+  const safeConfig = normalizeNotificationConfig(config, appState.botConfig);
+  const fallbackLabel = String(eventDef?.label || eventDef?.key || "").trim();
+  const fallbackDescription = String(eventDef?.description || "").trim();
+  const display = safeConfig.display?.[channel]?.[eventDef?.key] || {};
+  return {
+    label: String(display.label || fallbackLabel || eventDef?.key || "").trim(),
+    description: String(display.description || fallbackDescription || "").trim()
+  };
+}
+
+function normalizeNotificationCapabilities(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const events = Array.isArray(source.events) ? source.events.filter((row) => row && typeof row === "object") : [];
+  const upcomingEvents =
+    Array.isArray(source.upcomingEvents) ? source.upcomingEvents.filter((row) => row && typeof row === "object") : [];
+  const channels = source.channels && typeof source.channels === "object" ? source.channels : DEFAULT_NOTIFICATION_CAPABILITIES.channels;
+  return {
+    channels,
+    events,
+    upcomingEvents
+  };
+}
+
+const notificationPreviewTimers = new Map();
 
 function normalizeAiConfig(rawConfig) {
   const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
@@ -329,6 +801,156 @@ function normalizeDrive115Config(rawConfig) {
     hasCookie: Boolean(config.hasCookie || String(config.cookie || "").trim()),
     cookieMasked: String(config.cookieMasked || "").trim()
   };
+}
+
+function normalizeCoverStudioConfig(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const clampInt = (value, fallback, minimum, maximum) => {
+    let parsed = Number.parseInt(String(value ?? fallback), 10);
+    if (!Number.isFinite(parsed)) {
+      parsed = fallback;
+    }
+    return Math.max(minimum, Math.min(maximum, parsed));
+  };
+  const validModes = new Set(DEFAULT_COVER_STUDIO_MODES.map((mode) => mode.key));
+  const validAligns = new Set(DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS.map((item) => item.key));
+  const validTones = new Set(DEFAULT_COVER_STUDIO_ACCENT_TONES.map((item) => item.key));
+  const resolveModeDefaults = (templateKey) =>
+    DEFAULT_COVER_STUDIO_MODES.find((mode) => mode.key === templateKey)?.defaults || DEFAULT_COVER_STUDIO_MODES[0].defaults;
+  const normalizeTemplateKey = (value) => {
+    const key = String(value || "").trim();
+    return validModes.has(key) ? key : DEFAULT_COVER_STUDIO_MODES[0].key;
+  };
+  const draftSource = config.draft && typeof config.draft === "object" ? config.draft : {};
+  const draftTemplateKey = normalizeTemplateKey(draftSource.templateKey);
+  const draftDefaults = resolveModeDefaults(draftTemplateKey);
+  const draft = {
+    viewId: String(draftSource.viewId || "").trim(),
+    templateKey: draftTemplateKey,
+    pickMode: String(draftSource.pickMode || "random").trim().toLowerCase() === "recent" ? "recent" : "random",
+    titleText: String(draftSource.titleText || "").trim(),
+    subtitleText: String(draftSource.subtitleText || "").trim(),
+    fontKey: String(draftSource.fontKey || "hiragino").trim() || "hiragino",
+    titleFontSize: clampInt(draftSource.titleFontSize, 108, 56, 180),
+    subtitleFontSize: clampInt(draftSource.subtitleFontSize, 44, 22, 72),
+    presetName: String(draftSource.presetName || "默认封面").trim() || "默认封面",
+    titleAlign: validAligns.has(String(draftSource.titleAlign || "").trim()) ? String(draftSource.titleAlign || "").trim() : draftDefaults.titleAlign,
+    overlayStrength: 0,
+    posterCount: clampInt(draftSource.posterCount, draftDefaults.posterCount, 2, 8),
+    accentTone: validTones.has(String(draftSource.accentTone || "").trim()) ? String(draftSource.accentTone || "").trim() : draftDefaults.accentTone,
+    posterRotation: clampInt(draftSource.posterRotation, draftDefaults.posterRotation, 0, 100),
+    titleYOffset: clampInt(draftSource.titleYOffset, draftDefaults.titleYOffset, -160, 160),
+    lockedItemIds: Array.isArray(draftSource.lockedItemIds)
+      ? draftSource.lockedItemIds.map((item) => String(item || "").trim()).filter(Boolean)
+      : []
+  };
+  const presets = Array.isArray(config.presets) && config.presets.length
+    ? config.presets
+        .map((item, index) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+          const id = String(item.id || `preset-${index + 1}`).trim();
+          if (!id) {
+            return null;
+          }
+          const templateKey = normalizeTemplateKey(item.templateKey);
+          const defaults = resolveModeDefaults(templateKey);
+          return {
+            id,
+            name: String(item.name || item.presetName || id).trim() || id,
+            templateKey,
+            pickMode: String(item.pickMode || "random").trim().toLowerCase() === "recent" ? "recent" : "random",
+            titleText: String(item.titleText || "").trim(),
+            subtitleText: String(item.subtitleText || "").trim(),
+            fontKey: String(item.fontKey || "hiragino").trim() || "hiragino",
+            titleFontSize: clampInt(item.titleFontSize, 108, 56, 180),
+            subtitleFontSize: clampInt(item.subtitleFontSize, 44, 22, 72),
+            titleAlign: validAligns.has(String(item.titleAlign || "").trim()) ? String(item.titleAlign || "").trim() : defaults.titleAlign,
+            overlayStrength: 0,
+            posterCount: clampInt(item.posterCount, defaults.posterCount, 2, 8),
+            accentTone: validTones.has(String(item.accentTone || "").trim()) ? String(item.accentTone || "").trim() : defaults.accentTone,
+            posterRotation: clampInt(item.posterRotation, defaults.posterRotation, 0, 100),
+            titleYOffset: clampInt(item.titleYOffset, defaults.titleYOffset, -160, 160),
+            lockedItemIds: Array.isArray(item.lockedItemIds)
+              ? item.lockedItemIds.map((row) => String(row || "").trim()).filter(Boolean)
+              : []
+          };
+        })
+        .filter(Boolean)
+    : DEFAULT_COVER_STUDIO_CONFIG.presets;
+  const backupsSource = config.backups && typeof config.backups === "object" ? config.backups : {};
+  const backups = Object.fromEntries(
+    Object.entries(backupsSource).map(([key, value]) => [
+      String(key || "").trim(),
+      value && typeof value === "object"
+        ? {
+            primary: value.primary && typeof value.primary === "object" ? value.primary : {},
+            thumb: value.thumb && typeof value.thumb === "object" ? value.thumb : {},
+            appliedAt: String(value.appliedAt || "").trim()
+          }
+        : { primary: {}, thumb: {}, appliedAt: "" }
+    ])
+  );
+  return {
+    currentPresetId: String(config.currentPresetId || presets[0]?.id || "default").trim() || presets[0]?.id || "default",
+    lastViewId: String(config.lastViewId || draft.viewId || "").trim(),
+    draft,
+    presets,
+    backups
+  };
+}
+
+function normalizeLibraryDirectoryConfig(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  const rawRoots = Array.isArray(config.roots) ? config.roots : Array.isArray(config.directories) ? config.directories : [];
+  const roots = rawRoots
+    .map((root) => {
+      const source = typeof root === "string" ? { path: root, enabled: true } : root;
+      if (!source || typeof source !== "object") {
+        return null;
+      }
+      const path = String(source.path || "").trim();
+      if (!path) {
+        return null;
+      }
+      let maxDepth = Number.parseInt(String(source.maxDepth ?? 4), 10);
+      if (!Number.isFinite(maxDepth)) {
+        maxDepth = 4;
+      }
+      maxDepth = Math.max(1, Math.min(8, maxDepth));
+      const rawCategories = Array.isArray(source.categories) ? source.categories : [];
+      const categories = rawCategories
+        .map((category) => {
+          const row = typeof category === "string" ? { label: category } : category;
+          if (!row || typeof row !== "object") {
+            return null;
+          }
+          const label = String(row.label || row.name || "").trim();
+          const aliases = Array.isArray(row.aliases)
+            ? row.aliases.map((item) => String(item || "").trim()).filter(Boolean)
+            : [];
+          const pathValue = String(row.path || row.relativePath || "").trim();
+          if (!label && !pathValue) {
+            return null;
+          }
+          return {
+            label,
+            aliases,
+            path: pathValue
+          };
+        })
+        .filter(Boolean);
+      return {
+        name: String(source.name || "本地媒体库").trim() || "本地媒体库",
+        path,
+        enabled: Boolean(source.enabled ?? true),
+        maxDepth,
+        categories
+      };
+    })
+    .filter(Boolean);
+  return { roots };
 }
 
 function normalizeHDHiveConfig(rawConfig) {
@@ -373,6 +995,7 @@ function normalizeEnvControlledFields(raw) {
   return {
     embyConfig: normalizeList(source.embyConfig),
     botConfig: normalizeList(source.botConfig),
+    notificationConfig: normalizeList(source.notificationConfig),
     aiConfig: normalizeList(source.aiConfig),
     drive115Config: normalizeList(source.drive115Config),
     hdhiveConfig: normalizeList(source.hdhiveConfig),
@@ -388,7 +1011,7 @@ function mergeEnvControlledFields(raw, groupHint = "") {
       : [];
 
   if (Array.isArray(raw)) {
-    if (["embyConfig", "botConfig", "aiConfig", "drive115Config", "hdhiveConfig", "adminAuth"].includes(groupHint)) {
+    if (["embyConfig", "botConfig", "notificationConfig", "aiConfig", "drive115Config", "hdhiveConfig", "adminAuth"].includes(groupHint)) {
       current[groupHint] = normalizeList(raw);
     }
     return current;
@@ -400,6 +1023,9 @@ function mergeEnvControlledFields(raw, groupHint = "") {
     }
     if (Object.prototype.hasOwnProperty.call(raw, "botConfig")) {
       current.botConfig = normalizeList(raw.botConfig);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "notificationConfig")) {
+      current.notificationConfig = normalizeList(raw.notificationConfig);
     }
     if (Object.prototype.hasOwnProperty.call(raw, "aiConfig")) {
       current.aiConfig = normalizeList(raw.aiConfig);
@@ -434,6 +1060,7 @@ function setFieldEnvControlled(input, controlled) {
 function renderEnvControlledState() {
   const embyManaged = appState?.envControlledFields?.embyConfig || [];
   const botManaged = appState?.envControlledFields?.botConfig || [];
+  const notificationManaged = appState?.envControlledFields?.notificationConfig || [];
   const aiManaged = appState?.envControlledFields?.aiConfig || [];
   const drive115Managed = appState?.envControlledFields?.drive115Config || [];
   const hdhiveManaged = appState?.envControlledFields?.hdhiveConfig || [];
@@ -452,10 +1079,12 @@ function renderEnvControlledState() {
     }
   }
 
-  setFieldEnvControlled(elements.botTelegramToken, botManaged.includes("telegramToken"));
-  setFieldEnvControlled(elements.botTelegramChatId, botManaged.includes("telegramChatId"));
+  const tokenManaged = botManaged.includes("telegramToken") || notificationManaged.includes("channels.telegram.botToken");
+  const chatManaged = botManaged.includes("telegramChatId") || notificationManaged.includes("channels.telegram.chatId");
+  setFieldEnvControlled(elements.botTelegramToken, tokenManaged);
+  setFieldEnvControlled(elements.botTelegramChatId, chatManaged);
   if (elements.botTelegramTokenToggle) {
-    elements.botTelegramTokenToggle.disabled = botManaged.includes("telegramToken");
+    elements.botTelegramTokenToggle.disabled = tokenManaged;
   }
   setFieldEnvControlled(elements.aiBaseUrl, aiManaged.includes("baseUrl"));
   setFieldEnvControlled(elements.aiApiKey, aiManaged.includes("apiKey"));
@@ -472,7 +1101,7 @@ function renderEnvControlledState() {
   setFieldEnvControlled(elements.hdhiveAppSecret, hdhiveManaged.includes("appSecret"));
   setFieldEnvControlled(elements.hdhiveRedirectUri, hdhiveManaged.includes("redirectUri"));
   if (elements.botEnvManagedHint) {
-    const hasManaged = botManaged.length > 0;
+    const hasManaged = botManaged.length > 0 || notificationManaged.length > 0;
     elements.botEnvManagedHint.hidden = !hasManaged;
     if (hasManaged) {
       elements.botEnvManagedHint.textContent = "该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。";
@@ -482,7 +1111,10 @@ function renderEnvControlledState() {
 
 appState.config = normalizeAppConfig(appState.config);
 appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...appState.botConfig });
+appState.notificationConfig = normalizeNotificationConfig({ ...DEFAULT_NOTIFICATION_CONFIG, ...appState.notificationConfig }, appState.botConfig);
 appState.aiConfig = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...appState.aiConfig });
+appState.coverStudioConfig = normalizeCoverStudioConfig({ ...DEFAULT_COVER_STUDIO_CONFIG, ...appState.coverStudioConfig });
+appState.libraryDirectoryConfig = normalizeLibraryDirectoryConfig({ ...DEFAULT_LIBRARY_DIRECTORY_CONFIG, ...appState.libraryDirectoryConfig });
 appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...appState.drive115Config });
 appState.hdhiveConfig = normalizeHDHiveConfig({ ...DEFAULT_HDHIVE_CONFIG, ...appState.hdhiveConfig });
 appState.qualityResolutionFilters = normalizeQualityResolutionFilters(appState.qualityResolutionFilters);
@@ -507,15 +1139,17 @@ const elements = {
   adminCredentialFeedback: document.getElementById("admin-credential-feedback"),
   adminCredentialSubmit: document.getElementById("admin-credential-submit"),
   navItems: document.querySelectorAll(".nav-item"),
+  primarySidebar: document.getElementById("primary-sidebar"),
+  sidebarToggleBtn: document.getElementById("sidebar-toggle-btn"),
   sidebarGlobalSearchTrigger: document.getElementById("global-search-trigger"),
   sidebarGlobalSearchInput: document.getElementById("sidebar-global-search"),
   viewSections: document.querySelectorAll(".view-section"),
   overviewStatsGrid: document.getElementById("overview-stats-grid"),
   mainContent: document.querySelector(".main-content"),
+  topbar: document.querySelector(".topbar"),
   topbarActions: document.getElementById("topbar-actions"),
   topbarLogsToolbarHost: document.getElementById("topbar-logs-toolbar-host"),
   topbarUserCenterActions: document.getElementById("topbar-user-center-actions"),
-  topbarBotActions: document.getElementById("topbar-bot-actions"),
   ucInviteManageBtn: document.getElementById("uc-invite-manage-btn"),
   ucGenerateInviteBtn: document.getElementById("uc-generate-invite-btn"),
   ucCreateUserBtn: document.getElementById("uc-create-user-btn"),
@@ -548,6 +1182,39 @@ const elements = {
   aiContextTokensK: document.getElementById("ai-context-tokens-k"),
   aiTestBtn: document.getElementById("ai-test-btn"),
   aiFeedback: document.getElementById("ai-feedback"),
+  libraryDirectoryRootPath: document.getElementById("library-directory-root-path"),
+  libraryDirectoryRootName: document.getElementById("library-directory-root-name"),
+  libraryDirectoryMaxDepth: document.getElementById("library-directory-max-depth"),
+  libraryDirectoryCategories: document.getElementById("library-directory-categories"),
+  libraryDirectoryFeedback: document.getElementById("library-directory-feedback"),
+  coverStudioStatusBadge: document.getElementById("cover-studio-status-badge"),
+  coverStudioSelectionChip: document.getElementById("cover-studio-selection-chip"),
+  coverStudioViewSelect: document.getElementById("cover-studio-view-select"),
+  coverStudioTemplateKey: document.getElementById("cover-studio-template-key"),
+  coverStudioPickMode: document.getElementById("cover-studio-pick-mode"),
+  coverStudioPresetName: document.getElementById("cover-studio-preset-name"),
+  coverStudioSaveCurrentBtn: document.getElementById("cover-studio-save-current-btn"),
+  coverStudioSaveAsBtn: document.getElementById("cover-studio-save-as-btn"),
+  coverStudioTitleText: document.getElementById("cover-studio-title-text"),
+  coverStudioSubtitleText: document.getElementById("cover-studio-subtitle-text"),
+  coverStudioFontKey: document.getElementById("cover-studio-font-key"),
+  coverStudioTitleSize: document.getElementById("cover-studio-title-size"),
+  coverStudioSubtitleSize: document.getElementById("cover-studio-subtitle-size"),
+  coverStudioTemplateChip: document.getElementById("cover-studio-template-chip"),
+  coverStudioTitleAlign: document.getElementById("cover-studio-title-align"),
+  coverStudioOverlayStrength: document.getElementById("cover-studio-overlay-strength"),
+  coverStudioPosterCount: document.getElementById("cover-studio-poster-count"),
+  coverStudioAccentTone: document.getElementById("cover-studio-accent-tone"),
+  coverStudioPosterRotation: document.getElementById("cover-studio-poster-rotation"),
+  coverStudioTitleYOffset: document.getElementById("cover-studio-title-y-offset"),
+  coverStudioTemplateHint: document.getElementById("cover-studio-template-hint"),
+  coverStudioFeedback: document.getElementById("cover-studio-feedback"),
+  coverStudioPreviewState: document.getElementById("cover-studio-preview-state"),
+  coverStudioPreviewStage: document.getElementById("cover-studio-preview-stage"),
+  coverStudioSelectedItems: document.getElementById("cover-studio-selected-items"),
+  coverStudioPreviewBtn: document.getElementById("cover-studio-preview-btn"),
+  coverStudioApplyBtn: document.getElementById("cover-studio-apply-btn"),
+  coverStudioRestoreBtn: document.getElementById("cover-studio-restore-btn"),
   drive115Enabled: document.getElementById("drive115-enabled"),
   drive115Cookie: document.getElementById("drive115-cookie"),
   drive115DefaultCid: document.getElementById("drive115-default-cid"),
@@ -785,7 +1452,6 @@ const elements = {
   playbackTodayDuration: document.getElementById("playback-today-duration"),
   playbackActiveUsers: document.getElementById("playback-active-users"),
   playbackTotalCount: document.getElementById("playback-total-count"),
-  botSaveBtn: document.getElementById("bot-save-btn"),
   botEnableCore: document.getElementById("bot-enable-core"),
   botEnablePlayback: document.getElementById("bot-enable-playback"),
   botEnableLibrary: document.getElementById("bot-enable-library"),
@@ -801,19 +1467,56 @@ const elements = {
   botDedupeSeconds: document.getElementById("bot-dedupe-seconds"),
   botWebhookUrl: document.getElementById("bot-webhook-url"),
   botWebhookStatus: document.getElementById("bot-webhook-status"),
+  notifyChannelCardList: document.getElementById("notify-channel-card-list"),
+  notifyChannelEmptyState: document.getElementById("notify-channel-empty-state"),
+  notifyChannelEmptyAdd: document.getElementById("notify-channel-empty-add"),
+  notifyChannelToolbar: document.getElementById("notify-channel-toolbar"),
+  notifyChannelAddMenu: document.getElementById("notify-channel-add-menu"),
+  notifyChannelModal: document.getElementById("notify-channel-modal"),
+  notifyChannelModalClose: document.getElementById("notify-channel-modal-close"),
+  notifyChannelModalTitle: document.getElementById("notify-channel-modal-title"),
+  notifyChannelModalSubtitle: document.getElementById("notify-channel-modal-subtitle"),
+  notifyChannelModalIcon: document.getElementById("notify-channel-modal-icon"),
+  notifyChannelPlatformPanel: document.getElementById("notify-channel-platform-panel"),
+  notifyChannelPlatformSummary: document.getElementById("notify-channel-platform-summary"),
+  notifyChannelModalTest: document.getElementById("notify-channel-modal-test"),
+  notifyChannelModalSave: document.getElementById("notify-channel-modal-save"),
+  notifyPlaybackUserScopeAll: document.getElementById("notify-playback-user-scope-all"),
+  notifyPlaybackUserScopeSelected: document.getElementById("notify-playback-user-scope-selected"),
+  notifyPlaybackUsersRefresh: document.getElementById("notify-playback-users-refresh"),
+  notifyPlaybackUsersStatus: document.getElementById("notify-playback-users-status"),
+  notifyPlaybackUsersList: document.getElementById("notify-playback-users-list"),
+  notifyPlaybackUserPicker: document.getElementById("notify-playback-user-picker"),
   botTelegramToken: document.getElementById("bot-telegram-token"),
   botTelegramTokenToggle: document.getElementById("bot-telegram-token-toggle"),
   botTelegramChatId: document.getElementById("bot-telegram-chat-id"),
-  botTelegramTest: document.getElementById("bot-telegram-test"),
+  notifyTelegramEnabled: document.getElementById("notify-telegram-enabled"),
+  notifyTelegramProxyUrl: document.getElementById("notify-telegram-proxy-url"),
+  notifyTelegramStatus: document.getElementById("notify-telegram-status"),
   botWechatCorpId: document.getElementById("bot-wechat-corp-id"),
   botWechatAgentId: document.getElementById("bot-wechat-agent-id"),
   botWechatSecret: document.getElementById("bot-wechat-secret"),
   botWechatToUser: document.getElementById("bot-wechat-to-user"),
-  botWechatTest: document.getElementById("bot-wechat-test"),
+  notifyWecomEnabled: document.getElementById("notify-wecom-enabled"),
+  notifyWecomProxyUrl: document.getElementById("notify-wecom-proxy-url"),
+  notifyWecomStatus: document.getElementById("notify-wecom-status"),
+  notifyChannelAddToggle: document.getElementById("notify-channel-add-toggle"),
+  notifyPaneTelegram: document.getElementById("notify-pane-telegram"),
+  notifyPaneWecom: document.getElementById("notify-pane-wecom"),
   botWechatCallbackToken: document.getElementById("bot-wechat-callback-token"),
   botWechatCallbackAes: document.getElementById("bot-wechat-callback-aes"),
   botWechatCallbackUrl: document.getElementById("bot-wechat-callback-url"),
   botCopyCallbackUrl: document.getElementById("bot-copy-callback-url"),
+  notifyRoutesSave: document.getElementById("notify-routes-save"),
+  notifyTemplatesSave: document.getElementById("notify-templates-save"),
+  botTemplateReset: document.getElementById("bot-template-reset"),
+  notifyRoutesEmpty: document.getElementById("notify-routes-empty"),
+  notifyTemplatesEmpty: document.getElementById("notify-templates-empty"),
+  notifyRouteGridTelegram: document.getElementById("notify-route-grid-telegram"),
+  notifyRouteGridWecom: document.getElementById("notify-route-grid-wecom"),
+  notifyUpcomingEvents: document.getElementById("notify-upcoming-events"),
+  notifyTemplateListTelegram: document.getElementById("notify-template-list-telegram"),
+  notifyTemplateListWecom: document.getElementById("notify-template-list-wecom"),
   botFeedback: document.getElementById("bot-feedback"),
   globalToast: document.getElementById("global-toast"),
   passwordToggles: document.querySelectorAll(".password-toggle")
@@ -906,8 +1609,8 @@ const VIEW_META = {
     subtitle: "查看更新排期并追踪订阅提醒"
   },
   "bot-assistant": {
-    icon: "🤖",
-    title: "机器人助手",
+    icon: "🔔",
+    title: "通知配置",
     subtitle: "配置通知机器人和自动化助手流程"
   },
   "task-center": {
@@ -917,13 +1620,18 @@ const VIEW_META = {
   },
   workshop: {
     icon: "🛠️",
-    title: "映迹工坊",
-    subtitle: "管理媒体处理工作流与产出状态"
+    title: "封面工坊",
+    subtitle: "管理媒体库视图封面预览、应用与恢复"
   },
-  settings: {
-    icon: "⚙️",
-    title: "系统设置",
-    subtitle: "全局参数、API 密钥与自动化规则配置"
+  "media-config": {
+    icon: "🗃️",
+    title: "媒体库配置",
+    subtitle: "管理媒体服务器连接、API Key 与 TMDB 兜底策略"
+  },
+  "ai-config": {
+    icon: "🤖",
+    title: "AI 配置",
+    subtitle: "管理 AI 助手接入参数与本地目录分类映射"
   },
   "about-support": {
     icon: "💬",
@@ -1041,6 +1749,26 @@ function normalizeRequestPath(path = "") {
   }
 }
 
+function sessionHasPlayableItem(session = null) {
+  if (!session || typeof session !== "object") {
+    return false;
+  }
+  const item = session.NowPlayingItem;
+  if (item && typeof item === "object") {
+    if (item.Name || item.Id || item.SeriesName || item.Album || item.Type) {
+      return true;
+    }
+  }
+  const playState = session.PlayState;
+  if (playState && typeof playState === "object") {
+    const positionTicks = Number(playState.PositionTicks || playState.positionTicks || 0);
+    if (Number.isFinite(positionTicks) && positionTicks > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isAdminAuthRoute(path = "") {
   return ["/api/auth/me", "/api/auth/login", "/api/auth/logout"].includes(normalizeRequestPath(path));
 }
@@ -1066,12 +1794,17 @@ function stopAuthenticatedBackgroundWork() {
     appState.botWebhookStatusTimer = null;
   }
   appState.botWebhookRefreshPromise = null;
+  stopLiveSessionsPolling({ clearSessions: true });
   postAuthBootstrapPromise = null;
   window.dispatchEvent(new CustomEvent("vistamirror:auth-lock"));
 }
 
 function notifyAuthenticatedReady() {
   window.dispatchEvent(new CustomEvent("vistamirror:auth-ready"));
+}
+
+function notifySessionsUpdated() {
+  window.dispatchEvent(new CustomEvent("vistamirror:sessions-updated"));
 }
 
 function appendApiKeyToPath(path, apiKey) {
@@ -1164,6 +1897,108 @@ async function embyFetch(path, options = {}) {
   }
 
   return parseResponse(response);
+}
+
+function appendCacheBuster(path, key = "_ts") {
+  const raw = String(path || "").trim();
+  if (!raw) {
+    return raw;
+  }
+  const [pathname, query = ""] = raw.split("?");
+  const params = new URLSearchParams(query);
+  params.set(key, String(Date.now()));
+  const nextQuery = params.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
+async function refreshLiveSessions(options = {}) {
+  const force = Boolean(options.force);
+  if (!isAdminReady() || !appState?.config?.serverUrl || !appState?.config?.apiKey) {
+    appState.sessions = [];
+    notifySessionsUpdated();
+    return [];
+  }
+
+  if (appState.liveSessionsRefreshPromise && !force) {
+    return appState.liveSessionsRefreshPromise;
+  }
+
+  const requestPath = appendCacheBuster("/Sessions");
+  const requestPromise = (async () => {
+    try {
+      const rows = await embyFetch(requestPath, {
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, max-age=0",
+          Pragma: "no-cache"
+        }
+      });
+      appState.sessions = Array.isArray(rows) ? rows : [];
+      notifySessionsUpdated();
+      return appState.sessions;
+    } catch {
+      notifySessionsUpdated();
+      return Array.isArray(appState.sessions) ? appState.sessions : [];
+    } finally {
+      if (appState.liveSessionsRefreshPromise === requestPromise) {
+        appState.liveSessionsRefreshPromise = null;
+      }
+    }
+  })();
+
+  appState.liveSessionsRefreshPromise = requestPromise;
+  return requestPromise;
+}
+
+function stopLiveSessionsPolling(options = {}) {
+  if (appState.liveSessionsTimer) {
+    clearInterval(appState.liveSessionsTimer);
+    appState.liveSessionsTimer = null;
+  }
+  appState.liveSessionsRefreshPromise = null;
+  if (options.clearSessions) {
+    appState.sessions = [];
+    notifySessionsUpdated();
+  }
+}
+
+function ensureLiveSessionsPolling() {
+  if (!isAdminReady()) {
+    return;
+  }
+  if (!appState.liveSessionsTimer) {
+    refreshLiveSessions({ force: true });
+    appState.liveSessionsTimer = setInterval(() => {
+      refreshLiveSessions();
+    }, 1000);
+  }
+}
+
+window.addEventListener("vistamirror:auth-ready", () => {
+  ensureLiveSessionsPolling();
+  refreshLiveSessions({ force: true });
+});
+
+window.addEventListener("vistamirror:auth-lock", () => {
+  stopLiveSessionsPolling({ clearSessions: true });
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && isAdminReady()) {
+    ensureLiveSessionsPolling();
+    refreshLiveSessions({ force: true });
+  }
+});
+
+window.addEventListener("focus", () => {
+  if (isAdminReady()) {
+    ensureLiveSessionsPolling();
+    refreshLiveSessions({ force: true });
+  }
+});
+
+if (typeof document !== "undefined" && isAdminReady()) {
+  ensureLiveSessionsPolling();
 }
 
 function isTmdbFallbackEnabled() {
@@ -2240,6 +3075,7 @@ function buildInviteSyncPayload() {
 
   return {
     embyConfig,
+    libraryDirectoryConfig: normalizeLibraryDirectoryConfig(appState.libraryDirectoryConfig),
     invites: appState.invites.map((invite) => ({
       id: invite.id || "",
       code: invite.code || "",
@@ -2343,6 +3179,9 @@ async function refreshInviteSyncStatus(options = {}) {
         tmdbLanguage: String(backendConfig.tmdbLanguage || "zh-CN").trim() || "zh-CN",
         tmdbRegion: String(backendConfig.tmdbRegion || "CN").trim().toUpperCase() || "CN"
       });
+    }
+    if (result?.libraryDirectoryConfig && typeof result.libraryDirectoryConfig === "object") {
+      appState.libraryDirectoryConfig = normalizeLibraryDirectoryConfig(result.libraryDirectoryConfig);
     }
     appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "embyConfig");
     applyInvitesFromServer(result?.invites || [], { persist: true, render: true });
@@ -4856,7 +5695,7 @@ function renderUserCenter() {
 
       return `
         <tr>
-          <td>
+          <td class="user-center-cell-info">
             <div class="user-cell">
               <div class="user-avatar">${initials(row.name)}</div>
               <div class="user-meta">
@@ -4865,11 +5704,11 @@ function renderUserCenter() {
               </div>
             </div>
           </td>
-          <td>${row.concurrencyText}</td>
-          <td><span class="status-badge ${row.status.className}">${row.status.label}</span></td>
-          <td>${row.expiryText}</td>
-          <td>${formatDateOnly(row.lastLoginRaw)}</td>
-          <td>
+          <td class="user-center-cell-meta" data-label="并发限制">${row.concurrencyText}</td>
+          <td class="user-center-cell-meta" data-label="账号状态"><span class="status-badge ${row.status.className}">${row.status.label}</span></td>
+          <td class="user-center-cell-meta" data-label="有效期至">${row.expiryText}</td>
+          <td class="user-center-cell-meta" data-label="最后登录">${formatDateOnly(row.lastLoginRaw)}</td>
+          <td class="user-center-cell-actions">
             <div class="user-center-op-group">
               <button class="text-btn" type="button" data-config-user-id="${row.id}">配置</button>
               <button class="text-btn user-center-delete-btn" type="button" data-delete-user-id="${row.id}">删除</button>
@@ -6033,26 +6872,26 @@ function renderLogs() {
       const device = String(row?.device || row?.player?.device || "未知设备");
       return `
         <tr>
-          <td>
+          <td class="playback-cell-time" data-label="时间">
             <div class="user-meta">
               <strong>${formatDate(dateText).split(" ")[0] || "-"}</strong>
               <span>${formatDate(dateText).split(" ")[1] || "-"}</span>
             </div>
           </td>
-          <td>
+          <td class="playback-cell-user" data-label="用户">
             <div class="playback-user-cell">
               <span class="playback-user-avatar">${initials(userName)}</span>
               <strong>${userName}</strong>
             </div>
           </td>
-          <td>
+          <td class="playback-cell-media" data-label="内容媒体">
             <div class="playback-media-cell">
               <div class="playback-media-cell-text">
                 <strong>${title}</strong>
               </div>
             </div>
           </td>
-          <td>
+          <td class="playback-cell-window" data-label="观影时段">
             <div class="playback-time-cell">
               <div class="playback-time-row">
                 <span class="playback-time-label">开始</span>
@@ -6064,10 +6903,10 @@ function renderLogs() {
               </div>
             </div>
           </td>
-          <td>
+          <td class="playback-cell-client" data-label="客户端接入">
             <span class="playback-client">${client}</span>
           </td>
-          <td>
+          <td class="playback-cell-device" data-label="终端设备">
             <span class="playback-device">${device}</span>
           </td>
         </tr>
@@ -6131,13 +6970,13 @@ function renderMissing() {
           : `<span class="badge badge-warning">匹配失败</span>`;
       return `
         <tr>
-          <td><strong>${seriesName}</strong></td>
-          <td>${escapeHtml(seasonText)}</td>
-          <td><span class="missing-episodes">${escapeHtml(missingText)}</span></td>
-          <td>${completeness}</td>
-          <td>${statusBadge}</td>
-          <td><span class="missing-reason">${escapeHtml(reasonText)}</span></td>
-          <td>${escapeHtml(scannedAtText)}</td>
+          <td class="missing-cell-series"><strong>${seriesName}</strong></td>
+          <td class="missing-cell-season" data-label="季">${escapeHtml(seasonText)}</td>
+          <td class="missing-cell-episodes" data-label="缺失集号"><span class="missing-episodes">${escapeHtml(missingText)}</span></td>
+          <td class="missing-cell-completeness" data-label="完整度">${completeness}</td>
+          <td class="missing-cell-status" data-label="状态">${statusBadge}</td>
+          <td class="missing-cell-reason" data-label="失败原因"><span class="missing-reason">${escapeHtml(reasonText)}</span></td>
+          <td class="missing-cell-scanned" data-label="最后巡检">${escapeHtml(scannedAtText)}</td>
         </tr>
       `;
     })
@@ -6186,14 +7025,14 @@ async function scanMissingEpisodes() {
   }
   if (!appState.config.serverUrl || !appState.config.apiKey) {
     if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = "请先在系统设置里配置 Emby 连接。";
+      elements.missingFeedback.textContent = "请先在媒体库配置里配置 Emby 连接。";
     }
     return;
   }
   const tmdbToken = String(appState.config.tmdbToken || "").trim();
   if (!tmdbToken) {
     if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = "请先在系统设置里填写 TMDB Token。";
+      elements.missingFeedback.textContent = "请先在媒体库配置里填写 TMDB Token。";
     }
     return;
   }
@@ -6243,7 +7082,10 @@ function persistLocalState() {
   saveJson(STORAGE_KEYS.invites, appState.invites);
   saveJson(STORAGE_KEYS.renewals, appState.renewals);
   saveJson(STORAGE_KEYS.botConfig, appState.botConfig);
+  saveJson(STORAGE_KEYS.notificationConfig, appState.notificationConfig);
   saveJson(STORAGE_KEYS.aiConfig, appState.aiConfig);
+  saveJson(STORAGE_KEYS.coverStudioConfig, appState.coverStudioConfig);
+  saveJson(STORAGE_KEYS.libraryDirectoryConfig, appState.libraryDirectoryConfig);
   saveJson(STORAGE_KEYS.drive115Config, appState.drive115Config);
   saveJson(STORAGE_KEYS.hdhiveConfig, appState.hdhiveConfig);
 }
@@ -6261,6 +7103,625 @@ function getWebhookUrlForBot(token = "vistamirror") {
   const base = getCurrentSiteOriginForBot();
   const safeToken = encodeURIComponent(String(token || "").trim() || "vistamirror");
   return `${base}/api/v1/webhook?token=${safeToken}`;
+}
+
+function getPrimaryLibraryDirectoryRoot(config = appState.libraryDirectoryConfig) {
+  const normalized = normalizeLibraryDirectoryConfig(config);
+  return normalized.roots[0] || { name: "本地媒体库", path: "", enabled: true, maxDepth: 4, categories: [] };
+}
+
+function formatLibraryDirectoryCategories(categories) {
+  if (!Array.isArray(categories) || categories.length === 0) {
+    return "";
+  }
+  return categories
+    .map((category) => {
+      const label = String(category?.label || "").trim();
+      const aliases = Array.isArray(category?.aliases) ? category.aliases.map((item) => String(item || "").trim()).filter(Boolean) : [];
+      const pathValue = String(category?.path || "").trim();
+      if (!label && !pathValue) {
+        return "";
+      }
+      return `${label}${aliases.length ? ` | ${aliases.join(",")}` : ""}${pathValue ? ` | ${pathValue}` : ""}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseLibraryDirectoryCategoryLines(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => {
+      const parts = line.split("|").map((part) => part.trim());
+      const label = String(parts[0] || "").trim();
+      let aliasesText = "";
+      let pathValue = "";
+      if (parts.length === 2) {
+        if (/[/\\]/.test(parts[1])) {
+          pathValue = parts[1];
+        } else {
+          aliasesText = parts[1];
+        }
+      } else if (parts.length >= 3) {
+        aliasesText = parts[1];
+        pathValue = parts.slice(2).join("|").trim();
+      }
+      const aliases = aliasesText
+        .split(/[，,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const normalizedPath = String(pathValue || label).trim();
+      if (!label && !normalizedPath) {
+        return null;
+      }
+      return {
+        label,
+        aliases,
+        path: normalizedPath
+      };
+    })
+    .filter(Boolean);
+}
+
+function readLibraryDirectoryConfigFromInputs() {
+  const path = String(elements.libraryDirectoryRootPath?.value || "").trim();
+  const name = String(elements.libraryDirectoryRootName?.value || "").trim() || "本地媒体库";
+  let maxDepth = Number.parseInt(String(elements.libraryDirectoryMaxDepth?.value || "4"), 10);
+  if (!Number.isFinite(maxDepth)) {
+    maxDepth = 4;
+  }
+  maxDepth = Math.max(1, Math.min(8, maxDepth));
+  const categories = parseLibraryDirectoryCategoryLines(elements.libraryDirectoryCategories?.value || "");
+  if (!path) {
+    return normalizeLibraryDirectoryConfig({ roots: [] });
+  }
+  return normalizeLibraryDirectoryConfig({
+    roots: [
+      {
+        name,
+        path,
+        enabled: true,
+        maxDepth,
+        categories
+      }
+    ]
+  });
+}
+
+function renderLibraryDirectorySettings() {
+  const root = getPrimaryLibraryDirectoryRoot();
+  if (elements.libraryDirectoryRootPath) {
+    elements.libraryDirectoryRootPath.value = root.path || "";
+  }
+  if (elements.libraryDirectoryRootName) {
+    elements.libraryDirectoryRootName.value = root.name || "本地媒体库";
+  }
+  if (elements.libraryDirectoryMaxDepth) {
+    elements.libraryDirectoryMaxDepth.value = String(root.maxDepth || 4);
+  }
+  if (elements.libraryDirectoryCategories) {
+    elements.libraryDirectoryCategories.value = formatLibraryDirectoryCategories(root.categories);
+  }
+  updateLibraryDirectoryFeedback({ saved: true });
+}
+
+function updateLibraryDirectoryFeedback(options = {}) {
+  if (!elements.libraryDirectoryFeedback) {
+    return;
+  }
+  const { saved = false, message = "" } = options;
+  if (message) {
+    elements.libraryDirectoryFeedback.textContent = message;
+    return;
+  }
+  const config = readLibraryDirectoryConfigFromInputs();
+  const root = getPrimaryLibraryDirectoryRoot(config);
+  const categoryCount = Array.isArray(root.categories) ? root.categories.length : 0;
+  if (!root.path) {
+    elements.libraryDirectoryFeedback.textContent =
+      "未配置本地目录分类时，“亚洲电影 / 韩影 / 国产动漫”会明确提示未配置，不再回退到 Emby 元数据猜测。";
+    return;
+  }
+  if (categoryCount === 0) {
+    elements.libraryDirectoryFeedback.textContent =
+      "已填写根目录，但还没有分类映射。建议至少配置“亚洲电影 | 韩影,日影 | 电影/亚洲电影”这类规则。";
+    return;
+  }
+  if (saved || JSON.stringify(config) === JSON.stringify(appState.libraryDirectoryConfig)) {
+    elements.libraryDirectoryFeedback.textContent = `当前已配置 ${categoryCount} 条目录分类映射，AI 将优先按本地目录严格查询。`;
+    return;
+  }
+  elements.libraryDirectoryFeedback.textContent = `已填写 ${categoryCount} 条目录分类映射，点击“保存”后目录类查询生效。`;
+}
+
+function readCoverStudioDraftFromInputs() {
+  return normalizeCoverStudioConfig({
+    ...appState.coverStudioConfig,
+    draft: {
+      ...(appState.coverStudioConfig?.draft || {}),
+      viewId: String(elements.coverStudioViewSelect?.value || "").trim(),
+      templateKey: String(elements.coverStudioTemplateKey?.value || "fan_spread").trim() || "fan_spread",
+      pickMode: String(elements.coverStudioPickMode?.value || "random").trim(),
+      titleText: String(elements.coverStudioTitleText?.value || "").trim(),
+      subtitleText: String(elements.coverStudioSubtitleText?.value || "").trim(),
+      fontKey: String(elements.coverStudioFontKey?.value || "hiragino").trim() || "hiragino",
+      titleFontSize: elements.coverStudioTitleSize?.value || 108,
+      subtitleFontSize: elements.coverStudioSubtitleSize?.value || 44,
+      presetName: String(elements.coverStudioPresetName?.value || "").trim() || "默认封面",
+      titleAlign: String(elements.coverStudioTitleAlign?.value || "left").trim() || "left",
+      overlayStrength: 0,
+      posterCount: elements.coverStudioPosterCount?.value || 5,
+      accentTone: String(elements.coverStudioAccentTone?.value || "blue").trim() || "blue",
+      posterRotation: elements.coverStudioPosterRotation?.value || 42,
+      titleYOffset: elements.coverStudioTitleYOffset?.value || 0
+    }
+  }).draft;
+}
+
+function getCoverStudioModeMeta(templateKey) {
+  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
+    ? appState.coverStudioModes
+    : DEFAULT_COVER_STUDIO_MODES;
+  return modes.find((mode) => String(mode?.key || "") === String(templateKey || "")) || modes[0];
+}
+
+function clearCoverStudioPreview({ keepFeedback = false } = {}) {
+  appState.coverStudioPreviewToken = "";
+  appState.coverStudioPreviewDataUrl = "";
+  appState.coverStudioSelectedItems = [];
+  if (!keepFeedback && elements.coverStudioFeedback) {
+    elements.coverStudioFeedback.textContent = "参数已更新，请重新生成预览。";
+  }
+}
+
+function syncCoverStudioDraftFromInputs({ invalidatePreview = true, keepFeedback = false } = {}) {
+  appState.coverStudioConfig = normalizeCoverStudioConfig({
+    ...appState.coverStudioConfig,
+    draft: readCoverStudioDraftFromInputs()
+  });
+  if (invalidatePreview) {
+    clearCoverStudioPreview({ keepFeedback });
+  }
+  persistLocalState();
+}
+
+function renderCoverStudioPresetOptions() {
+  if (!elements.coverStudioPresetName) {
+    return;
+  }
+  const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
+  elements.coverStudioPresetName.value = draft.presetName || "默认封面";
+}
+
+function renderCoverStudioModes() {
+  if (!elements.coverStudioTemplateKey) {
+    return;
+  }
+  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
+    ? appState.coverStudioModes
+    : DEFAULT_COVER_STUDIO_MODES;
+  elements.coverStudioTemplateKey.innerHTML = modes
+    .map((mode) => `<option value="${escapeHtml(mode.key)}">${escapeHtml(mode.label)}</option>`)
+    .join("");
+  const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
+  const current = modes.some((mode) => mode.key === draft.templateKey) ? draft.templateKey : modes[0].key;
+  elements.coverStudioTemplateKey.value = current;
+}
+
+function renderCoverStudioFonts() {
+  if (!elements.coverStudioFontKey) {
+    return;
+  }
+  const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
+    ? appState.coverStudioFonts
+    : [{ key: "hiragino", label: "苹方黑体" }];
+  elements.coverStudioFontKey.innerHTML = fonts
+    .map((font) => `<option value="${escapeHtml(font.key)}">${escapeHtml(font.label)}</option>`)
+    .join("");
+  const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
+  elements.coverStudioFontKey.value = fonts.some((font) => font.key === draft.fontKey) ? draft.fontKey : fonts[0].key;
+}
+
+function renderCoverStudioAccentTones() {
+  if (!elements.coverStudioAccentTone) {
+    return;
+  }
+  const tones = Array.isArray(appState.coverStudioAccentTones) && appState.coverStudioAccentTones.length
+    ? appState.coverStudioAccentTones
+    : DEFAULT_COVER_STUDIO_ACCENT_TONES;
+  elements.coverStudioAccentTone.innerHTML = tones
+    .map((tone) => `<option value="${escapeHtml(tone.key)}">${escapeHtml(tone.label)}</option>`)
+    .join("");
+}
+
+function renderCoverStudioTitleAlignOptions() {
+  if (!elements.coverStudioTitleAlign) {
+    return;
+  }
+  const options = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
+    ? appState.coverStudioTitleAlignOptions
+    : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
+  elements.coverStudioTitleAlign.innerHTML = options
+    .map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`)
+    .join("");
+}
+
+function buildCoverStudioViewOption(view) {
+  const count = Number(view?.recursiveItemCount || view?.childCount || 0);
+  const suffix = count > 0 ? ` · ${count} 项` : "";
+  return `<option value="${escapeHtml(view.id)}">${escapeHtml(view.name)}${escapeHtml(suffix)}</option>`;
+}
+
+function renderCoverStudioViews() {
+  if (!elements.coverStudioViewSelect) {
+    return;
+  }
+  const current = String(appState.coverStudioConfig?.draft?.viewId || appState.coverStudioConfig?.lastViewId || "").trim();
+  const options = ['<option value="">请选择 Emby 视图</option>'];
+  (appState.coverStudioViews || []).forEach((view) => {
+    options.push(buildCoverStudioViewOption(view));
+  });
+  elements.coverStudioViewSelect.innerHTML = options.join("");
+  if ((appState.coverStudioViews || []).some((view) => String(view.id) === current)) {
+    elements.coverStudioViewSelect.value = current;
+  }
+}
+
+function renderCoverStudioPreview() {
+  if (!elements.coverStudioPreviewStage) {
+    return;
+  }
+  if (appState.coverStudioPreviewDataUrl) {
+    elements.coverStudioPreviewStage.innerHTML = `<img src="${appState.coverStudioPreviewDataUrl}" alt="封面预览">`;
+  } else {
+    elements.coverStudioPreviewStage.innerHTML = '<div class="empty-state">生成预览后会显示封面图。</div>';
+  }
+  const items = Array.isArray(appState.coverStudioSelectedItems) ? appState.coverStudioSelectedItems : [];
+  if (elements.coverStudioPreviewState) {
+    elements.coverStudioPreviewState.textContent = appState.coverStudioPreviewDataUrl ? "已有预览" : "未生成";
+  }
+  if (elements.coverStudioSelectedItems) {
+    elements.coverStudioSelectedItems.textContent = items.length
+      ? `已选海报：${items.map((item) => String(item?.name || item?.id || "")).filter(Boolean).join(" / ")}`
+      : "当前还没有取图结果。";
+  }
+}
+
+function renderCoverStudioModeControls() {
+  const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
+  const mode = getCoverStudioModeMeta(draft.templateKey);
+  const supports = new Set(Array.isArray(mode?.supports) ? mode.supports : []);
+  if (elements.coverStudioTemplateChip) {
+    elements.coverStudioTemplateChip.textContent = String(mode?.label || "模板").trim() || "模板";
+  }
+  if (elements.coverStudioTemplateHint) {
+    const disabledLabels = [
+      supports.has("titleAlign") ? null : "标题对齐",
+      "全局遮罩已关闭",
+      supports.has("posterCount") ? null : "海报数量",
+      supports.has("accentTone") ? null : "主色倾向",
+      supports.has("posterRotation") ? null : "旋转幅度",
+      supports.has("titleYOffset") ? null : "标题纵向位置"
+    ].filter(Boolean);
+    const summary = String(mode?.description || "").trim();
+    elements.coverStudioTemplateHint.textContent = disabledLabels.length
+      ? `${summary} 当前模板固定：${disabledLabels.join(" / ")}。`
+      : `${summary} 当前模板支持全部布局微调。`;
+  }
+  if (elements.coverStudioTitleAlign) {
+    elements.coverStudioTitleAlign.value = draft.titleAlign || "left";
+    elements.coverStudioTitleAlign.disabled = !supports.has("titleAlign");
+  }
+  if (elements.coverStudioOverlayStrength) {
+    elements.coverStudioOverlayStrength.value = "0";
+    elements.coverStudioOverlayStrength.disabled = true;
+  }
+  if (elements.coverStudioPosterCount) {
+    elements.coverStudioPosterCount.value = String(draft.posterCount ?? 5);
+    elements.coverStudioPosterCount.disabled = !supports.has("posterCount");
+  }
+  if (elements.coverStudioAccentTone) {
+    elements.coverStudioAccentTone.value = draft.accentTone || "blue";
+    elements.coverStudioAccentTone.disabled = !supports.has("accentTone");
+  }
+  if (elements.coverStudioPosterRotation) {
+    elements.coverStudioPosterRotation.value = String(draft.posterRotation ?? 42);
+    elements.coverStudioPosterRotation.disabled = !supports.has("posterRotation");
+  }
+  if (elements.coverStudioTitleYOffset) {
+    elements.coverStudioTitleYOffset.value = String(draft.titleYOffset ?? 0);
+    elements.coverStudioTitleYOffset.disabled = !supports.has("titleYOffset");
+  }
+}
+
+function renderCoverStudioStatus() {
+  const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
+  const selectedView = (appState.coverStudioViews || []).find((view) => String(view.id) === String(draft.viewId || ""));
+  if (elements.coverStudioSelectionChip) {
+    elements.coverStudioSelectionChip.textContent = selectedView ? "已选择" : "未选择";
+  }
+  if (elements.coverStudioStatusBadge) {
+    const ready = Boolean(appState.coverStudioViews?.length);
+    elements.coverStudioStatusBadge.textContent = ready ? "已就绪" : "未加载";
+    elements.coverStudioStatusBadge.classList.toggle("is-on", ready);
+    elements.coverStudioStatusBadge.classList.toggle("is-off", !ready);
+  }
+  if (elements.coverStudioRestoreBtn) {
+    const backups = appState.coverStudioConfig?.backups || {};
+    const status = backups[String(draft.viewId || "").trim()] || {};
+    const hasBackup = Boolean(status?.primary?.path);
+    elements.coverStudioRestoreBtn.disabled = !hasBackup;
+  }
+  if (elements.coverStudioApplyBtn) {
+    elements.coverStudioApplyBtn.disabled = !selectedView || !appState.coverStudioPreviewToken;
+  }
+}
+
+function renderCoverStudioSettings() {
+  const draft = normalizeCoverStudioConfig(appState.coverStudioConfig).draft;
+  appState.coverStudioConfig = normalizeCoverStudioConfig(appState.coverStudioConfig);
+  renderCoverStudioModes();
+  renderCoverStudioFonts();
+  renderCoverStudioAccentTones();
+  renderCoverStudioTitleAlignOptions();
+  renderCoverStudioViews();
+  renderCoverStudioPresetOptions();
+  if (elements.coverStudioPickMode) {
+    elements.coverStudioPickMode.value = draft.pickMode || "random";
+  }
+  if (elements.coverStudioTemplateKey) {
+    elements.coverStudioTemplateKey.value = draft.templateKey || "fan_spread";
+  }
+  if (elements.coverStudioTitleText) {
+    elements.coverStudioTitleText.value = draft.titleText || "";
+  }
+  if (elements.coverStudioSubtitleText) {
+    elements.coverStudioSubtitleText.value = draft.subtitleText || "";
+  }
+  if (elements.coverStudioTitleSize) {
+    elements.coverStudioTitleSize.value = String(draft.titleFontSize || 108);
+  }
+  if (elements.coverStudioSubtitleSize) {
+    elements.coverStudioSubtitleSize.value = String(draft.subtitleFontSize || 44);
+  }
+  renderCoverStudioModeControls();
+  renderCoverStudioPreview();
+  renderCoverStudioStatus();
+}
+
+async function loadCoverStudioConfigFromServer(options = {}) {
+  const { silent = false } = options;
+  try {
+    const result = await inviteApiFetch("/api/cover-studio/config");
+    appState.coverStudioConfig = normalizeCoverStudioConfig(result?.config || {});
+    appState.coverStudioFonts = Array.isArray(result?.fonts) ? result.fonts : [];
+    appState.coverStudioModes = Array.isArray(result?.modes) ? result.modes : [];
+    appState.coverStudioAccentTones = Array.isArray(result?.accentTones) ? result.accentTones : [];
+    appState.coverStudioTitleAlignOptions = Array.isArray(result?.titleAlignOptions) ? result.titleAlignOptions : [];
+    persistLocalState();
+    renderCoverStudioSettings();
+  } catch (error) {
+    if (!silent && elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = `读取封面工坊配置失败：${error.message || "未知错误"}`;
+    }
+  }
+}
+
+async function loadCoverStudioViews(options = {}) {
+  const { silent = false } = options;
+  if (!appState.config.serverUrl || !appState.config.apiKey) {
+    appState.coverStudioViews = [];
+    renderCoverStudioSettings();
+    return;
+  }
+  try {
+    const result = await inviteApiFetch("/api/cover-studio/views");
+    appState.coverStudioViews = Array.isArray(result?.views) ? result.views : [];
+    renderCoverStudioSettings();
+  } catch (error) {
+    appState.coverStudioViews = [];
+    renderCoverStudioSettings();
+    if (!silent && elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = `读取 Emby 视图失败：${error.message || "未知错误"}`;
+    }
+  }
+}
+
+async function saveCoverStudioConfig({ cloneAsNew = false } = {}) {
+  const draft = readCoverStudioDraftFromInputs();
+  const next = normalizeCoverStudioConfig(appState.coverStudioConfig);
+  let presetId = next.currentPresetId || "default";
+  if (cloneAsNew || !next.presets.some((item) => item.id === presetId)) {
+    presetId = `preset-${Date.now()}`;
+    next.currentPresetId = presetId;
+    next.presets = [
+      ...next.presets.filter((item) => item.id !== presetId),
+      {
+        id: presetId,
+        name: draft.presetName || "新封面",
+        templateKey: draft.templateKey,
+        pickMode: draft.pickMode,
+        titleText: draft.titleText,
+        subtitleText: draft.subtitleText,
+        fontKey: draft.fontKey,
+        titleFontSize: draft.titleFontSize,
+        subtitleFontSize: draft.subtitleFontSize,
+        titleAlign: draft.titleAlign,
+        overlayStrength: draft.overlayStrength,
+        posterCount: draft.posterCount,
+        accentTone: draft.accentTone,
+        posterRotation: draft.posterRotation,
+        titleYOffset: draft.titleYOffset,
+        lockedItemIds: draft.lockedItemIds || []
+      }
+    ];
+  } else {
+    next.presets = next.presets.map((item) =>
+      item.id === presetId
+        ? {
+            ...item,
+            name: draft.presetName || item.name,
+            templateKey: draft.templateKey,
+            pickMode: draft.pickMode,
+            titleText: draft.titleText,
+            subtitleText: draft.subtitleText,
+            fontKey: draft.fontKey,
+            titleFontSize: draft.titleFontSize,
+            subtitleFontSize: draft.subtitleFontSize,
+            titleAlign: draft.titleAlign,
+            overlayStrength: draft.overlayStrength,
+            posterCount: draft.posterCount,
+            accentTone: draft.accentTone,
+            posterRotation: draft.posterRotation,
+            titleYOffset: draft.titleYOffset,
+            lockedItemIds: draft.lockedItemIds || []
+          }
+        : item
+    );
+  }
+  next.draft = draft;
+  next.lastViewId = draft.viewId;
+  try {
+    const result = await inviteApiFetch("/api/cover-studio/config", {
+      method: "POST",
+      body: JSON.stringify({ config: next })
+    });
+    appState.coverStudioConfig = normalizeCoverStudioConfig(result?.config || next);
+    persistLocalState();
+    renderCoverStudioSettings();
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = cloneAsNew ? "封面预设已另存为。" : "封面预设已保存。";
+    }
+    showToast(cloneAsNew ? "已另存为新预设" : "封面预设已保存", 1200);
+  } catch (error) {
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = `保存封面预设失败：${error.message || "未知错误"}`;
+    }
+    showToast("保存失败", 1200);
+  }
+}
+
+async function generateCoverStudioPreview() {
+  if (appState.coverStudioLoading) {
+    return;
+  }
+  const draft = readCoverStudioDraftFromInputs();
+  if (!draft.viewId) {
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = "请先选择目标媒体库视图。";
+    }
+    showToast("请先选择媒体库", 1000);
+    return;
+  }
+  appState.coverStudioLoading = true;
+  if (elements.coverStudioPreviewBtn) {
+    elements.coverStudioPreviewBtn.disabled = true;
+    elements.coverStudioPreviewBtn.textContent = "生成中...";
+  }
+  if (elements.coverStudioFeedback) {
+    elements.coverStudioFeedback.textContent = "正在从 Emby 读取海报并生成预览…";
+  }
+  try {
+    const result = await inviteApiFetch("/api/cover-studio/preview", {
+      method: "POST",
+      body: JSON.stringify(draft)
+    });
+    appState.coverStudioPreviewToken = String(result?.previewToken || "").trim();
+    appState.coverStudioPreviewDataUrl = String(result?.previewDataUrl || "").trim();
+    appState.coverStudioSelectedItems = Array.isArray(result?.selectedItems) ? result.selectedItems : [];
+    appState.coverStudioConfig = normalizeCoverStudioConfig({
+      ...appState.coverStudioConfig,
+      draft: { ...(appState.coverStudioConfig?.draft || {}), ...draft }
+    });
+    persistLocalState();
+    renderCoverStudioPreview();
+    renderCoverStudioStatus();
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = "预览已生成，可以直接应用到 Emby。";
+    }
+  } catch (error) {
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = `生成预览失败：${error.message || "未知错误"}`;
+    }
+  } finally {
+    appState.coverStudioLoading = false;
+    if (elements.coverStudioPreviewBtn) {
+      elements.coverStudioPreviewBtn.disabled = false;
+      elements.coverStudioPreviewBtn.textContent = "生成预览";
+    }
+  }
+}
+
+async function applyCoverStudioPreview() {
+  if (!appState.coverStudioPreviewToken) {
+    showToast("请先生成预览", 1000);
+    return;
+  }
+  const draft = readCoverStudioDraftFromInputs();
+  if (!draft.viewId) {
+    showToast("请先选择媒体库", 1000);
+    return;
+  }
+  if (elements.coverStudioApplyBtn) {
+    elements.coverStudioApplyBtn.disabled = true;
+    elements.coverStudioApplyBtn.textContent = "应用中...";
+  }
+  try {
+    await inviteApiFetch("/api/cover-studio/apply", {
+      method: "POST",
+      body: JSON.stringify({ viewId: draft.viewId, previewToken: appState.coverStudioPreviewToken })
+    });
+    await loadCoverStudioConfigFromServer({ silent: true });
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = "封面已写回 Emby 的 Primary，旧 Thumb 已尝试移除。";
+    }
+    showToast("Emby 媒体库封面已更新", 1200);
+    await loadCoverStudioViews({ silent: true });
+  } catch (error) {
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = `应用失败：${error.message || "未知错误"}`;
+    }
+  } finally {
+    if (elements.coverStudioApplyBtn) {
+      elements.coverStudioApplyBtn.disabled = false;
+      elements.coverStudioApplyBtn.textContent = "应用封面";
+    }
+  }
+}
+
+async function restoreCoverStudioBackup() {
+  const draft = readCoverStudioDraftFromInputs();
+  if (!draft.viewId) {
+    showToast("请先选择媒体库", 1000);
+    return;
+  }
+  if (elements.coverStudioRestoreBtn) {
+    elements.coverStudioRestoreBtn.disabled = true;
+    elements.coverStudioRestoreBtn.textContent = "恢复中...";
+  }
+  try {
+    await inviteApiFetch("/api/cover-studio/restore", {
+      method: "POST",
+      body: JSON.stringify({ viewId: draft.viewId })
+    });
+    await loadCoverStudioConfigFromServer({ silent: true });
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = "已恢复 Emby 原始封面备份。";
+    }
+    showToast("原封面已恢复", 1200);
+    await loadCoverStudioViews({ silent: true });
+  } catch (error) {
+    if (elements.coverStudioFeedback) {
+      elements.coverStudioFeedback.textContent = `恢复失败：${error.message || "未知错误"}`;
+    }
+  } finally {
+    if (elements.coverStudioRestoreBtn) {
+      elements.coverStudioRestoreBtn.textContent = "恢复原封面";
+    }
+    renderCoverStudioStatus();
+  }
 }
 
 function getWechatCallbackUrlForBot() {
@@ -6296,60 +7757,25 @@ function resetSettingsSaveFeedback() {
     appState.settingsSaveTimer = null;
   }
   if (elements.settingsSaveBtn) {
-    const originalText = elements.settingsSaveBtn.dataset.originalText || "保存配置";
+    const originalText = elements.settingsSaveBtn.dataset.originalText || "保存";
     elements.settingsSaveBtn.textContent = originalText;
     elements.settingsSaveBtn.classList.remove("bot-save-success");
     elements.settingsSaveBtn.disabled = false;
   }
 }
 
-async function saveSettingsConfig() {
-  if (!elements.settingsSaveBtn || elements.settingsSaveBtn.disabled) {
-    return;
-  }
+function isConfigView(view) {
+  return view === "media-config" || view === "ai-config";
+}
 
-  applyConfigFromInputs({ persist: true });
-  const aiConfig = readAiConfigFromInputs();
-  appState.aiConfig = aiConfig;
-  persistLocalState();
-  syncActiveMediaServerFields();
-  const activeServerConfig = getMediaServerConfig();
-  const hasManaged = (appState?.envControlledFields?.embyConfig || []).length > 0;
-  addSyncEvent(
-    "系统配置已保存",
-    hasManaged ? "普通配置已保存，受环境变量接管的字段未被覆盖。" : "服务器地址与 API Key 已写入本地配置。",
-    "success"
-  );
-  showToast(hasManaged ? "配置已保存（环境变量字段未覆盖）" : "配置已保存", 1200);
-  const synced = await syncInviteStore({
-    silentSuccess: true,
-    failureToast: "配置已保存，但服务端同步失败，邀请注册链接可能无法注册。",
-    failureEventTitle: "配置同步失败"
-  });
-  if (synced) {
-    await refreshInviteSyncStatus({ silent: true });
-    const backendTmdbToken = String(appState.config.tmdbToken || "").trim();
-    if (appState.config.tmdbEnabled && backendTmdbToken) {
-      await testTmdbConnection({ silent: true });
-    } else {
-      refreshTmdbUiState();
-    }
+function markSettingsSaveSuccess() {
+  const original = elements.settingsSaveBtn?.dataset.originalText || elements.settingsSaveBtn?.textContent || "保存";
+  if (elements.settingsSaveBtn) {
+    elements.settingsSaveBtn.dataset.originalText = original;
+    elements.settingsSaveBtn.textContent = "保存成功";
+    elements.settingsSaveBtn.classList.add("bot-save-success");
+    elements.settingsSaveBtn.disabled = true;
   }
-  try {
-    await pushAiConfigToServer(aiConfig, { silent: true });
-    await loadAiConfigFromServer({ silent: true });
-  } catch (error) {
-    if (elements.aiFeedback) {
-      elements.aiFeedback.textContent = `AI 配置未保存：${error.message || "未知错误"}`;
-    }
-    showToast("AI 配置未保存", 1200);
-  }
-
-  const original = elements.settingsSaveBtn.dataset.originalText || elements.settingsSaveBtn.textContent || "保存配置";
-  elements.settingsSaveBtn.dataset.originalText = original;
-  elements.settingsSaveBtn.textContent = "保存成功";
-  elements.settingsSaveBtn.classList.add("bot-save-success");
-  elements.settingsSaveBtn.disabled = true;
 
   if (appState.settingsSaveTimer) {
     clearTimeout(appState.settingsSaveTimer);
@@ -6362,14 +7788,82 @@ async function saveSettingsConfig() {
     }
     appState.settingsSaveTimer = null;
   }, 1000);
+}
+
+async function saveMediaConfig() {
+  if (!elements.settingsSaveBtn || elements.settingsSaveBtn.disabled) {
+    return;
+  }
+
+  applyConfigFromInputs({ persist: true });
+  syncActiveMediaServerFields();
+  const activeServerConfig = getMediaServerConfig();
+  const hasManaged = (appState?.envControlledFields?.embyConfig || []).length > 0;
+  addSyncEvent(
+    "媒体库配置已保存",
+    hasManaged ? "普通配置已保存，受环境变量接管的字段未被覆盖。" : "服务器地址与 API Key 已写入本地配置。",
+    "success"
+  );
+  showToast(hasManaged ? "媒体库配置已保存（环境变量字段未覆盖）" : "媒体库配置已保存", 1200);
+  const synced = await syncInviteStore({
+    silentSuccess: true,
+    failureToast: "媒体库配置已保存，但服务端同步失败，邀请注册链接可能无法注册。",
+    failureEventTitle: "媒体库配置同步失败"
+  });
+  if (synced) {
+    await refreshInviteSyncStatus({ silent: true });
+    const backendTmdbToken = String(appState.config.tmdbToken || "").trim();
+    if (appState.config.tmdbEnabled && backendTmdbToken) {
+      await testTmdbConnection({ silent: true });
+    } else {
+      refreshTmdbUiState();
+    }
+  }
+  markSettingsSaveSuccess();
 
   if (activeServerConfig.serverUrl && activeServerConfig.apiKey) {
     appState.config.serverUrl = activeServerConfig.serverUrl;
     appState.config.apiKey = activeServerConfig.apiKey;
     await loadEmbyData();
+    await loadCoverStudioViews({ silent: true });
   } else {
     renderConnectionState(false, "配置已保存，请填写媒体服务器地址和 API Key 后再次保存连接。");
   }
+}
+
+async function saveAiConfig() {
+  if (!elements.settingsSaveBtn || elements.settingsSaveBtn.disabled) {
+    return;
+  }
+
+  const aiConfig = readAiConfigFromInputs();
+  const libraryDirectoryConfig = readLibraryDirectoryConfigFromInputs();
+  appState.aiConfig = aiConfig;
+  appState.libraryDirectoryConfig = libraryDirectoryConfig;
+  persistLocalState();
+  addSyncEvent("AI 配置已保存", "AI 服务接入参数与本地目录分类已更新。", "success");
+  updateLibraryDirectoryFeedback({ saved: true });
+
+  try {
+    await pushAiConfigToServer(aiConfig, { silent: true });
+    await loadAiConfigFromServer({ silent: true });
+    showToast("AI 配置已保存", 1200);
+  } catch (error) {
+    if (elements.aiFeedback) {
+      elements.aiFeedback.textContent = `AI 配置未保存：${error.message || "未知错误"}`;
+    }
+    showToast("AI 配置未保存", 1200);
+  }
+
+  markSettingsSaveSuccess();
+}
+
+async function saveSettingsConfig() {
+  if (appState.activeView === "ai-config") {
+    await saveAiConfig();
+    return;
+  }
+  await saveMediaConfig();
 }
 
 function readAiConfigFromInputs() {
@@ -6446,7 +7940,7 @@ function updateAiFeedbackFromInputs(options = {}) {
     elements.aiFeedback.textContent = "AI 已启用，Telegram 私聊可直接提问，群聊使用 /ai。";
     return;
   }
-  elements.aiFeedback.textContent = "AI 已填写，点击保存配置后 Telegram 生效。";
+  elements.aiFeedback.textContent = "AI 已填写，点击保存后 Telegram 生效。";
 }
 
 async function loadAiConfigFromServer(options = {}) {
@@ -6814,7 +8308,7 @@ async function saveDrive115Config() {
   } finally {
     if (elements.drive115SaveBtn) {
       elements.drive115SaveBtn.disabled = false;
-      elements.drive115SaveBtn.textContent = "保存配置";
+      elements.drive115SaveBtn.textContent = "保存";
     }
   }
 }
@@ -6949,7 +8443,7 @@ function renderHDHiveConfig() {
     const user = config.user || {};
     elements.hdhiveAccountSummary.innerHTML = config.authorized
       ? `<strong>${escapeHtml(user.username || "影巢用户")}</strong><span>等级：${escapeHtml(user.level || "-")} · 积分：${escapeHtml(user.points ?? "-")} · 权限：${escapeHtml(config.scopes)}</span>`
-      : `<strong>尚未授权</strong><span>${config.authMode === "broker" ? (config.brokerUrl ? "授权服务已配置，请点击浏览器授权。" : "请先填写 Vistamirror 授权服务地址。") : (config.clientId && config.hasAppSecret ? "独立应用已保存，请完成 OAuth 授权。" : "请先填写独立应用凭据。")}</span>`;
+      : `<strong>尚未授权</strong><span>${config.authMode === "broker" ? (config.brokerUrl ? "授权服务已配置，请点击浏览器授权。" : "请先填写 VistaMirror 授权服务地址。") : (config.clientId && config.hasAppSecret ? "独立应用已保存，请完成 OAuth 授权。" : "请先填写独立应用凭据。")}</span>`;
   }
   if (elements.hdhiveAuthorizeBtn) {
     elements.hdhiveAuthorizeBtn.disabled = config.authMode === "broker" ? !config.brokerUrl : !(config.clientId && config.hasAppSecret);
@@ -6969,7 +8463,7 @@ function renderHDHiveConfig() {
     elements.hdhiveConfigFeedback.textContent = config.authorized
       ? "影巢已授权，可搜索资源并在确认后解锁转存。"
       : config.authMode === "broker"
-        ? (config.brokerUrl ? "一键授权服务已保存，请完成浏览器授权。" : "请填写并保存 Vistamirror 授权服务地址。")
+        ? (config.brokerUrl ? "一键授权服务已保存，请完成浏览器授权。" : "请填写并保存 VistaMirror 授权服务地址。")
         : (config.clientId && config.hasAppSecret ? "独立 OpenAPI 应用已保存，请完成影巢账号授权。" : "请填写并保存独立应用配置。")
   }
 }
@@ -7059,7 +8553,7 @@ async function saveHDHiveConfig() {
     if (elements.hdhiveConfigFeedback) elements.hdhiveConfigFeedback.textContent = `保存失败：${error.message || "未知错误"}`;
     addHDHiveRecord("配置保存失败", error.message || "未知错误", "error");
   } finally {
-    if (elements.hdhiveSaveBtn) { elements.hdhiveSaveBtn.disabled = false; elements.hdhiveSaveBtn.textContent = "保存配置"; }
+    if (elements.hdhiveSaveBtn) { elements.hdhiveSaveBtn.disabled = false; elements.hdhiveSaveBtn.textContent = "保存"; }
   }
 }
 
@@ -7226,7 +8720,7 @@ async function testAiConfig() {
       method: "POST",
       body: JSON.stringify({ aiConfig: config })
     });
-    updateAiFeedbackFromInputs({ message: result?.message ? `${result.message}，请点击保存配置让机器人生效。` : "连接测试成功，请点击保存配置让机器人生效。" });
+    updateAiFeedbackFromInputs({ message: result?.message ? `${result.message}，请点击保存让机器人生效。` : "连接测试成功，请点击保存让机器人生效。" });
     showToast("AI 连接测试成功", 1200);
   } catch (error) {
     if (elements.aiFeedback) {
@@ -7237,33 +8731,6 @@ async function testAiConfig() {
     elements.aiTestBtn.disabled = false;
     elements.aiTestBtn.textContent = original;
   }
-}
-
-function readBotConfigFromInputs() {
-  return normalizeBotConfig({
-    enableCore: Boolean(elements.botEnableCore?.checked),
-    enablePlayback: Boolean(elements.botEnablePlayback?.checked),
-    enableLibrary: Boolean(elements.botEnableLibrary?.checked),
-    telegramToken: elements.botTelegramToken?.value.trim() || "",
-    telegramChatId: elements.botTelegramChatId?.value.trim() || "",
-    enableCommands: Boolean(elements.botEnableCommands?.checked),
-    notifyEvents: {
-      start: Boolean(elements.botEventStart?.checked),
-      pause: Boolean(elements.botEventPause?.checked),
-      resume: Boolean(elements.botEventResume?.checked),
-      stop: Boolean(elements.botEventStop?.checked)
-    },
-    showIp: Boolean(elements.botShowIp?.checked),
-    showIpGeo: Boolean(elements.botShowIpGeo?.checked),
-    showOverview: Boolean(elements.botShowOverview?.checked),
-    eventDedupSeconds: elements.botDedupeSeconds?.value || DEFAULT_BOT_CONFIG.eventDedupSeconds,
-    wechatCorpId: elements.botWechatCorpId?.value.trim() || "",
-    wechatAgentId: elements.botWechatAgentId?.value.trim() || "",
-    wechatSecret: elements.botWechatSecret?.value.trim() || "",
-    wechatToUser: elements.botWechatToUser?.value.trim() || "@all",
-    wechatCallbackToken: elements.botWechatCallbackToken?.value.trim() || "",
-    wechatCallbackAes: elements.botWechatCallbackAes?.value.trim() || ""
-  });
 }
 
 function normalizeBotWebhookProcessed(raw) {
@@ -7282,9 +8749,20 @@ function normalizeBotWebhookState(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const processed = normalizeBotWebhookProcessed(source.lastProcessed || source.lastWebhook);
   const lastReceivedAt = String(source.lastReceivedAt || "").trim();
+  const lastPlaybackReceivedAt = String(source.lastPlaybackReceivedAt || "").trim();
+  const playbackRaw = source.playbackStatus && typeof source.playbackStatus === "object" ? source.playbackStatus : {};
+  const playbackProcessed = normalizeBotWebhookProcessed(playbackRaw.lastProcessed || source.lastPlaybackProcessed);
   return {
     lastReceivedAt,
-    lastProcessed: processed
+    lastProcessed: processed,
+    lastPlaybackReceivedAt,
+    playbackStatus: {
+      received: Boolean(playbackRaw.received || lastPlaybackReceivedAt),
+      lastReceivedAt: String(playbackRaw.lastReceivedAt || lastPlaybackReceivedAt || "").trim(),
+      lastProcessed: playbackProcessed,
+      result: String(playbackRaw.result || (playbackProcessed?.result ?? "")).trim(),
+      detail: String(playbackRaw.detail || (playbackProcessed?.detail ?? "")).trim()
+    }
   };
 }
 
@@ -7319,21 +8797,37 @@ function isPrivateOrLocalHost(hostname) {
 }
 
 function getWebhookUrlWarning(url) {
+  const raw = String(url || "").trim();
+  if (!raw) {
+    return "当前 Webhook 地址为空，建议设置 VISTAMIRROR_PUBLIC_BASE_URL 为 VistaMirror 的公网访问地址。";
+  }
+  try {
+    const parsed = new URL(raw);
+    if (isPrivateOrLocalHost(parsed.hostname)) {
+      return "当前 Webhook 地址是本机或内网地址，外部 Emby 无法可靠回调。请设置 VISTAMIRROR_PUBLIC_BASE_URL 为 VistaMirror 的公网访问地址。";
+    }
+  } catch (_error) {
+    return "当前 Webhook 地址格式异常，建议设置 VISTAMIRROR_PUBLIC_BASE_URL 为 VistaMirror 的公网访问地址。";
+  }
   return "";
 }
 
 function getBotWebhookResultLabel(result) {
   const labels = {
+    not_received: "not_received（未收到播放回调）",
     sent: "sent（已发送）",
     core_disabled: "core_disabled（总开关关闭）",
     playback_disabled: "playback_disabled（播放通知关闭）",
     playback_event_disabled: "playback_event_disabled（该播放事件已关闭）",
+    playback_user_filtered: "playback_user_filtered（该用户不在通知名单）",
     library_disabled: "library_disabled（入库通知关闭）",
     unsupported_event: "unsupported_event（未识别事件）",
     telegram_not_configured: "telegram_not_configured（TG 未配置）",
+    wecom_not_configured: "wecom_not_configured（企业微信未配置）",
     token_invalid: "token_invalid（token 无效）",
     invalid_payload: "invalid_payload（请求体无效）",
     telegram_error: "telegram_error（发送失败）",
+    dispatch_error: "dispatch_error（通知派发失败）",
     duplicate_skipped: "duplicate_skipped（重复事件已去重）",
     playback_event_filtered: "playback_event_filtered（非开始/停止事件）"
   };
@@ -7345,9 +8839,33 @@ function renderBotWebhookStatus() {
   if (!elements.botWebhookStatus) {
     return;
   }
+  const playback = appState.botWebhookState?.playbackStatus || null;
   elements.botWebhookStatus.hidden = true;
   elements.botWebhookStatus.textContent = "";
   elements.botWebhookStatus.classList.remove("route-status-warning");
+  if (!playback) {
+    return;
+  }
+  const result = String(playback.result || "").trim() || "not_received";
+  const detail = String(playback.detail || "").trim();
+  const receivedAt = String(playback.lastReceivedAt || "").trim();
+  let text = "";
+  if (result === "not_received") {
+    text = "播放回调：最近未收到 Emby 播放回调，播放通知不会触发。";
+  } else if (result === "sent") {
+    text = `播放回调：最近一次已处理并发送。${detail ? ` ${detail}` : ""}`;
+  } else {
+    text = `播放回调：最近一次已收到，但处理结果为 ${getBotWebhookResultLabel(result)}。${detail ? ` ${detail}` : ""}`;
+  }
+  if (receivedAt) {
+    text += `\n最近接收：${formatDate(receivedAt)}`;
+  }
+  if (appState.botWebhookWarning) {
+    text += `\n地址提示：${appState.botWebhookWarning}`;
+  }
+  elements.botWebhookStatus.hidden = false;
+  elements.botWebhookStatus.textContent = text;
+  elements.botWebhookStatus.classList.toggle("route-status-warning", result !== "sent");
 }
 
 async function refreshBotWebhookInfo(options = {}) {
@@ -7420,60 +8938,1091 @@ function ensureBotWebhookStatusPolling() {
   }, 15000);
 }
 
-function renderBotAssistant() {
-  if (!elements.botSaveBtn) {
+function normalizeNotificationPlaybackUsers(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const next = [];
+  const seen = new Set();
+  list.forEach((row) => {
+    if (!row || typeof row !== "object") {
+      return;
+    }
+    const id = String(row.id || row.userId || row.Id || "").trim();
+    const name = String(row.name || row.userName || row.Name || "").trim();
+    if (!id && !name) {
+      return;
+    }
+    const key = `${name.toLowerCase()}::${id.toLowerCase()}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    next.push({
+      id,
+      name,
+      disabled: Boolean(row.disabled)
+    });
+  });
+  return next.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+}
+
+function getNotificationPlaybackKnownUserKeys(users = []) {
+  const keys = new Set();
+  users.forEach((user) => {
+    const id = String(user?.id || "").trim();
+    const name = String(user?.name || "").trim();
+    if (id) {
+      keys.add(`id:${id.toLowerCase()}`);
+    }
+    if (name) {
+      keys.add(`name:${name.toLowerCase()}`);
+    }
+  });
+  return keys;
+}
+
+function renderNotificationPlaybackUserScope(config = appState.notificationConfig) {
+  const normalized = normalizeNotificationConfig(config, appState.botConfig);
+  const scope = normalized.runtime?.playback?.userScope || normalizePlaybackUserScope(null);
+  const mode = String(scope.mode || "all") === "selected" ? "selected" : "all";
+  const users = Array.isArray(appState.notificationPlaybackUsers) ? appState.notificationPlaybackUsers : [];
+  const selectedNames = new Set((scope.selectedUserNames || []).map((value) => String(value || "").trim().toLowerCase()).filter(Boolean));
+  const selectedIds = new Set(
+    (scope.selectedUsersMeta || [])
+      .map((row) => (row && typeof row === "object" ? String(row.id || row.userId || "").trim().toLowerCase() : ""))
+      .filter(Boolean)
+  );
+  if (elements.notifyPlaybackUserScopeAll) {
+    elements.notifyPlaybackUserScopeAll.checked = mode === "all";
+  }
+  if (elements.notifyPlaybackUserScopeSelected) {
+    elements.notifyPlaybackUserScopeSelected.checked = mode === "selected";
+  }
+  const disabled = mode !== "selected";
+  if (elements.notifyPlaybackUserPicker) {
+    elements.notifyPlaybackUserPicker.classList.toggle("is-disabled", disabled);
+  }
+  if (elements.notifyPlaybackUsersList) {
+    elements.notifyPlaybackUsersList.innerHTML = users.length
+      ? users
+          .map((user) => {
+            const id = String(user.id || "").trim();
+            const name = String(user.name || "").trim() || id || "未命名用户";
+            const checked = selectedIds.has(id.toLowerCase()) || selectedNames.has(name.toLowerCase());
+            return `
+              <label class="notify-playback-user-option${disabled ? " is-disabled" : ""}">
+                <input
+                  type="checkbox"
+                  data-notify-playback-user
+                  data-user-id="${escapeHtml(id)}"
+                  data-user-name="${escapeHtml(name)}"
+                  ${checked ? "checked" : ""}
+                  ${disabled ? "disabled" : ""}
+                >
+                <span class="notify-playback-user-option-copy">
+                  <strong>${escapeHtml(name)}</strong>
+                  <small>${id ? `Emby ID：${escapeHtml(id)}` : "未返回用户 ID"}</small>
+                </span>
+              </label>
+            `;
+          })
+          .join("")
+      : '<div class="empty-state compact">当前还没有读取到 Emby 用户。</div>';
+  }
+  if (elements.notifyPlaybackUsersStatus) {
+    const selectedCount = users.filter((user) => {
+      const id = String(user.id || "").trim().toLowerCase();
+      const name = String(user.name || "").trim().toLowerCase();
+      return (id && selectedIds.has(id)) || (name && selectedNames.has(name));
+    }).length;
+    const preservedNames = (scope.selectedUserNames || []).filter(
+      (name) => !users.some((user) => String(user.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase())
+    );
+    if (!users.length) {
+      elements.notifyPlaybackUsersStatus.textContent = appState.notificationPlaybackUsersMessage || "当前还没有读取到 Emby 用户。";
+    } else if (mode === "all") {
+      elements.notifyPlaybackUsersStatus.textContent = `当前为全部用户通知，共读取到 ${users.length} 个 Emby 用户。`;
+    } else {
+      const extraText = preservedNames.length ? ` 另保留 ${preservedNames.length} 个历史用户名。` : "";
+      elements.notifyPlaybackUsersStatus.textContent = `当前只通知已勾选用户，已选择 ${selectedCount} / ${users.length} 个。${extraText}`;
+    }
+  }
+}
+
+async function loadNotificationPlaybackUsers(options = {}) {
+  const { silent = true } = options;
+  if (appState.notificationPlaybackUsersPromise) {
+    return appState.notificationPlaybackUsersPromise;
+  }
+  appState.notificationPlaybackUsersPromise = (async () => {
+    try {
+      const result = await inviteApiFetch("/api/notifications/playback-users");
+      appState.notificationPlaybackUsers = normalizeNotificationPlaybackUsers(result?.users || []);
+      appState.notificationPlaybackUsersMessage = String(result?.detail || "").trim();
+    } catch (error) {
+      const fallbackUsers = normalizeNotificationPlaybackUsers(appState.users || []);
+      appState.notificationPlaybackUsers = fallbackUsers;
+      appState.notificationPlaybackUsersMessage =
+        fallbackUsers.length > 0
+          ? "读取通知专用用户列表失败，已先使用当前已同步的 Emby 用户。"
+          : `读取 Emby 用户列表失败：${error.message || "未知错误"}`;
+      if (!silent && elements.botFeedback) {
+        elements.botFeedback.textContent = appState.notificationPlaybackUsersMessage;
+        elements.botFeedback.classList.remove("feedback-success");
+      }
+    } finally {
+      appState.notificationPlaybackUsersPromise = null;
+      renderNotificationPlaybackUserScope(appState.notificationConfig);
+    }
+    return Array.isArray(appState.notificationPlaybackUsers) ? appState.notificationPlaybackUsers : [];
+  })();
+  return appState.notificationPlaybackUsersPromise;
+}
+
+function getNotificationEventDefinitions() {
+  return Array.isArray(appState.notificationCapabilities?.events) ? appState.notificationCapabilities.events : [];
+}
+
+function getNotificationUpcomingDefinitions() {
+  return Array.isArray(appState.notificationCapabilities?.upcomingEvents) ? appState.notificationCapabilities.upcomingEvents : [];
+}
+
+function getNotificationEventDefinition(eventKey) {
+  return getNotificationEventDefinitions().find((row) => row.key === eventKey) || null;
+}
+
+function getNotificationDefaultTemplate(channel, eventKey) {
+  const eventDef = getNotificationEventDefinition(eventKey);
+  return (
+    String(eventDef?.defaultTemplateByChannel?.[channel] || "").trim() ||
+    String(DEFAULT_NOTIFICATION_CONFIG.templates?.[channel]?.[eventKey] || "").trim()
+  );
+}
+
+function getNotificationPreviewPayload(eventKey, sampleKey = "default") {
+  const eventDef = getNotificationEventDefinition(eventKey);
+  const samplePayloads = eventDef?.samplePayloads && typeof eventDef.samplePayloads === "object" ? eventDef.samplePayloads : {};
+  if (samplePayloads[sampleKey] && typeof samplePayloads[sampleKey] === "object") {
+    return samplePayloads[sampleKey];
+  }
+  const firstKey = Object.keys(samplePayloads)[0];
+  return firstKey ? samplePayloads[firstKey] || {} : {};
+}
+
+function getNotificationRuntimeAdjustedPayload(eventKey, sampleKey = "default") {
+  const basePayload = getNotificationPreviewPayload(eventKey, sampleKey);
+  const payload = basePayload && typeof basePayload === "object" ? { ...basePayload } : {};
+  if (!String(eventKey || "").startsWith("playback.")) {
+    return payload;
+  }
+  const runtime = normalizeNotificationConfig(appState.notificationConfig, appState.botConfig).runtime?.playback || {};
+  const showIp = Boolean(runtime.showIp ?? true);
+  const showIpGeo = Boolean(runtime.showIpGeo ?? true);
+  const showOverview = Boolean(runtime.showOverview ?? true);
+  if (!showIp) {
+    payload.ip_line = "";
+  } else if (!showIpGeo && typeof payload.ip_line === "string") {
+    payload.ip_line = payload.ip_line
+      .replace(/（[^）]*）/g, "")
+      .replace(/\([^)]*\)/g, "")
+      .replace(/^(.+?\b\d{1,3}(?:\.\d{1,3}){3}\b).*$/, "$1")
+      .trim();
+  }
+  if (!showOverview) {
+    payload.overview_block = "";
+  }
+  return payload;
+}
+
+function getNotificationSampleLabel(sampleKey) {
+  const map = {
+    default: "默认示例",
+    singleMovie: "电影示例",
+    singleEpisode: "单集示例",
+    groupedSeries: "剧集聚合示例"
+  };
+  return map[sampleKey] || sampleKey;
+}
+
+function getNotificationChannelLabel(channel) {
+  return channel === "wecom" ? "企业微信" : "Telegram";
+}
+
+function formatNotificationSamplePayload(payload) {
+  try {
+    return JSON.stringify(payload && typeof payload === "object" ? payload : {}, null, 2);
+  } catch (_error) {
+    return "{}";
+  }
+}
+
+function renderNotificationTemplateText(template, context) {
+  const source = String(template || "");
+  const rendered = source.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => {
+    const value = context && Object.prototype.hasOwnProperty.call(context, key) ? context[key] : "";
+    return String(value ?? "");
+  });
+  return rendered
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function readNotificationRouteValues(channel, fallback = {}) {
+  const next = { ...fallback };
+  document.querySelectorAll(`[data-notify-route-channel="${channel}"]`).forEach((input) => {
+    if (input instanceof HTMLInputElement) {
+      next[String(input.dataset.eventKey || "")] = Boolean(input.checked);
+    }
+  });
+  return next;
+}
+
+function readNotificationTemplateValues(channel, fallback = {}) {
+  const next = { ...fallback };
+  document.querySelectorAll(`[data-notify-template-channel="${channel}"]`).forEach((textarea) => {
+    if (textarea instanceof HTMLTextAreaElement) {
+      next[String(textarea.dataset.eventKey || "")] = textarea.value;
+    }
+  });
+  return next;
+}
+
+function readNotificationPlaybackUserScope(currentScope) {
+  const fallbackScope = normalizePlaybackUserScope(currentScope);
+  const knownUsers = Array.isArray(appState.notificationPlaybackUsers) ? appState.notificationPlaybackUsers : [];
+  const knownKeys = getNotificationPlaybackKnownUserKeys(knownUsers);
+  const mode = elements.notifyPlaybackUserScopeSelected?.checked ? "selected" : "all";
+  const selectedUserNames = [];
+  const seenNames = new Set();
+  const selectedUsersMeta = [];
+  const seenMeta = new Set();
+  document.querySelectorAll("[data-notify-playback-user]").forEach((input) => {
+    if (!(input instanceof HTMLInputElement) || !input.checked) {
+      return;
+    }
+    const id = String(input.dataset.userId || "").trim();
+    const name = String(input.dataset.userName || "").trim();
+    if (name && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase());
+      selectedUserNames.push(name);
+    }
+    if (id || name) {
+      const metaKey = `${name.toLowerCase()}::${id.toLowerCase()}`;
+      if (!seenMeta.has(metaKey)) {
+        seenMeta.add(metaKey);
+        selectedUsersMeta.push({ id, name });
+      }
+    }
+  });
+
+  (fallbackScope.selectedUsersMeta || []).forEach((row) => {
+    if (!row || typeof row !== "object") {
+      return;
+    }
+    const id = String(row.id || row.userId || "").trim();
+    const name = String(row.name || row.userName || "").trim();
+    const matchedKnown = (id && knownKeys.has(`id:${id.toLowerCase()}`)) || (name && knownKeys.has(`name:${name.toLowerCase()}`));
+    if (matchedKnown) {
+      return;
+    }
+    if (name && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase());
+      selectedUserNames.push(name);
+    }
+    if (id || name) {
+      const metaKey = `${name.toLowerCase()}::${id.toLowerCase()}`;
+      if (!seenMeta.has(metaKey)) {
+        seenMeta.add(metaKey);
+        selectedUsersMeta.push({ id, name });
+      }
+    }
+  });
+
+  (fallbackScope.selectedUserNames || []).forEach((name) => {
+    const safeName = String(name || "").trim();
+    if (!safeName || knownKeys.has(`name:${safeName.toLowerCase()}`) || seenNames.has(safeName.toLowerCase())) {
+      return;
+    }
+    seenNames.add(safeName.toLowerCase());
+    selectedUserNames.push(safeName);
+  });
+
+  return {
+    mode,
+    selectedUserNames,
+    selectedUsersMeta
+  };
+}
+
+function readBotConfigFromInputs() {
+  const current = normalizeNotificationConfig(appState.notificationConfig, appState.botConfig);
+  return normalizeNotificationConfig(
+    {
+      enabled: Boolean(elements.botEnableCore?.checked),
+      channels: {
+        telegram: {
+          enabled: Boolean(elements.notifyTelegramEnabled?.checked),
+          botToken: elements.botTelegramToken?.value.trim() || "",
+          chatId: elements.botTelegramChatId?.value.trim() || "",
+          enableCommands: Boolean(elements.botEnableCommands?.checked),
+          proxyUrl: elements.notifyTelegramProxyUrl?.value.trim() || ""
+        },
+        wecom: {
+          enabled: Boolean(elements.notifyWecomEnabled?.checked),
+          corpId: elements.botWechatCorpId?.value.trim() || "",
+          agentId: elements.botWechatAgentId?.value.trim() || "",
+          secret: elements.botWechatSecret?.value.trim() || "",
+          toUser: elements.botWechatToUser?.value.trim() || "@all",
+          callbackToken: elements.botWechatCallbackToken?.value.trim() || "",
+          callbackAes: elements.botWechatCallbackAes?.value.trim() || "",
+          callbackUrl: elements.botWechatCallbackUrl?.textContent?.trim() || "",
+          proxyUrl: elements.notifyWecomProxyUrl?.value.trim() || ""
+        }
+      },
+      routes: {
+        telegram: readNotificationRouteValues("telegram", current.routes.telegram),
+        wecom: readNotificationRouteValues("wecom", current.routes.wecom)
+      },
+      templates: {
+        telegram: readNotificationTemplateValues("telegram", current.templates.telegram),
+        wecom: readNotificationTemplateValues("wecom", current.templates.wecom)
+      },
+      display: {
+        telegram: readNotificationDisplayValues("telegram", current.display.telegram),
+        wecom: readNotificationDisplayValues("wecom", current.display.wecom)
+      },
+      runtime: {
+        ...current.runtime,
+        playback: {
+          ...current.runtime.playback,
+          userScope: readNotificationPlaybackUserScope(current.runtime?.playback?.userScope)
+        }
+      }
+    },
+    appState.botConfig
+  );
+}
+
+function readNotificationDisplayValues(channel, defaults = {}) {
+  const next = {};
+  Object.keys(defaults || {}).forEach((eventKey) => {
+    const fallback = defaults[eventKey] || { label: eventKey, description: "" };
+    const labelInput = document.querySelector(
+      `[data-notify-display-field="label"][data-notify-display-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+    );
+    const descriptionInput = document.querySelector(
+      `[data-notify-display-field="description"][data-notify-display-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+    );
+    next[eventKey] = {
+      label:
+        labelInput instanceof HTMLInputElement && labelInput.value.trim()
+          ? labelInput.value.trim()
+          : String(fallback.label || eventKey),
+      description:
+        descriptionInput instanceof HTMLInputElement
+          ? descriptionInput.value.trim()
+          : String(fallback.description || "")
+    };
+  });
+  return next;
+}
+
+function renderNotificationRouteList(channel, container, config) {
+  if (!container) return;
+  const events = getNotificationEventDefinitions();
+  container.innerHTML = events
+    .map((eventDef) => {
+      const checked = Boolean(config.routes?.[channel]?.[eventDef.key]);
+      const presentation = getNotificationEventPresentation(channel, eventDef, config);
+      return `
+        <label class="notify-route-row">
+          <div class="notify-route-copy">
+            <strong data-notify-display-render="label" data-notify-display-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" data-notify-display-fallback="${escapeHtml(eventDef.label || eventDef.key)}">${escapeHtml(presentation.label)}</strong>
+            <p data-notify-display-render="description" data-notify-display-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" data-notify-display-fallback="${escapeHtml(eventDef.description || "")}">${escapeHtml(presentation.description)}</p>
+          </div>
+          <input type="checkbox" data-notify-route-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" ${checked ? "checked" : ""}>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function renderNotificationUpcomingEvents() {
+  if (!elements.notifyUpcomingEvents) return;
+  const events = getNotificationUpcomingDefinitions();
+  elements.notifyUpcomingEvents.innerHTML = events
+    .map(
+      (eventDef) => `
+        <div class="notify-upcoming-item">
+          <strong>${escapeHtml(eventDef.label || eventDef.key)}</strong>
+          <span>未接入事件源</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function buildNotificationTemplatePanel(channel, eventDef, config) {
+  const template = String(config.templates?.[channel]?.[eventDef.key] || getNotificationDefaultTemplate(channel, eventDef.key));
+  const presentation = getNotificationEventPresentation(channel, eventDef, config);
+  const samplePayloads = eventDef?.samplePayloads && typeof eventDef.samplePayloads === "object" ? eventDef.samplePayloads : {};
+  const sampleKeys = Object.keys(samplePayloads);
+  const helperHtml = `
+      <p class="notify-template-help">
+        这里就是最终发给机器人的通知正文示例。标题、分组标题、每一行前面的中文前缀都可以直接改，
+        只要保留 <code>{{...}}</code> 变量不删掉就行。像“📋 播放数据”“🛋️ 终端状态”“= 📦基础参数 =”这些文字也都能自定义。
+        如果关闭了 IP 或剧情显示，对应那一行会自动隐藏。
+      </p>
+    `;
+  const optionHtml = sampleKeys
+    .map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(getNotificationSampleLabel(key))}</option>`)
+    .join("");
+  const variableHtml = Array.isArray(eventDef.variables)
+    ? eventDef.variables
+      .map((item) => {
+        const key = String(item?.key || "").trim();
+        const label = String(item?.label || key).trim();
+        const description = String(item?.description || "").trim();
+        return `
+          <div class="notify-template-var-chip">
+            <strong>{{${escapeHtml(key)}}}</strong>
+            <span>${escapeHtml(label)}</span>
+            ${description ? `<small>${escapeHtml(description)}</small>` : ""}
+          </div>
+        `;
+      })
+      .join("")
+    : "";
+  const initialSampleKey = sampleKeys[0] || "default";
+  const initialSamplePayload = getNotificationRuntimeAdjustedPayload(eventDef.key, initialSampleKey);
+  return `
+    <details class="notify-template-panel">
+      <summary>
+        <span class="notify-template-summary-copy">
+          <strong data-notify-display-render="label" data-notify-display-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" data-notify-display-fallback="${escapeHtml(eventDef.label || eventDef.key)}">${escapeHtml(presentation.label)}</strong>
+          <small data-notify-display-render="description" data-notify-display-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" data-notify-display-fallback="点击展开模板编辑区">${escapeHtml(presentation.description || "点击展开模板编辑区")}</small>
+        </span>
+        <span class="notify-template-summary-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="notify-template-panel-body">
+        <div class="notify-template-display-grid">
+          <label class="notify-template-display-field">
+            <span>卡片标题</span>
+            <input
+              type="text"
+              class="bot-template-input"
+              value="${escapeHtml(presentation.label)}"
+              data-notify-display-field="label"
+              data-notify-display-channel="${escapeHtml(channel)}"
+              data-event-key="${escapeHtml(eventDef.key)}"
+              maxlength="40"
+            >
+          </label>
+          <label class="notify-template-display-field">
+            <span>卡片说明</span>
+            <input
+              type="text"
+              class="bot-template-input"
+              value="${escapeHtml(presentation.description)}"
+              data-notify-display-field="description"
+              data-notify-display-channel="${escapeHtml(channel)}"
+              data-event-key="${escapeHtml(eventDef.key)}"
+              maxlength="120"
+            >
+          </label>
+        </div>
+        ${helperHtml}
+        <textarea class="bot-template-textarea" spellcheck="false" data-notify-template-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}">${escapeHtml(template)}</textarea>
+        <details class="notify-template-subpanel">
+          <summary>
+            <span class="notify-template-subpanel-copy">
+              <span class="bot-template-preview-label">可用变量</span>
+              <span class="notify-template-meta-hint">${Array.isArray(eventDef.variables) ? eventDef.variables.length : 0} 个变量</span>
+            </span>
+            <span class="notify-template-subpanel-chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="notify-template-subpanel-body">
+            <div class="notify-template-vars">${variableHtml}</div>
+          </div>
+        </details>
+        <details class="notify-template-subpanel">
+          <summary>
+            <span class="notify-template-subpanel-copy">
+              <span class="bot-template-preview-label">示例数据</span>
+              <span class="notify-template-meta-hint" data-notify-sample-label-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}">${escapeHtml(getNotificationSampleLabel(initialSampleKey))}</span>
+            </span>
+            <span class="notify-template-subpanel-actions">
+              <select class="bot-template-select" data-notify-sample-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" aria-label="选择示例数据">
+                ${optionHtml}
+              </select>
+              <span class="notify-template-subpanel-chevron" aria-hidden="true"></span>
+            </span>
+          </summary>
+          <div class="notify-template-subpanel-body">
+            <pre class="notify-template-sample" data-notify-sample-preview-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}">${escapeHtml(formatNotificationSamplePayload(initialSamplePayload))}</pre>
+          </div>
+        </details>
+        <div class="bot-template-preview-wrap">
+          <div class="notify-template-meta-row">
+            <span class="bot-template-preview-label">实时预览</span>
+            <span class="notify-template-meta-hint" data-notify-template-meta-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}">${template.length} 字符</span>
+          </div>
+          <pre class="bot-template-preview" data-notify-preview-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}"></pre>
+        </div>
+        <p class="notify-template-preview-status" data-notify-preview-status-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}"></p>
+      </div>
+    </details>
+  `;
+}
+
+function syncNotificationDisplayPresentation(channel, eventKey) {
+  const labelInput = document.querySelector(
+    `[data-notify-display-field="label"][data-notify-display-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const descriptionInput = document.querySelector(
+    `[data-notify-display-field="description"][data-notify-display-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const definition = getNotificationEventDefinition(eventKey);
+  const labelText =
+    labelInput instanceof HTMLInputElement && labelInput.value.trim()
+      ? labelInput.value.trim()
+      : String(definition?.label || eventKey);
+  const descriptionText =
+    descriptionInput instanceof HTMLInputElement ? descriptionInput.value.trim() : String(definition?.description || "");
+  document
+    .querySelectorAll(`[data-notify-display-render="label"][data-notify-display-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`)
+    .forEach((node) => {
+      node.textContent = labelText;
+    });
+  document
+    .querySelectorAll(`[data-notify-display-render="description"][data-notify-display-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`)
+    .forEach((node) => {
+      const fallback = node instanceof HTMLElement ? String(node.dataset.notifyDisplayFallback || "") : "";
+      node.textContent = descriptionText || fallback;
+    });
+}
+
+async function refreshNotificationTemplatePreview(channel, eventKey) {
+  const textarea = document.querySelector(
+    `[data-notify-template-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const select = document.querySelector(
+    `[data-notify-sample-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const preview = document.querySelector(
+    `[data-notify-preview-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const status = document.querySelector(
+    `[data-notify-preview-status-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const meta = document.querySelector(
+    `[data-notify-template-meta-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const samplePreview = document.querySelector(
+    `[data-notify-sample-preview-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  const sampleLabel = document.querySelector(
+    `[data-notify-sample-label-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventKey)}"]`
+  );
+  if (!(textarea instanceof HTMLTextAreaElement) || !(preview instanceof HTMLElement)) {
     return;
   }
+  const sampleKey = select instanceof HTMLSelectElement ? select.value : "default";
+  const previewKey = `${channel}:${eventKey}`;
+  const requestId = `${Date.now()}:${Math.random()}`;
+  textarea.dataset.previewRequestId = requestId;
+  const samplePayload = getNotificationRuntimeAdjustedPayload(eventKey, sampleKey);
+  if (samplePreview instanceof HTMLElement) {
+    samplePreview.textContent = formatNotificationSamplePayload(samplePayload);
+  }
+  if (sampleLabel instanceof HTMLElement) {
+    sampleLabel.textContent = getNotificationSampleLabel(sampleKey);
+  }
+  if (meta instanceof HTMLElement) {
+    meta.textContent = `${textarea.value.length} 字符`;
+  }
+  if (status instanceof HTMLElement) {
+    status.textContent = "正在生成预览...";
+    status.classList.remove("is-warning", "is-error");
+  }
+  try {
+    const result = await inviteApiFetch("/api/notifications/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        channel,
+        eventKey,
+        template: textarea.value,
+        sampleKey,
+        payloadOverrides: samplePayload
+      })
+    });
+    if (textarea.dataset.previewRequestId !== requestId) {
+      return;
+    }
+    preview.textContent = String(result?.previewText || "");
+    const missing = Array.isArray(result?.missingVariables) ? result.missingVariables : [];
+    if (status instanceof HTMLElement) {
+      if (missing.length > 0) {
+        status.textContent = `缺失变量：${missing.map((item) => `{{${item}}}`).join(" ")}`;
+        status.classList.remove("is-error");
+        status.classList.add("is-warning");
+      } else {
+        status.textContent = "预览已同步，当前模板变量完整。";
+        status.classList.remove("is-warning", "is-error");
+      }
+    }
+  } catch (error) {
+    preview.textContent = renderNotificationTemplateText(textarea.value, samplePayload);
+    if (status instanceof HTMLElement) {
+      status.textContent = `预览接口暂不可用，已使用本地预览：${error.message || "未知错误"}`;
+      status.classList.remove("is-warning");
+      status.classList.add("is-error");
+    }
+  } finally {
+    notificationPreviewTimers.delete(previewKey);
+  }
+}
 
-  const config = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...appState.botConfig });
-  elements.botEnableCore.checked = Boolean(config.enableCore);
-  elements.botEnablePlayback.checked = Boolean(config.enablePlayback);
-  elements.botEnableLibrary.checked = Boolean(config.enableLibrary);
-  if (elements.botEnableCommands) {
-    elements.botEnableCommands.checked = Boolean(config.enableCommands);
+function refreshAllNotificationTemplatePreviews() {
+  getNotificationEventDefinitions().forEach((eventDef) => {
+    refreshNotificationTemplatePreview("telegram", eventDef.key);
+    refreshNotificationTemplatePreview("wecom", eventDef.key);
+  });
+}
+
+function renderBotTemplatePreviews() {
+  refreshAllNotificationTemplatePreviews();
+}
+
+function bindNotificationTemplateEditors() {
+  document.querySelectorAll("[data-notify-display-field]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const channel = String(input.dataset.notifyDisplayChannel || "");
+      const eventKey = String(input.dataset.eventKey || "");
+      syncNotificationDisplayPresentation(channel, eventKey);
+    });
+  });
+  document.querySelectorAll("[data-notify-template-channel]").forEach((textarea) => {
+    textarea.addEventListener("input", () => {
+      const channel = String(textarea.dataset.notifyTemplateChannel || "");
+      const eventKey = String(textarea.dataset.eventKey || "");
+      const previewKey = `${channel}:${eventKey}`;
+      window.clearTimeout(notificationPreviewTimers.get(previewKey));
+      notificationPreviewTimers.set(
+        previewKey,
+        window.setTimeout(() => {
+          refreshNotificationTemplatePreview(channel, eventKey);
+        }, 180)
+      );
+    });
+  });
+  document.querySelectorAll("[data-notify-sample-channel]").forEach((select) => {
+    select.addEventListener("change", () => {
+      const channel = String(select.dataset.notifySampleChannel || "");
+      const eventKey = String(select.dataset.eventKey || "");
+      refreshNotificationTemplatePreview(channel, eventKey);
+    });
+  });
+  document.querySelectorAll(".notify-template-subpanel-actions .bot-template-select").forEach((select) => {
+    select.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
+    select.addEventListener("mousedown", (event) => {
+      event.stopPropagation();
+    });
+    select.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    select.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+    });
+  });
+}
+
+function getSupportedNotificationChannels() {
+  return ["telegram", "wecom"];
+}
+
+function getNotificationChannelMeta(channel) {
+  if (channel === "wecom") {
+    return {
+      key: "wecom",
+      label: "企业微信",
+      description: "企业通知与回调",
+      iconClass: "bot-channel-icon-wechat"
+    };
   }
-  if (elements.botEventStart) {
-    elements.botEventStart.checked = Boolean(config.notifyEvents?.start);
+  return {
+    key: "telegram",
+    label: "Telegram",
+    description: "Bot 推送与命令",
+    iconClass: "bot-channel-icon-telegram"
+  };
+}
+
+function isNotificationChannelConfigured(channel, config) {
+  const safeChannel = channel === "wecom" ? "wecom" : "telegram";
+  const channelConfig = config?.channels?.[safeChannel] || {};
+  if (safeChannel === "telegram") {
+    return Boolean(String(channelConfig.botToken || "").trim() && String(channelConfig.chatId || "").trim());
   }
-  if (elements.botEventPause) {
-    elements.botEventPause.checked = Boolean(config.notifyEvents?.pause);
+  return Boolean(
+    String(channelConfig.corpId || "").trim() &&
+    String(channelConfig.agentId || "").trim() &&
+    String(channelConfig.secret || "").trim()
+  );
+}
+
+function getNotificationChannelStatusText(channel, config) {
+  const safeChannel = channel === "wecom" ? "wecom" : "telegram";
+  const enabled = Boolean(config?.channels?.[safeChannel]?.enabled);
+  const configured = isNotificationChannelConfigured(safeChannel, config);
+  if (!configured) {
+    return "待配置";
   }
-  if (elements.botEventResume) {
-    elements.botEventResume.checked = Boolean(config.notifyEvents?.resume);
+  return enabled ? "已启用" : "已配置，未启用";
+}
+
+function getConfiguredNotificationChannels(config) {
+  return getSupportedNotificationChannels().filter((channel) => isNotificationChannelConfigured(channel, config));
+}
+
+function getVisibleNotificationChannelCards(config) {
+  const channels = getSupportedNotificationChannels();
+  const visible = [];
+  channels.forEach((channel) => {
+    if (isNotificationChannelConfigured(channel, config) || appState.notificationChannelDraftChannel === channel) {
+      visible.push(channel);
+    }
+  });
+  return visible;
+}
+
+function renderNotificationChannelAddMenu(config) {
+  if (!elements.notifyChannelAddMenu) {
+    return;
   }
-  if (elements.botEventStop) {
-    elements.botEventStop.checked = Boolean(config.notifyEvents?.stop);
+  const remainingChannels = getSupportedNotificationChannels().filter(
+    (channel) => !getVisibleNotificationChannelCards(config).includes(channel)
+  );
+  if (remainingChannels.length === 0) {
+    elements.notifyChannelAddMenu.hidden = true;
+    elements.notifyChannelAddMenu.innerHTML = "";
+    elements.notifyChannelAddToggle?.setAttribute("aria-expanded", "false");
+    return;
   }
-  if (elements.botShowIp) {
-    elements.botShowIp.checked = Boolean(config.showIp);
+  elements.notifyChannelAddMenu.innerHTML = remainingChannels
+    .map((channel) => {
+      const meta = getNotificationChannelMeta(channel);
+      return `
+        <button class="notify-channel-add-item" type="button" role="menuitem" data-notify-channel-add="${escapeHtml(channel)}">
+          <span class="bot-channel-icon ${escapeHtml(meta.iconClass)}" aria-hidden="true"></span>
+          <span class="notify-channel-add-copy">
+            <strong>${escapeHtml(meta.label)}</strong>
+            <small>${escapeHtml(meta.description)}</small>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
+  elements.notifyChannelAddMenu.hidden = !appState.notificationChannelMenuOpen;
+  elements.notifyChannelAddToggle?.setAttribute("aria-expanded", appState.notificationChannelMenuOpen ? "true" : "false");
+}
+
+function renderNotificationChannelCards(config) {
+  const visibleChannels = getVisibleNotificationChannelCards(config);
+  const configuredChannels = getConfiguredNotificationChannels(config);
+  if (elements.notifyChannelCardList) {
+    elements.notifyChannelCardList.hidden = visibleChannels.length === 0;
+    elements.notifyChannelCardList.innerHTML = visibleChannels
+      .map((channel) => {
+        const meta = getNotificationChannelMeta(channel);
+        const configured = isNotificationChannelConfigured(channel, config);
+        const enabled = Boolean(config?.channels?.[channel]?.enabled);
+        const statusText = getNotificationChannelStatusText(channel, config);
+        return `
+          <article class="notify-channel-card ${configured ? "is-configured" : "is-draft"}" data-notify-channel-card-wrap="${escapeHtml(channel)}">
+            <button class="notify-channel-card-main" type="button" data-notify-channel-open="${escapeHtml(channel)}">
+              <span class="notify-channel-card-status ${enabled ? "is-online" : configured ? "is-idle" : "is-pending"}" aria-hidden="true"></span>
+              <span class="notify-channel-card-copy">
+                <strong>${escapeHtml(meta.label)}</strong>
+                <small>${escapeHtml(statusText)}</small>
+              </span>
+              <span class="bot-channel-icon ${escapeHtml(meta.iconClass)}" aria-hidden="true"></span>
+            </button>
+            <button class="notify-channel-card-remove" type="button" aria-label="移除 ${escapeHtml(meta.label)}" data-notify-channel-remove="${escapeHtml(channel)}">×</button>
+          </article>
+        `;
+      })
+      .join("");
   }
-  if (elements.botShowIpGeo) {
-    elements.botShowIpGeo.checked = Boolean(config.showIpGeo);
+  if (elements.notifyChannelEmptyState) {
+    elements.notifyChannelEmptyState.hidden = visibleChannels.length > 0;
   }
-  if (elements.botShowOverview) {
-    elements.botShowOverview.checked = Boolean(config.showOverview);
+  if (elements.notifyChannelToolbar) {
+    elements.notifyChannelToolbar.hidden = visibleChannels.length === 0 && !appState.notificationChannelMenuOpen;
   }
-  if (elements.botDedupeSeconds) {
-    elements.botDedupeSeconds.value = String(config.eventDedupSeconds ?? DEFAULT_BOT_CONFIG.eventDedupSeconds);
+  if (elements.notifyChannelAddToggle) {
+    const remainingChannels = getSupportedNotificationChannels().filter((channel) => !visibleChannels.includes(channel));
+    elements.notifyChannelAddToggle.hidden = remainingChannels.length === 0;
   }
-  elements.botTelegramToken.value = config.telegramToken || "";
-  elements.botTelegramChatId.value = config.telegramChatId || "";
-  elements.botWechatCorpId.value = config.wechatCorpId || "";
-  elements.botWechatAgentId.value = config.wechatAgentId || "";
-  elements.botWechatSecret.value = config.wechatSecret || "";
-  elements.botWechatToUser.value = config.wechatToUser || "@all";
-  elements.botWechatCallbackToken.value = config.wechatCallbackToken || "";
-  elements.botWechatCallbackAes.value = config.wechatCallbackAes || "";
+  renderNotificationChannelAddMenu(config);
+}
+
+function renderNotificationConfiguredSections(config) {
+  const configuredChannels = getConfiguredNotificationChannels(config);
+  document.querySelectorAll("[data-notify-route-pane]").forEach((node) => {
+    const channel = String(node.getAttribute("data-notify-route-pane") || "");
+    node.hidden = !configuredChannels.includes(channel);
+  });
+  document.querySelectorAll("[data-notify-template-pane]").forEach((node) => {
+    const channel = String(node.getAttribute("data-notify-template-pane") || "");
+    node.hidden = !configuredChannels.includes(channel);
+  });
+  const routeGrid = document.querySelector("#view-bot-assistant .notify-matrix-grid");
+  const templateGrid = document.querySelector("#view-bot-assistant .notify-template-center-grid");
+  if (elements.notifyRoutesEmpty) {
+    elements.notifyRoutesEmpty.hidden = configuredChannels.length > 0;
+  }
+  if (elements.notifyTemplatesEmpty) {
+    elements.notifyTemplatesEmpty.hidden = configuredChannels.length > 0;
+  }
+  if (routeGrid instanceof HTMLElement) {
+    routeGrid.hidden = configuredChannels.length === 0;
+    routeGrid.dataset.configuredCount = String(Math.min(Math.max(configuredChannels.length, 0), 2));
+  }
+  if (templateGrid instanceof HTMLElement) {
+    templateGrid.hidden = configuredChannels.length === 0;
+    templateGrid.dataset.configuredCount = String(Math.min(Math.max(configuredChannels.length, 0), 2));
+  }
+  const routeGroups = document.querySelector("#view-bot-assistant .notify-route-groups");
+  if (routeGroups instanceof HTMLElement) {
+    routeGroups.dataset.configuredCount = String(Math.min(Math.max(configuredChannels.length, 0), 2));
+  }
+}
+
+function renderNotificationChannelModal(config) {
+  const channel = appState.notificationChannelModalChannel;
+  const meta = getNotificationChannelMeta(channel);
+  const isTelegram = channel === "telegram";
+  if (elements.notifyChannelModalTitle) {
+    elements.notifyChannelModalTitle.textContent = channel ? `${meta.label} 配置` : "配置渠道";
+  }
+  if (elements.notifyChannelModalSubtitle) {
+    elements.notifyChannelModalSubtitle.textContent = channel
+      ? `填写 ${meta.label} 接入信息`
+      : "填写通知渠道接入信息";
+  }
+  if (elements.notifyChannelModalIcon) {
+    elements.notifyChannelModalIcon.className = `bot-channel-icon ${meta.iconClass}`;
+  }
+  if (elements.notifyPaneTelegram) {
+    elements.notifyPaneTelegram.hidden = !isTelegram;
+    elements.notifyPaneTelegram.classList.toggle("is-active", isTelegram);
+  }
+  if (elements.notifyPaneWecom) {
+    elements.notifyPaneWecom.hidden = isTelegram || !channel;
+    elements.notifyPaneWecom.classList.toggle("is-active", channel === "wecom");
+  }
+  const platformEnabled = Boolean(config?.enabled);
+  if (elements.notifyChannelPlatformSummary) {
+    const webhookWarning = appState.botWebhookWarning ? "Webhook 未就绪" : "Webhook 已就绪";
+    elements.notifyChannelPlatformSummary.textContent =
+      `平台${platformEnabled ? "已启用" : "未启用"} · ${webhookWarning}`;
+  }
+  if (elements.notifyChannelModalTest) {
+    elements.notifyChannelModalTest.disabled = !channel || !isNotificationChannelConfigured(channel, config);
+  }
+}
+
+function mountNotificationChannelModalToBody() {
+  const modal = elements.notifyChannelModal;
+  if (!(modal instanceof HTMLElement)) {
+    return;
+  }
+  if (modal.parentElement !== document.body) {
+    document.body.appendChild(modal);
+  }
+}
+
+function openNotificationChannelModal(channel) {
+  const safeChannel = channel === "wecom" ? "wecom" : "telegram";
+  appState.notificationChannelModalChannel = safeChannel;
+  appState.notificationChannelMenuOpen = false;
+  mountNotificationChannelModalToBody();
+  renderBotAssistant();
+  // The playback user scope is intentionally inside the shared platform
+  // settings block. Open it when entering a channel so the existing feature
+  // remains discoverable after the channel-card redesign.
+  if (elements.notifyChannelPlatformPanel) {
+    elements.notifyChannelPlatformPanel.open = true;
+  }
+  loadNotificationPlaybackUsers({ silent: true });
+  if (elements.notifyChannelModal) {
+    elements.notifyChannelModal.hidden = false;
+  }
+}
+
+function closeNotificationChannelModal() {
+  const currentChannel = appState.notificationChannelModalChannel;
+  appState.notificationChannelModalChannel = "";
+  appState.notificationChannelMenuOpen = false;
+  if (currentChannel && appState.notificationChannelDraftChannel === currentChannel) {
+    const savedConfig = normalizeNotificationConfig(appState.notificationConfig, appState.botConfig);
+    if (!isNotificationChannelConfigured(currentChannel, savedConfig)) {
+      appState.notificationChannelDraftChannel = "";
+    }
+  }
+  if (elements.notifyChannelModal) {
+    elements.notifyChannelModal.hidden = true;
+  }
+  renderBotAssistant();
+}
+
+function toggleNotificationChannelMenu() {
+  const config = readBotConfigFromInputs();
+  const remainingChannels = getSupportedNotificationChannels().filter(
+    (channel) => !getVisibleNotificationChannelCards(config).includes(channel)
+  );
+  if (!remainingChannels.length) {
+    appState.notificationChannelMenuOpen = false;
+    renderNotificationChannelCards(config);
+    return;
+  }
+  appState.notificationChannelMenuOpen = !appState.notificationChannelMenuOpen;
+  renderNotificationChannelCards(config);
+}
+
+function addNotificationChannel(channel) {
+  const safeChannel = channel === "wecom" ? "wecom" : "telegram";
+  appState.notificationChannelDraftChannel = safeChannel;
+  appState.notificationChannelMenuOpen = false;
+  renderBotAssistant();
+  openNotificationChannelModal(safeChannel);
+}
+
+async function removeNotificationChannel(channel) {
+  const safeChannel = channel === "wecom" ? "wecom" : "telegram";
+  const nextConfig = normalizeNotificationConfig(appState.notificationConfig, appState.botConfig);
+  if (safeChannel === "telegram") {
+    nextConfig.channels.telegram = {
+      ...nextConfig.channels.telegram,
+      enabled: false,
+      botToken: "",
+      chatId: "",
+      proxyUrl: ""
+    };
+  } else {
+    nextConfig.channels.wecom = {
+      ...nextConfig.channels.wecom,
+      enabled: false,
+      corpId: "",
+      agentId: "",
+      secret: "",
+      toUser: "@all",
+      callbackToken: "",
+      callbackAes: "",
+      callbackUrl: "",
+      proxyUrl: ""
+    };
+  }
+  try {
+    await pushBotConfigToServer(nextConfig);
+    if (appState.notificationChannelDraftChannel === safeChannel) {
+      appState.notificationChannelDraftChannel = "";
+    }
+    if (appState.notificationChannelModalChannel === safeChannel) {
+      appState.notificationChannelModalChannel = "";
+      if (elements.notifyChannelModal) {
+        elements.notifyChannelModal.hidden = true;
+      }
+    }
+    if (elements.botFeedback) {
+      elements.botFeedback.textContent = `${getNotificationChannelLabel(safeChannel)} 已移除。`;
+      elements.botFeedback.classList.add("feedback-success");
+    }
+    showToast(`${getNotificationChannelLabel(safeChannel)} 已移除`, 1000);
+    addSyncEvent(`${getNotificationChannelLabel(safeChannel)} 已移除`, "通知渠道已关闭并从顶部卡片区隐藏。", "success");
+    renderBotAssistant();
+  } catch (error) {
+    if (elements.botFeedback) {
+      elements.botFeedback.textContent = `移除失败：${error.message || "未知错误"}`;
+      elements.botFeedback.classList.remove("feedback-success");
+    }
+    showToast("通知渠道移除失败", 1200);
+  }
+}
+
+function renderNotificationTemplateCenter(config) {
+  if (elements.notifyTemplateListTelegram) {
+    elements.notifyTemplateListTelegram.innerHTML = getNotificationEventDefinitions()
+      .map((eventDef) => buildNotificationTemplatePanel("telegram", eventDef, config))
+      .join("");
+  }
+  if (elements.notifyTemplateListWecom) {
+    elements.notifyTemplateListWecom.innerHTML = getNotificationEventDefinitions()
+      .map((eventDef) => buildNotificationTemplatePanel("wecom", eventDef, config))
+      .join("");
+  }
+  bindNotificationTemplateEditors();
+  refreshAllNotificationTemplatePreviews();
+}
+
+function renderBotAssistant() {
+  if (!elements.botEnableCore || !elements.notifyRouteGridTelegram || !elements.notifyRouteGridWecom) {
+    return;
+  }
+  mountNotificationChannelModalToBody();
+  const config = normalizeNotificationConfig(appState.notificationConfig, appState.botConfig);
+  appState.notificationConfig = config;
+  elements.botEnableCore.checked = Boolean(config.enabled);
+  if (elements.notifyTelegramEnabled) elements.notifyTelegramEnabled.checked = Boolean(config.channels?.telegram?.enabled);
+  if (elements.notifyWecomEnabled) elements.notifyWecomEnabled.checked = Boolean(config.channels?.wecom?.enabled);
+  if (elements.botEnableCommands) elements.botEnableCommands.checked = Boolean(config.channels?.telegram?.enableCommands);
+  if (elements.botTelegramToken) elements.botTelegramToken.value = config.channels?.telegram?.botToken || "";
+  if (elements.botTelegramChatId) elements.botTelegramChatId.value = config.channels?.telegram?.chatId || "";
+  if (elements.notifyTelegramProxyUrl) elements.notifyTelegramProxyUrl.value = config.channels?.telegram?.proxyUrl || "";
+  if (elements.botWechatCorpId) elements.botWechatCorpId.value = config.channels?.wecom?.corpId || "";
+  if (elements.botWechatAgentId) elements.botWechatAgentId.value = config.channels?.wecom?.agentId || "";
+  if (elements.botWechatSecret) elements.botWechatSecret.value = config.channels?.wecom?.secret || "";
+  if (elements.botWechatToUser) elements.botWechatToUser.value = config.channels?.wecom?.toUser || "@all";
+  if (elements.botWechatCallbackToken) elements.botWechatCallbackToken.value = config.channels?.wecom?.callbackToken || "";
+  if (elements.botWechatCallbackAes) elements.botWechatCallbackAes.value = config.channels?.wecom?.callbackAes || "";
+  if (elements.notifyWecomProxyUrl) elements.notifyWecomProxyUrl.value = config.channels?.wecom?.proxyUrl || "";
+  if (elements.notifyTelegramStatus) {
+    elements.notifyTelegramStatus.textContent = config.channels?.telegram?.enabled
+      ? `Telegram 已启用 · 路由 ${Object.values(config.routes?.telegram || {}).filter(Boolean).length} 项`
+      : "Telegram 未启用";
+  }
+  if (elements.notifyWecomStatus) {
+    elements.notifyWecomStatus.textContent = config.channels?.wecom?.enabled
+      ? `企业微信已启用 · 路由 ${Object.values(config.routes?.wecom || {}).filter(Boolean).length} 项`
+      : "企业微信未启用";
+  }
   const webhookUrl = appState.botWebhookUrl || getWebhookUrlForBot();
   appState.botWebhookWarning = getWebhookUrlWarning(webhookUrl);
-  elements.botWebhookUrl.textContent = webhookUrl;
-  elements.botWebhookUrl.classList.toggle("route-copy-warning", Boolean(appState.botWebhookWarning));
+  if (elements.botWebhookUrl) {
+    elements.botWebhookUrl.textContent = webhookUrl;
+    elements.botWebhookUrl.classList.toggle("route-copy-warning", Boolean(appState.botWebhookWarning));
+  }
   renderBotWebhookStatus();
+  renderNotificationPlaybackUserScope(config);
   if (elements.botWechatCallbackUrl) {
     elements.botWechatCallbackUrl.textContent = getWechatCallbackUrlForBot();
   }
+  renderNotificationRouteList("telegram", elements.notifyRouteGridTelegram, config);
+  renderNotificationRouteList("wecom", elements.notifyRouteGridWecom, config);
+  renderNotificationUpcomingEvents();
+  renderNotificationTemplateCenter(config);
+  renderNotificationChannelCards(config);
+  renderNotificationConfiguredSections(config);
+  renderNotificationChannelModal(config);
   if (shouldUseLocalProxy() && isAdminReady()) {
     refreshBotWebhookInfo({ silent: true });
+  }
+  if (!Array.isArray(appState.notificationPlaybackUsers) || appState.notificationPlaybackUsers.length === 0) {
+    loadNotificationPlaybackUsers({ silent: true });
   }
   renderEnvControlledState();
 }
@@ -7481,51 +10030,70 @@ function renderBotAssistant() {
 async function loadBotConfigFromServer(options = {}) {
   const { silent = false } = options;
   try {
-    const result = await inviteApiFetch("/api/bot/config");
-    appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...(result?.botConfig || {}) });
-    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "botConfig");
+    const [configResult, capabilityResult] = await Promise.all([
+      inviteApiFetch("/api/notifications/config"),
+      inviteApiFetch("/api/notifications/capabilities")
+    ]);
+    appState.notificationCapabilities = normalizeNotificationCapabilities(capabilityResult?.capabilities || {});
+    appState.notificationConfig = normalizeNotificationConfig(configResult?.notificationConfig || {}, configResult?.botConfig || appState.botConfig);
+    appState.botConfig = normalizeBotConfig({
+      ...DEFAULT_BOT_CONFIG,
+      ...(configResult?.botConfig || appState.botConfig),
+      enableCore: appState.notificationConfig.enabled,
+      telegramToken: appState.notificationConfig.channels?.telegram?.botToken || "",
+      telegramChatId: appState.notificationConfig.channels?.telegram?.chatId || "",
+      enableCommands: Boolean(appState.notificationConfig.channels?.telegram?.enableCommands),
+      wechatCorpId: appState.notificationConfig.channels?.wecom?.corpId || "",
+      wechatAgentId: appState.notificationConfig.channels?.wecom?.agentId || "",
+      wechatSecret: appState.notificationConfig.channels?.wecom?.secret || "",
+      wechatToUser: appState.notificationConfig.channels?.wecom?.toUser || "@all",
+      wechatCallbackToken: appState.notificationConfig.channels?.wecom?.callbackToken || "",
+      wechatCallbackAes: appState.notificationConfig.channels?.wecom?.callbackAes || ""
+    });
+    appState.envControlledFields = mergeEnvControlledFields(configResult?.envControlledFields || capabilityResult?.envControlledFields, "notificationConfig");
     persistLocalState();
     renderBotAssistant();
     return true;
   } catch (error) {
     if (!silent) {
       if (elements.botFeedback) {
-        elements.botFeedback.textContent = `读取机器人配置失败：${error.message || "未知错误"}`;
+        elements.botFeedback.textContent = `读取通知配置失败：${error.message || "未知错误"}`;
         elements.botFeedback.classList.remove("feedback-success");
       }
-      showToast("读取机器人配置失败", 1200);
+      showToast("读取通知配置失败", 1200);
     }
     return false;
   }
 }
 
 async function pushBotConfigToServer(nextConfig) {
-  const payloadConfig = { ...nextConfig };
-  const botManaged = appState?.envControlledFields?.botConfig || [];
-  if (botManaged.includes("telegramToken")) {
-    delete payloadConfig.telegramToken;
+  const payloadConfig = normalizeNotificationConfig(nextConfig, appState.botConfig);
+  const managed = appState?.envControlledFields?.notificationConfig || [];
+  if (managed.includes("channels.telegram.botToken")) {
+    delete payloadConfig.channels.telegram.botToken;
   }
-  if (botManaged.includes("telegramChatId")) {
-    delete payloadConfig.telegramChatId;
+  if (managed.includes("channels.telegram.chatId")) {
+    delete payloadConfig.channels.telegram.chatId;
   }
-
-  const result = await inviteApiFetch("/api/bot/config", {
+  const result = await inviteApiFetch("/api/notifications/config", {
     method: "POST",
-    body: JSON.stringify({ botConfig: payloadConfig })
+    body: JSON.stringify({ notificationConfig: payloadConfig })
   });
-  const saved = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...(result?.botConfig || nextConfig) });
-  appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "botConfig");
-  appState.botConfig = saved;
+  appState.notificationConfig = normalizeNotificationConfig(result?.notificationConfig || payloadConfig, result?.botConfig || appState.botConfig);
+  if (result?.botConfig) {
+    appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...result.botConfig });
+  }
+  appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "notificationConfig");
   persistLocalState();
   renderBotAssistant();
-  return saved;
+  return appState.notificationConfig;
 }
 
 function setBotActionSuccessState(button) {
   if (!button) {
     return;
   }
-  const original = button.dataset.originalText || button.textContent || "保存配置";
+  const original = button.dataset.originalText || button.textContent || "保存";
   button.dataset.originalText = original;
   button.textContent = "保存成功";
   button.classList.add("bot-save-success");
@@ -7539,7 +10107,14 @@ function setBotActionSuccessState(button) {
   }, 1000);
 }
 
-async function saveBotConfig() {
+async function saveBotConfig(options = {}) {
+  const {
+    button = null,
+    successText = "配置已保存",
+    feedbackText = "保存成功",
+    eventTitle = "通知配置已保存",
+    eventDetail = "通知平台配置、事件路由与模板已更新。"
+  } = options;
   const nextConfig = readBotConfigFromInputs();
   try {
     await pushBotConfigToServer(nextConfig);
@@ -7548,55 +10123,98 @@ async function saveBotConfig() {
       elements.botFeedback.textContent = `保存失败：${error.message || "未知错误"}`;
       elements.botFeedback.classList.remove("feedback-success");
     }
-    showToast("机器人配置保存失败", 1200);
-    addSyncEvent("机器人配置保存失败", error.message || "未知错误", "danger");
+    showToast("通知配置保存失败", 1200);
+    addSyncEvent("通知配置保存失败", error.message || "未知错误", "danger");
     return;
   }
 
   if (elements.botFeedback) {
-    elements.botFeedback.textContent = "保存成功";
+    elements.botFeedback.textContent = feedbackText;
     elements.botFeedback.classList.add("feedback-success");
   }
-  setBotActionSuccessState(elements.botSaveBtn);
-  showToast("配置已保存", 1000);
-  addSyncEvent("机器人配置已保存", "Telegram / 企业微信通道配置已更新。", "success");
+  setBotActionSuccessState(button);
+  showToast(successText, 1000);
+  addSyncEvent(eventTitle, eventDetail, "success");
+}
+
+async function saveNotificationChannel(channel) {
+  const label = getNotificationChannelLabel(channel);
+  const button = elements.notifyChannelModalSave;
+  await saveBotConfig({
+    button,
+    successText: `${label} 配置已保存`,
+    feedbackText: `${label} 通道配置已保存`,
+    eventTitle: `${label} 配置已保存`,
+    eventDetail: `${label} 通道凭证、路由与模板改动已同步。`
+  });
+  if (isNotificationChannelConfigured(channel, appState.notificationConfig)) {
+    if (appState.notificationChannelDraftChannel === channel) {
+      appState.notificationChannelDraftChannel = "";
+    }
+    closeNotificationChannelModal();
+  }
+}
+
+async function saveNotificationRoutesCard() {
+  await saveBotConfig({
+    button: elements.notifyRoutesSave,
+    successText: "通知路由已保存",
+    feedbackText: "通知类型矩阵已保存",
+    eventTitle: "通知路由已保存",
+    eventDetail: "按通道事件路由开关已同步到通知运行时。"
+  });
+}
+
+async function saveNotificationTemplateCenter() {
+  await saveBotConfig({
+    button: elements.notifyTemplatesSave,
+    successText: "模板中心已保存",
+    feedbackText: "模板中心配置已保存",
+    eventTitle: "通知模板已保存",
+    eventDetail: "模板中心的通道模板改动已同步。"
+  });
+}
+
+async function saveNotificationTemplate(channel, eventKey, button) {
+  const label = getNotificationChannelLabel(channel);
+  const eventDef = getNotificationEventDefinition(eventKey);
+  const eventLabel = String(eventDef?.label || eventKey).trim();
+  await saveBotConfig({
+    button,
+    successText: `${label} ${eventLabel} 模板已保存`,
+    feedbackText: `${label} · ${eventLabel} 模板已保存`,
+    eventTitle: `${label} 模板已保存`,
+    eventDetail: `${eventLabel} 模板已更新并同步到通知运行时。`
+  });
 }
 
 async function sendBotTest(channel) {
   const nextConfig = readBotConfigFromInputs();
-  appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...nextConfig });
+  appState.notificationConfig = normalizeNotificationConfig(nextConfig, appState.botConfig);
   persistLocalState();
   renderBotAssistant();
 
-  if (channel !== "telegram") {
-    if (elements.botFeedback) {
-      elements.botFeedback.textContent = "企业微信测试消息已触发（示例模式）。接入后端后可发送真实消息。";
-      elements.botFeedback.classList.remove("feedback-success");
-    }
-    showToast("✅ 测试消息已成功发送至企业微信！", 1000);
-    addSyncEvent("企业微信测试发送", "前端配置已验证，等待后端通知服务接入。", "success");
-    return;
-  }
-
   try {
     await pushBotConfigToServer(nextConfig);
-    const result = await inviteApiFetch("/api/bot/test", {
+    const result = await inviteApiFetch("/api/notifications/test", {
       method: "POST",
-      body: JSON.stringify({ channel: "telegram" })
+      body: JSON.stringify({ channel })
     });
+    const label = getNotificationChannelLabel(channel);
     if (elements.botFeedback) {
-      elements.botFeedback.textContent = result?.detail || "Telegram 测试消息已发送。";
+      elements.botFeedback.textContent = result?.detail || `${label} 测试消息已发送。`;
       elements.botFeedback.classList.add("feedback-success");
     }
-    showToast("✅ 测试消息已成功发送至 Telegram！", 1000);
-    addSyncEvent("Telegram 测试发送", result?.detail || "已发送真实 Telegram 测试消息。", "success");
+    showToast(`✅ 测试消息已成功发送至 ${label}！`, 1000);
+    addSyncEvent(`${label} 测试发送`, result?.detail || "已发送真实测试消息。", "success");
   } catch (error) {
+    const label = getNotificationChannelLabel(channel);
     if (elements.botFeedback) {
-      elements.botFeedback.textContent = `Telegram 测试发送失败：${error.message || "未知错误"}`;
+      elements.botFeedback.textContent = `${label} 测试发送失败：${error.message || "未知错误"}`;
       elements.botFeedback.classList.remove("feedback-success");
     }
-    showToast("Telegram 测试发送失败", 1400);
-    addSyncEvent("Telegram 测试发送失败", error.message || "未知错误", "danger");
+    showToast("通知测试发送失败", 1400);
+    addSyncEvent(`${label} 测试发送失败`, error.message || "未知错误", "danger");
   }
 }
 
@@ -7640,6 +10258,7 @@ async function loadEmbyData() {
     appState.systemInfo = systemInfo;
     appState.users = usersResult.Items || [];
     appState.sessions = Array.isArray(sessions) ? sessions : [];
+    notifySessionsUpdated();
     appState.devices = normalizeDeviceList(devicesResult);
     appState.logs = logsResult.Items || [];
     try {
@@ -7695,7 +10314,7 @@ async function loadEmbyData() {
 async function runQualityRescan() {
   if (!appState.config.serverUrl || !appState.config.apiKey) {
     if (elements.userActionFeedback) {
-      elements.userActionFeedback.textContent = "请先在系统设置里连接 Emby，再执行重扫。";
+      elements.userActionFeedback.textContent = "请先在媒体库配置里连接 Emby，再执行重扫。";
     }
     return;
   }
@@ -7837,8 +10456,13 @@ function swapLogsActionBlocks(activeView) {
   elements.topbarLogsToolbarHost.hidden = true;
 }
 
+function shouldShowTopbar(view) {
+  return TOPBAR_VISIBLE_VIEWS.has(String(view || "").trim());
+}
+
 function switchView(view) {
-  const targetView = view && VIEW_META[view] ? view : "";
+  const normalizedView = view === "settings" ? "media-config" : view;
+  const targetView = normalizedView && VIEW_META[normalizedView] ? normalizedView : "";
 
   if (!targetView) {
     resetSettingsSaveFeedback();
@@ -7849,7 +10473,7 @@ function switchView(view) {
     closeUserConfigModal();
     appState.activeView = "";
     localStorage.removeItem(STORAGE_KEYS.activeView);
-    document.title = "镜界Vistamirror";
+    document.title = "VistaMirror";
     if (elements.mainContent) {
       elements.mainContent.dataset.activeView = "";
     }
@@ -7867,21 +10491,21 @@ function switchView(view) {
     if (elements.topbarActions) {
       elements.topbarActions.hidden = true;
     }
+    if (elements.topbar) {
+      elements.topbar.hidden = true;
+    }
     if (elements.settingsSaveBtn) {
       elements.settingsSaveBtn.hidden = true;
     }
     if (elements.topbarUserCenterActions) {
       elements.topbarUserCenterActions.hidden = true;
     }
-    if (elements.topbarBotActions) {
-      elements.topbarBotActions.hidden = true;
-    }
     document.dispatchEvent(new CustomEvent("adaptive:viewchange", { detail: { view: "" } }));
     closeProfileMenu();
     return;
   }
 
-  if (targetView !== "settings") {
+  if (!isConfigView(targetView)) {
     resetSettingsSaveFeedback();
   }
   if (targetView !== "user-center") {
@@ -7893,10 +10517,11 @@ function switchView(view) {
   }
 
   const meta = VIEW_META[targetView];
+  const showTopbar = shouldShowTopbar(targetView);
 
   appState.activeView = targetView;
   localStorage.setItem(STORAGE_KEYS.activeView, targetView);
-  document.title = `${meta.title} - 镜界Vistamirror`;
+  document.title = `${meta.title} - VistaMirror`;
   if (elements.mainContent) {
     elements.mainContent.dataset.activeView = targetView;
   }
@@ -7912,21 +10537,21 @@ function switchView(view) {
   if (elements.topbarSubtitle) {
     elements.topbarSubtitle.textContent = meta.subtitle;
   }
+  if (elements.topbar) {
+    elements.topbar.hidden = !showTopbar;
+  }
   swapLogsActionBlocks(targetView);
   if (elements.topbarLogsToolbarHost) {
-    elements.topbarLogsToolbarHost.hidden = targetView !== "logs";
+    elements.topbarLogsToolbarHost.hidden = !showTopbar || targetView !== "logs";
   }
   if (elements.topbarActions) {
-    elements.topbarActions.hidden = false;
+    elements.topbarActions.hidden = !showTopbar;
   }
   if (elements.settingsSaveBtn) {
-    elements.settingsSaveBtn.hidden = targetView !== "settings";
+    elements.settingsSaveBtn.hidden = !isConfigView(targetView);
   }
   if (elements.topbarUserCenterActions) {
-    elements.topbarUserCenterActions.hidden = targetView !== "user-center";
-  }
-  if (elements.topbarBotActions) {
-    elements.topbarBotActions.hidden = targetView !== "bot-assistant";
+    elements.topbarUserCenterActions.hidden = !showTopbar || targetView !== "user-center";
   }
   if (elements.topbarIcon) {
     elements.topbarIcon.textContent = meta.icon || "👥";
@@ -7935,6 +10560,12 @@ function switchView(view) {
     loadMissingList({ quiet: true }).catch(() => {
       // 初次进入缺集页读取失败时保持静默，避免打断主流程
     });
+  }
+  if ((targetView === "media-config" || targetView === "workshop") && shouldUseLocalProxy()) {
+    loadCoverStudioConfigFromServer({ silent: true });
+    if (appState.config.serverUrl && appState.config.apiKey) {
+      loadCoverStudioViews({ silent: true });
+    }
   }
   if (elements.mainContent) {
     elements.mainContent.scrollTo({ top: 0, behavior: "smooth" });
@@ -9352,7 +11983,7 @@ function GlobalSearchModal() {
     }
     if (!appState.config.serverUrl || !appState.config.apiKey) {
       state.loading = false;
-      state.error = "请先在系统设置中连接 Emby。";
+      state.error = "请先在媒体库配置中连接 Emby。";
       renderResults();
       return;
     }
@@ -9521,10 +12152,44 @@ function GlobalSearchModal() {
 
 const globalSearchModal = GlobalSearchModal();
 
+function isDesktopSidebarAvailable() {
+  return window.matchMedia("(min-width: 1367px)").matches;
+}
+
+function syncSidebarCollapseState() {
+  const canCollapse = isDesktopSidebarAvailable();
+  const collapsed = canCollapse && Boolean(appState.sidebarCollapsed);
+
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+
+  if (elements.primarySidebar) {
+    elements.primarySidebar.toggleAttribute("inert", collapsed);
+    elements.primarySidebar.setAttribute("aria-hidden", collapsed ? "true" : "false");
+  }
+
+  if (elements.sidebarToggleBtn) {
+    elements.sidebarToggleBtn.hidden = !canCollapse;
+    elements.sidebarToggleBtn.textContent = collapsed ? "›" : "‹";
+    elements.sidebarToggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    elements.sidebarToggleBtn.setAttribute("aria-label", collapsed ? "展开侧边栏" : "隐藏侧边栏");
+    elements.sidebarToggleBtn.title = collapsed ? "展开侧边栏" : "隐藏侧边栏";
+  }
+}
+
+function setSidebarCollapsed(collapsed) {
+  appState.sidebarCollapsed = Boolean(collapsed);
+  localStorage.setItem(STORAGE_KEYS.sidebarCollapsed, appState.sidebarCollapsed ? "1" : "0");
+  syncSidebarCollapseState();
+}
+
 function initEvents() {
   elements.authForm?.addEventListener("submit", handleAdminLoginSubmit);
   elements.adminCredentialForm?.addEventListener("submit", handleAdminCredentialSubmit);
   globalSearchModal.mount();
+  syncSidebarCollapseState();
+  elements.sidebarToggleBtn?.addEventListener("click", () => {
+    setSidebarCollapsed(!appState.sidebarCollapsed);
+  });
   elements.sidebarGlobalSearchTrigger?.addEventListener("click", (event) => {
     event.preventDefault();
     globalSearchModal.open();
@@ -9654,6 +12319,72 @@ function initEvents() {
     input?.addEventListener("input", () => updateAiFeedbackFromInputs({ saved: false }));
     input?.addEventListener("change", () => updateAiFeedbackFromInputs({ saved: false }));
   });
+  [
+    elements.libraryDirectoryRootPath,
+    elements.libraryDirectoryRootName,
+    elements.libraryDirectoryMaxDepth,
+    elements.libraryDirectoryCategories
+  ].forEach((input) => {
+    input?.addEventListener("input", () => updateLibraryDirectoryFeedback({ saved: false }));
+    input?.addEventListener("change", () => updateLibraryDirectoryFeedback({ saved: false }));
+  });
+  [
+    elements.coverStudioViewSelect,
+    elements.coverStudioTemplateKey,
+    elements.coverStudioPickMode,
+    elements.coverStudioPresetName,
+    elements.coverStudioTitleText,
+    elements.coverStudioSubtitleText,
+    elements.coverStudioFontKey,
+    elements.coverStudioTitleSize,
+    elements.coverStudioSubtitleSize,
+    elements.coverStudioTitleAlign,
+    elements.coverStudioOverlayStrength,
+    elements.coverStudioPosterCount,
+    elements.coverStudioAccentTone,
+    elements.coverStudioPosterRotation,
+    elements.coverStudioTitleYOffset
+  ].forEach((input) => {
+    input?.addEventListener("input", () => {
+      syncCoverStudioDraftFromInputs();
+      renderCoverStudioStatus();
+      renderCoverStudioPreview();
+    });
+    input?.addEventListener("change", () => {
+      syncCoverStudioDraftFromInputs();
+      renderCoverStudioModeControls();
+      renderCoverStudioStatus();
+      renderCoverStudioPreview();
+    });
+  });
+  elements.coverStudioTemplateKey?.addEventListener("change", () => {
+    const selectedMode = getCoverStudioModeMeta(elements.coverStudioTemplateKey?.value || "fan_spread");
+    const defaults = selectedMode?.defaults || {};
+    appState.coverStudioConfig = normalizeCoverStudioConfig({
+      ...appState.coverStudioConfig,
+      draft: {
+        ...readCoverStudioDraftFromInputs(),
+        titleAlign: defaults.titleAlign,
+        overlayStrength: defaults.overlayStrength,
+        posterCount: defaults.posterCount,
+        accentTone: defaults.accentTone,
+        posterRotation: defaults.posterRotation,
+        titleYOffset: defaults.titleYOffset
+      }
+    });
+    clearCoverStudioPreview();
+    persistLocalState();
+    renderCoverStudioSettings();
+  });
+  elements.coverStudioSaveCurrentBtn?.addEventListener("click", () => {
+    saveCoverStudioConfig({ cloneAsNew: false });
+  });
+  elements.coverStudioSaveAsBtn?.addEventListener("click", () => {
+    saveCoverStudioConfig({ cloneAsNew: true });
+  });
+  elements.coverStudioPreviewBtn?.addEventListener("click", generateCoverStudioPreview);
+  elements.coverStudioApplyBtn?.addEventListener("click", applyCoverStudioPreview);
+  elements.coverStudioRestoreBtn?.addEventListener("click", restoreCoverStudioBackup);
   elements.aiTestBtn?.addEventListener("click", testAiConfig);
   [
     elements.drive115Enabled,
@@ -9877,9 +12608,90 @@ function initEvents() {
   elements.qualityRescanBtn?.addEventListener("click", runQualityRescan);
   elements.inviteForm?.addEventListener("submit", createInvite);
   elements.renewalForm?.addEventListener("submit", saveRenewal);
-  elements.botSaveBtn?.addEventListener("click", saveBotConfig);
-  elements.botTelegramTest?.addEventListener("click", () => sendBotTest("telegram"));
-  elements.botWechatTest?.addEventListener("click", () => sendBotTest("wechat"));
+  elements.notifyRoutesSave?.addEventListener("click", saveNotificationRoutesCard);
+  elements.notifyTemplatesSave?.addEventListener("click", saveNotificationTemplateCenter);
+  elements.notifyChannelAddToggle?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleNotificationChannelMenu();
+  });
+  elements.notifyChannelEmptyAdd?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleNotificationChannelMenu();
+  });
+  elements.notifyChannelAddMenu?.addEventListener("click", (event) => {
+    const trigger = event.target instanceof HTMLElement ? event.target.closest("[data-notify-channel-add]") : null;
+    if (!(trigger instanceof HTMLElement)) {
+      return;
+    }
+    addNotificationChannel(String(trigger.dataset.notifyChannelAdd || ""));
+  });
+  elements.notifyChannelCardList?.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const removeTrigger = target.closest("[data-notify-channel-remove]");
+    if (removeTrigger instanceof HTMLElement) {
+      removeNotificationChannel(String(removeTrigger.dataset.notifyChannelRemove || ""));
+      return;
+    }
+    const openTrigger = target.closest("[data-notify-channel-open]");
+    if (openTrigger instanceof HTMLElement) {
+      openNotificationChannelModal(String(openTrigger.dataset.notifyChannelOpen || ""));
+    }
+  });
+  elements.notifyChannelModalClose?.addEventListener("click", () => {
+    closeNotificationChannelModal();
+  });
+  elements.notifyChannelModal?.addEventListener("click", (event) => {
+    if (event.target === elements.notifyChannelModal) {
+      closeNotificationChannelModal();
+    }
+  });
+  elements.notifyChannelModalSave?.addEventListener("click", async () => {
+    if (!appState.notificationChannelModalChannel) {
+      return;
+    }
+    await saveNotificationChannel(appState.notificationChannelModalChannel);
+  });
+  elements.notifyChannelModalTest?.addEventListener("click", () => {
+    if (!appState.notificationChannelModalChannel) {
+      return;
+    }
+    sendBotTest(appState.notificationChannelModalChannel);
+  });
+  [elements.notifyPlaybackUserScopeAll, elements.notifyPlaybackUserScopeSelected].forEach((input) => {
+    input?.addEventListener("change", () => {
+      renderNotificationPlaybackUserScope(readBotConfigFromInputs());
+    });
+  });
+  elements.notifyPlaybackUsersList?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.matches("[data-notify-playback-user]")) {
+      renderNotificationPlaybackUserScope(readBotConfigFromInputs());
+    }
+  });
+  elements.notifyPlaybackUsersRefresh?.addEventListener("click", () => {
+    loadNotificationPlaybackUsers({ silent: false });
+  });
+  elements.botTemplateReset?.addEventListener("click", () => {
+    const events = getNotificationEventDefinitions();
+    events.forEach((eventDef) => {
+      ["telegram", "wecom"].forEach((channel) => {
+        const textarea = document.querySelector(
+          `[data-notify-template-channel="${CSS.escape(channel)}"][data-event-key="${CSS.escape(eventDef.key)}"]`
+        );
+        if (textarea instanceof HTMLTextAreaElement) {
+          textarea.value = getNotificationDefaultTemplate(channel, eventDef.key);
+        }
+      });
+    });
+    refreshAllNotificationTemplatePreviews();
+    if (elements.botFeedback) {
+      elements.botFeedback.textContent = "已恢复所有默认模板，点击“保存”后生效。";
+      elements.botFeedback.classList.add("feedback-success");
+    }
+  });
   elements.botCopyCallbackUrl?.addEventListener("click", async () => {
     const callbackUrl = getWechatCallbackUrlForBot();
     try {
@@ -9896,6 +12708,22 @@ function initEvents() {
     }
   });
 
+  document.addEventListener("click", (event) => {
+    if (!appState.notificationChannelMenuOpen) {
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const insideToolbar = target.closest("#notify-channel-toolbar");
+    if (insideToolbar) {
+      return;
+    }
+    appState.notificationChannelMenuOpen = false;
+    renderNotificationChannelAddMenu(readBotConfigFromInputs());
+  });
+
   elements.passwordToggles.forEach((button) => {
     button.innerHTML = EYE_CLOSED_SVG;
     button.dataset.open = "false";
@@ -9906,10 +12734,6 @@ function initEvents() {
   elements.profileMenuBtn?.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleProfileMenu();
-  });
-
-  elements.profileOpenSettings?.addEventListener("click", () => {
-    switchView("settings");
   });
 
   elements.profileOpenLogs?.addEventListener("click", () => {
@@ -9980,6 +12804,8 @@ function hydrateInputs() {
   renderMediaServerSelector();
   refreshTmdbUiState();
   renderAiSettings();
+  renderCoverStudioSettings();
+  renderLibraryDirectorySettings();
   renderEnvControlledState();
 }
 
@@ -10007,6 +12833,7 @@ async function startPostAuthBootstrap() {
         refreshInviteSyncStatus({ silent: true });
         loadBotConfigFromServer({ silent: true });
         loadAiConfigFromServer({ silent: true });
+        loadCoverStudioConfigFromServer({ silent: true });
         loadDrive115ConfigFromServer({ silent: true });
         loadHDHiveConfigFromServer({ silent: true });
         refreshBotWebhookInfo({ silent: true });
@@ -10015,6 +12842,7 @@ async function startPostAuthBootstrap() {
     }
     if (appState.config.serverUrl && appState.config.apiKey) {
       await loadEmbyData();
+      await loadCoverStudioViews({ silent: true });
     }
   })();
   return postAuthBootstrapPromise;
@@ -10034,7 +12862,7 @@ async function startPostAuthBootstrap() {
  * - Adds adaptive drawer navigation for compact/mobile widths.
  */
 (function initAdaptiveResponsiveSafetyEnhancer() {
-  const FORCE_DESKTOP_LAYOUT = true;
+  const FORCE_DESKTOP_LAYOUT = false;
   const mobileQuery = window.matchMedia("(max-width: 768px)");
   const compactQuery = window.matchMedia("(min-width: 769px) and (max-width: 1366px)");
   const primaryTabViews = new Set(["overview", "workorders", "user-center"]);
@@ -10388,6 +13216,7 @@ async function startPostAuthBootstrap() {
     const isCompact = currentMode === "compact";
     document.body.classList.toggle("mobile-app-mode", isMobile);
     document.body.classList.toggle("compact-app-mode", isCompact);
+    syncSidebarCollapseState();
     if (!FORCE_DESKTOP_LAYOUT) {
       ensureTopbarMenuTrigger();
     }
@@ -10600,8 +13429,7 @@ async function startPostAuthBootstrap() {
     }
 
     const playing = appState.sessions.find((session) => {
-      const item = session?.NowPlayingItem;
-      return Boolean(item && (item.Name || item.Id));
+      return sessionHasPlayableItem(session);
     });
 
     return playing || null;
@@ -10664,6 +13492,7 @@ async function startPostAuthBootstrap() {
 
   renderLiveStatus();
   setInterval(renderLiveStatus, 1000);
+  window.addEventListener("vistamirror:sessions-updated", renderLiveStatus);
 })();
 
 /**
@@ -11426,21 +14255,12 @@ async function startPostAuthBootstrap() {
   function normalizeSessions(rawSessions) {
     const rows = Array.isArray(rawSessions) ? rawSessions : [];
     return rows.filter((session) => {
-      const item = session?.NowPlayingItem;
-      return Boolean(item && (item.Name || item.Id));
+      return sessionHasPlayableItem(session);
     });
   }
 
-  async function fetchSessionsFromServer() {
-    if (!isAdminReady() || !appState?.config?.serverUrl || !appState?.config?.apiKey) {
-      return [];
-    }
-    try {
-      const result = await embyFetch("/Sessions");
-      return Array.isArray(result) ? result : [];
-    } catch {
-      return Array.isArray(appState?.sessions) ? appState.sessions : [];
-    }
+  function getSharedPlayableSessions() {
+    return normalizeSessions(appState?.sessions);
   }
 
   function renderEmpty() {
@@ -11451,7 +14271,7 @@ async function startPostAuthBootstrap() {
   }
 
   function renderPopover() {
-    const sessions = state.sessions;
+    const sessions = state.sessions.length > 0 ? state.sessions : getSharedPlayableSessions();
     const onlineCount = sessions.length;
 
     if (els.meta) {
@@ -11535,19 +14355,23 @@ async function startPostAuthBootstrap() {
     setBackdropOpen(state.open);
     noticeBtn.setAttribute("aria-expanded", state.open ? "true" : "false");
     if (state.open) {
+      state.sessions = getSharedPlayableSessions();
       placePopover();
       renderPopover();
     }
   }
 
-  async function tick() {
+  function tick() {
     if (!isAdminReady()) {
       state.sessions = [];
       renderPopover();
       return;
     }
-    const rawSessions = await fetchSessionsFromServer();
-    state.sessions = normalizeSessions(rawSessions);
+    ensureLiveSessionsPolling();
+    state.sessions = getSharedPlayableSessions();
+    if (!state.sessions.length) {
+      state.sessions = getSharedPlayableSessions();
+    }
     renderPopover();
     if (state.open) {
       placePopover();
@@ -11630,6 +14454,13 @@ async function startPostAuthBootstrap() {
 
   window.addEventListener("vistamirror:auth-ready", startTicker);
   window.addEventListener("vistamirror:auth-lock", stopTicker);
+  window.addEventListener("vistamirror:sessions-updated", () => {
+    state.sessions = getSharedPlayableSessions();
+    renderPopover();
+    if (state.open) {
+      placePopover();
+    }
+  });
   startTicker();
 })();
 
@@ -12161,7 +14992,7 @@ async function startPostAuthBootstrap() {
 
     if (!isEmbyConnected()) {
       refs.statusText.textContent = "未连接 Emby，无法读取任务状态";
-      refs.groupsHost.innerHTML = `<div class="task-center-emby-empty">请先在“系统设置”中连接 Emby 服务器。</div>`;
+      refs.groupsHost.innerHTML = `<div class="task-center-emby-empty">请先在“媒体库配置”中连接 Emby 服务器。</div>`;
       return;
     }
 
@@ -13694,7 +16525,7 @@ async function startPostAuthBootstrap() {
     if (!isConnected()) {
       refs.status.textContent = "未连接 Emby，等待同步";
       if (refs.top3Host) {
-        refs.top3Host.innerHTML = `<div class="annual-ranking-empty">请先在系统设置中连接 Emby。</div>`;
+        refs.top3Host.innerHTML = `<div class="annual-ranking-empty">请先在媒体库配置中连接 Emby。</div>`;
       }
       if (refs.listHost) {
         refs.listHost.innerHTML = "";

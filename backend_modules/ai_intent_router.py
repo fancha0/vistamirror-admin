@@ -44,7 +44,7 @@ class AiIntentRouter:
             {
                 "role": "system",
                 "content": (
-                    "你是 Vistamirror 的中文意图路由器，只输出一个 JSON 对象，禁止解释和 Markdown。"
+                    "你是 VistaMirror 的中文意图路由器，只输出一个 JSON 对象，禁止解释和 Markdown。"
                     "字段固定为 intent, mediaTitle, mediaType, useActiveMedia, isCorrection, confidence。"
                     "intent 只能是 media_missing_episodes, media_episode_progress, media_detail, media_search, "
                     "media_category_list, playback_query, task_query, execution_request, media_correction, general_chat。"

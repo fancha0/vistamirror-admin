@@ -1,0 +1,20 @@
+{
+  "name": "VistaMirror",
+  "short_name": "VistaMirror",
+  "description": "VistaMirror 媒体管理后台",
+  "display": "standalone",
+  "background_color": "#0c0e14",
+  "theme_color": "#0c0e14",
+  "icons": [
+    {
+      "src": "/assets/branding/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/branding/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

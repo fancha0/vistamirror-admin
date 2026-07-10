@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>镜界Vistamirror 用户管理台</title>
-  <meta name="description" content="镜界Vistamirror 风格的 Emby 用户管理控制台，支持 Emby API 接入、邀请管理、到期续费与登录日志。">
-  <link rel="icon" type="image/png" href="logo.png?v=20260408-2030">
-  <link rel="apple-touch-icon" href="logo.png?v=20260408-2030">
-  <link rel="stylesheet" href="styles.css?v=20260622-hdhive-broker">
+  <title>VistaMirror 用户管理台</title>
+  <meta name="description" content="VistaMirror 风格的 Emby 用户管理控制台，支持 Emby API 接入、邀请管理、到期续费与登录日志。">
+  <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
+  <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
+  <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
+  <link rel="stylesheet" href="styles.css?v=20260710-cover-studio-canvas">
+  <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
   <section id="admin-auth-loading" class="admin-auth-loading" aria-live="polite">
@@ -17,9 +19,9 @@
   <section id="admin-auth-shell" class="admin-auth-shell" hidden>
     <div class="admin-auth-card" role="dialog" aria-modal="true" aria-labelledby="admin-auth-title">
       <div class="admin-auth-brand">
-        <img src="logo.png?v=20260408-2030" alt="镜界Vistamirror">
+        <img src="/assets/branding/logo-light.svg?v=20260625-vm-brand" data-brand-logo-img alt="VistaMirror">
         <div>
-          <h1 id="admin-auth-title">镜界Vistamirror</h1>
+          <h1 id="admin-auth-title">VistaMirror</h1>
           <p>后台管理登录</p>
         </div>
       </div>
@@ -41,13 +43,13 @@
   </section>
 
   <div id="app-root" class="app-layout" hidden>
-    <aside class="sidebar">
+    <aside id="primary-sidebar" class="sidebar">
       <div class="brand">
         <div class="brand-mark">
-          <img src="logo.png?v=20260408-2030" alt="镜界Vistamirror 图标">
+          <img src="/assets/branding/logo-light.svg?v=20260625-vm-brand" data-brand-logo-img alt="VistaMirror 图标">
         </div>
         <div class="brand-copy">
-          <h1>镜界<span class="brand-en">Vistamirror</span></h1>
+          <h1><span class="brand-en">VistaMirror</span></h1>
         </div>
       </div>
 
@@ -77,9 +79,11 @@
         <button class="nav-item" data-view="client-control" type="button"><span class="nav-icon">🖥</span>客户端管控</button>
         <button class="nav-item" data-view="calendar" type="button"><span class="nav-icon">🗓</span>追剧日历</button>
         <p class="nav-group-title">系统与构建</p>
-        <button class="nav-item" data-view="bot-assistant" type="button"><span class="nav-icon">🤖</span>机器人助手</button>
+        <button class="nav-item" data-view="bot-assistant" type="button"><span class="nav-icon">🔔</span>通知配置</button>
+        <button class="nav-item" data-view="media-config" type="button"><span class="nav-icon">🗃️</span>媒体库配置</button>
+        <button class="nav-item" data-view="ai-config" type="button"><span class="nav-icon">🤖</span>AI 配置</button>
         <button class="nav-item" data-view="task-center" type="button"><span class="nav-icon">⚡</span>任务中心</button>
-        <button class="nav-item" data-view="workshop" type="button"><span class="nav-icon">🪄</span>映迹工坊</button>
+        <button class="nav-item" data-view="workshop" type="button"><span class="nav-icon">🪄</span>封面工坊</button>
         <button class="nav-item" data-view="about-support" type="button"><span class="nav-icon">ℹ</span>关于与支持</button>
         <p class="nav-group-title">扩展能力</p>
         <button class="nav-item" data-view="plugins" type="button"><span class="nav-icon">🧩</span>插件中心</button>
@@ -92,6 +96,15 @@
 
     <main class="main-content">
       <nav class="frozen-navbar" aria-label="顶部导航">
+        <button
+          id="sidebar-toggle-btn"
+          class="nav-icon-btn sidebar-toggle-btn"
+          type="button"
+          aria-controls="primary-sidebar"
+          aria-expanded="true"
+          aria-label="隐藏侧边栏"
+          title="隐藏侧边栏"
+        >‹</button>
         <div class="frozen-navbar-actions">
           <button id="quick-log-btn" class="nav-icon-btn" type="button" aria-label="通知">🌐</button>
           <div class="profile-menu">
@@ -105,10 +118,9 @@
             >⚙</button>
             <div id="profile-menu-panel" class="profile-menu-panel" role="menu" hidden>
               <div class="profile-menu-head">
-                <strong>镜界Vistamirror</strong>
+                <strong>VistaMirror</strong>
                 <span>管理员</span>
               </div>
-              <button id="profile-open-settings" class="profile-menu-item" type="button" role="menuitem">系统设置</button>
               <button id="profile-open-logs" class="profile-menu-item" type="button" role="menuitem">日志中心</button>
               <button id="profile-open-support" class="profile-menu-item" type="button" role="menuitem">关于与支持</button>
             </div>
@@ -131,10 +143,7 @@
             <button id="uc-generate-invite-btn" class="mint-btn" type="button">生成邀请</button>
             <button id="uc-create-user-btn" class="primary-btn" type="button">创建用户</button>
           </div>
-          <div id="topbar-bot-actions" class="topbar-actions-group" hidden>
-            <button id="bot-save-btn" class="primary-btn" type="button">保存配置</button>
-          </div>
-          <button id="settings-save-btn" class="settings-save-btn" type="button" hidden>保存配置</button>
+          <button id="settings-save-btn" class="settings-save-btn" type="button" hidden>保存</button>
         </div>
       </header>
 
@@ -791,138 +800,284 @@
         <div class="dashboard-grid logs-grid">
           <section class="panel">
             <div class="bot-grid">
-              <article class="bot-card bot-card-control">
+              <article class="bot-card bot-card-channel-hub">
                 <div class="panel-head compact">
                   <div>
-                    <h3>通知开关</h3>
-                    <p class="section-label">推送场景总控</p>
+                    <h3>通知渠道</h3>
+                    <p class="section-label">像 MP 一样先添加渠道卡片，再点击卡片进入配置弹窗</p>
                   </div>
                 </div>
-                <label class="toggle-row">
-                  <div>
-                    <strong>启用底层引擎</strong>
-                    <p class="toggle-desc">总开关，必须开启才能生效</p>
+                <div class="notify-channel-hub-shell">
+                  <div id="notify-channel-card-list" class="notify-channel-card-list"></div>
+                  <section id="notify-channel-empty-state" class="notify-channel-empty-state" hidden>
+                    <div class="notify-channel-empty-copy">
+                      <strong>还没有已接入的通知渠道</strong>
+                      <p>先添加 Telegram 或企业微信，配置完成后卡片会自动收起留在这里。</p>
+                    </div>
+                    <button id="notify-channel-empty-add" class="primary-btn" type="button">添加通道</button>
+                  </section>
+                  <div id="notify-channel-toolbar" class="notify-channel-toolbar">
+                    <button id="notify-channel-add-toggle" class="ghost-btn notify-channel-add-btn" type="button" aria-haspopup="menu" aria-expanded="false">＋ 添加通道</button>
+                    <div id="notify-channel-add-menu" class="notify-channel-add-menu" role="menu" hidden></div>
                   </div>
-                  <input id="bot-enable-core" type="checkbox">
-                </label>
-                <label class="toggle-row">
-                  <div>
-                    <strong>播放状态通知</strong>
-                    <p class="toggle-desc">播放类事件总开关（细分事件可在下方勾选）</p>
-                  </div>
-                  <input id="bot-enable-playback" type="checkbox">
-                </label>
-                <label class="toggle-row">
-                  <div>
-                    <strong>新资源入库通知</strong>
-                    <p class="toggle-desc">Webhook 实时通知 + 每 60 秒定时检测兜底</p>
-                  </div>
-                  <input id="bot-enable-library" type="checkbox">
-                </label>
-                <div class="route-card">
-                  <div class="panel-head compact">
-                    <strong>EMBY WEBHOOK 填入地址</strong>
-                  </div>
-                  <p id="bot-webhook-url" class="route-copy">等待连接 Emby 后自动生成</p>
+                  <p id="bot-feedback" class="hint-text">通知配置保存后会自动同步兼容旧版 botConfig。</p>
                 </div>
               </article>
 
-              <article class="bot-card bot-card-channel bot-card-wechat">
-                <div class="panel-head compact">
-                  <div class="bot-card-title-wrap">
-                    <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
-                    <div>
-                      <h3>消息投递配置</h3>
-                      <p class="section-label">企业微信（推送）</p>
+              <div id="notify-channel-modal" class="user-center-modal notify-channel-modal" hidden>
+                <div class="user-center-modal-panel notify-channel-modal-panel">
+                  <div class="notify-channel-modal-head">
+                    <div class="notify-channel-modal-title-wrap">
+                      <span id="notify-channel-modal-icon" class="bot-channel-icon bot-channel-icon-telegram" aria-hidden="true"></span>
+                      <div>
+                        <h3 id="notify-channel-modal-title">配置渠道</h3>
+                        <p id="notify-channel-modal-subtitle">填写当前通知渠道的接入信息与运行设置</p>
+                      </div>
                     </div>
+                    <button id="notify-channel-modal-close" class="invite-manage-close-icon" type="button" aria-label="关闭通知渠道配置弹窗">×</button>
                   </div>
-                  <button id="bot-wechat-test" class="ghost-btn" type="button">发送测试</button>
-                </div>
-                <div class="config-grid">
-                  <label class="field">
-                    <span>企业 ID</span>
-                    <input id="bot-wechat-corp-id" type="text" placeholder="wwxxxxxxxxxxxx">
-                  </label>
-                  <label class="field">
-                    <span>应用 ID</span>
-                    <input id="bot-wechat-agent-id" type="text" placeholder="1000008">
-                  </label>
-                  <label class="field field-span-2">
-                    <span>应用 Secret</span>
-                    <div class="password-field">
-                      <input id="bot-wechat-secret" type="password" placeholder="输入应用 Secret">
-                      <button id="bot-wechat-secret-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏应用 Secret" data-target="bot-wechat-secret" data-open="false">🙈</button>
-                    </div>
-                  </label>
-                  <label class="field field-span-2">
-                    <span>接收人（可选）</span>
-                    <input id="bot-wechat-to-user" type="text" placeholder="例如 @all 或 username1|username2">
-                  </label>
-                </div>
-              </article>
+                  <div class="notify-channel-modal-content">
+                    <details id="notify-channel-platform-panel" class="notify-channel-platform-panel">
+                      <summary>
+                        <span class="notify-template-summary-copy">
+                          <strong>平台设置</strong>
+                          <small id="notify-channel-platform-summary">通知开关 · Webhook 状态</small>
+                        </span>
+                        <span class="notify-template-summary-chevron" aria-hidden="true"></span>
+                      </summary>
+                      <div class="notify-template-panel-body">
+                        <label class="toggle-row notify-platform-toggle">
+                          <div>
+                            <strong>启用通知平台</strong>
+                            <p class="toggle-desc">关闭后不发送通知</p>
+                          </div>
+                          <input id="bot-enable-core" type="checkbox">
+                        </label>
+                        <div class="notify-platform-inline-grid">
+                          <div class="route-card">
+                            <div class="panel-head compact">
+                              <strong>Emby Webhook 地址</strong>
+                            </div>
+                            <p id="bot-webhook-url" class="route-copy">建议通过 VISTAMIRROR_PUBLIC_BASE_URL 固定为 VistaMirror 自己的公网地址</p>
+                            <p id="bot-webhook-status" class="route-status" hidden></p>
+                          </div>
+                        </div>
+                        <section class="route-card notify-playback-scope-card">
+                          <div class="panel-head compact">
+                            <div>
+                              <strong>播放通知适用用户</strong>
+                              <p class="section-label">用于播放事件通知</p>
+                            </div>
+                          </div>
+                          <div class="notify-playback-scope-mode" role="radiogroup" aria-label="播放通知用户范围">
+                            <label class="notify-playback-scope-pill">
+                              <input id="notify-playback-user-scope-all" type="radio" name="notify-playback-user-scope" value="all">
+                              <span>全部用户</span>
+                            </label>
+                            <label class="notify-playback-scope-pill">
+                              <input id="notify-playback-user-scope-selected" type="radio" name="notify-playback-user-scope" value="selected">
+                              <span>指定用户</span>
+                            </label>
+                          </div>
+                          <p class="hint-text">默认通知全部用户，可按需选择指定用户。</p>
+                          <div id="notify-playback-user-picker" class="notify-playback-user-picker">
+                            <div class="notify-playback-user-picker-head">
+                              <strong>当前 Emby 用户列表</strong>
+                              <button id="notify-playback-users-refresh" class="ghost-btn" type="button">刷新</button>
+                            </div>
+                            <p id="notify-playback-users-status" class="hint-text">正在读取用户列表…</p>
+                            <div id="notify-playback-users-list" class="notify-playback-user-list"></div>
+                          </div>
+                        </section>
+                      </div>
+                    </details>
 
-              <article class="bot-card bot-card-channel bot-card-telegram">
-                <div class="panel-head compact">
-                  <div class="bot-card-title-wrap">
-                    <span class="bot-channel-icon bot-channel-icon-telegram" aria-hidden="true"></span>
-                    <div>
-                      <h3>推送配置</h3>
-                      <p class="section-label">Telegram 通道</p>
-                    </div>
+                    <section id="notify-pane-telegram" class="notify-channel-pane notify-channel-modal-pane" data-notify-pane="telegram">
+                      <div class="notify-channel-pane-head">
+                        <div class="bot-card-title-wrap">
+                          <span class="bot-channel-icon bot-channel-icon-telegram" aria-hidden="true"></span>
+                          <div>
+                            <strong>Telegram 通知</strong>
+                            <p>Bot Token、Chat ID、代理</p>
+                          </div>
+                        </div>
+                      </div>
+                      <label class="toggle-row">
+                        <div>
+                          <strong>启用 Telegram 通道</strong>
+                          <p class="toggle-desc">向 Chat ID 发送通知</p>
+                        </div>
+                        <input id="notify-telegram-enabled" type="checkbox">
+                      </label>
+                      <div class="config-grid">
+                        <label class="toggle-row field-span-2">
+                          <div>
+                            <strong>启用 Telegram 命令菜单</strong>
+                            <p class="toggle-desc">支持 /help、/check 等命令</p>
+                          </div>
+                          <input id="bot-enable-commands" type="checkbox">
+                        </label>
+                        <label class="field field-span-2">
+                          <span>BOT TOKEN</span>
+                          <div class="password-field">
+                            <input id="bot-telegram-token" type="password" placeholder="例如 123456:ABCDEF...">
+                            <button id="bot-telegram-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 Telegram Token" data-target="bot-telegram-token" data-open="false">🙈</button>
+                          </div>
+                        </label>
+                        <label class="field field-span-2">
+                          <span>ADMIN CHAT ID</span>
+                          <input id="bot-telegram-chat-id" type="text" placeholder="例如 6067958942">
+                        </label>
+                        <label class="field field-span-2">
+                          <span>代理地址（可选）</span>
+                          <input id="notify-telegram-proxy-url" type="text" placeholder="例如 http://127.0.0.1:7890">
+                        </label>
+                        <p id="bot-env-managed-hint" class="hint-text field-span-2" hidden>
+                          该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
+                        </p>
+                      </div>
+                      <p id="notify-telegram-status" class="hint-text">Telegram 未启用</p>
+                    </section>
+
+                    <section id="notify-pane-wecom" class="notify-channel-pane notify-channel-modal-pane" data-notify-pane="wecom" hidden>
+                      <div class="notify-channel-pane-head">
+                        <div class="bot-card-title-wrap">
+                          <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
+                          <div>
+                            <strong>企业微信通知</strong>
+                            <p>企业 ID、应用凭证与回调</p>
+                          </div>
+                        </div>
+                      </div>
+                      <label class="toggle-row">
+                        <div>
+                          <strong>启用企业微信通道</strong>
+                          <p class="toggle-desc">向企业微信发送文本通知</p>
+                        </div>
+                        <input id="notify-wecom-enabled" type="checkbox">
+                      </label>
+                      <div class="config-grid">
+                        <label class="field">
+                          <span>企业 ID</span>
+                          <input id="bot-wechat-corp-id" type="text" placeholder="wwxxxxxxxxxxxx">
+                        </label>
+                        <label class="field">
+                          <span>应用 ID</span>
+                          <input id="bot-wechat-agent-id" type="text" placeholder="1000008">
+                        </label>
+                        <label class="field field-span-2">
+                          <span>应用 Secret</span>
+                          <div class="password-field">
+                            <input id="bot-wechat-secret" type="password" placeholder="输入应用 Secret">
+                            <button id="bot-wechat-secret-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏应用 Secret" data-target="bot-wechat-secret" data-open="false">🙈</button>
+                          </div>
+                        </label>
+                        <label class="field field-span-2">
+                          <span>接收人（可选）</span>
+                          <input id="bot-wechat-to-user" type="text" placeholder="例如 @all 或 username1|username2">
+                        </label>
+                        <label class="field field-span-2">
+                          <span>代理地址（可选）</span>
+                          <input id="notify-wecom-proxy-url" type="text" placeholder="例如 http://127.0.0.1:8080">
+                        </label>
+                        <label class="field field-span-2">
+                          <span>回调 Token</span>
+                          <input id="bot-wechat-callback-token" type="text" placeholder="可选，建议配置">
+                        </label>
+                        <label class="field field-span-2">
+                          <span>EncodingAESKey</span>
+                          <div class="password-field">
+                            <input id="bot-wechat-callback-aes" type="password" placeholder="可选，43 位">
+                            <button id="bot-wechat-callback-aes-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 EncodingAESKey" data-target="bot-wechat-callback-aes" data-open="false">🙈</button>
+                          </div>
+                        </label>
+                      </div>
+                      <div class="route-card">
+                        <div class="panel-head compact">
+                          <strong>微信后台回调 URL 填入</strong>
+                          <button id="bot-copy-callback-url" class="ghost-btn" type="button">复制</button>
+                        </div>
+                        <p id="bot-wechat-callback-url" class="route-copy">等待连接 Emby 后自动生成</p>
+                      </div>
+                      <p id="notify-wecom-status" class="hint-text">企业微信未启用</p>
+                    </section>
                   </div>
-                  <button id="bot-telegram-test" class="ghost-btn" type="button">发送测试</button>
+                  <div class="notify-channel-modal-footer">
+                    <button id="notify-channel-modal-test" class="ghost-btn" type="button">测试通知</button>
+                    <button id="notify-channel-modal-save" class="primary-btn" type="button">保存</button>
+                  </div>
                 </div>
-                <div class="config-grid">
-                  <label class="toggle-row field-span-2">
-                    <div>
-                      <strong>启用 Telegram 命令菜单</strong>
-                      <p class="toggle-desc">私聊支持 /help、/check、/zhengzaibofang 等命令</p>
-                    </div>
-                    <input id="bot-enable-commands" type="checkbox">
-                  </label>
-                  <label class="field field-span-2">
-                    <span>BOT TOKEN</span>
-                    <div class="password-field">
-                      <input id="bot-telegram-token" type="password" placeholder="例如 123456:ABCDEF...">
-                      <button id="bot-telegram-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 Telegram Token" data-target="bot-telegram-token" data-open="false">🙈</button>
-                    </div>
-                  </label>
-                  <label class="field field-span-2">
-                    <span>ADMIN CHAT ID</span>
-                    <input id="bot-telegram-chat-id" type="text" placeholder="例如 6067958942">
-                  </label>
-                  <p id="bot-env-managed-hint" class="hint-text field-span-2" hidden>
-                    该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
-                  </p>
-                </div>
-              </article>
+              </div>
 
-              <article class="bot-card">
+              <article class="bot-card bot-card-routes">
                 <div class="panel-head compact">
                   <div>
-                    <h3>回调安全配置</h3>
-                    <p class="section-label">企业微信交互指令回调</p>
+                    <h3>通知类型矩阵</h3>
+                    <p class="section-label">只展示已配置渠道的真实事件路由</p>
+                  </div>
+                  <div class="bot-card-actions">
+                    <button id="notify-routes-save" class="ghost-btn" type="button">保存</button>
                   </div>
                 </div>
-                <div class="config-grid">
-                  <label class="field field-span-2">
-                    <span>回调 Token</span>
-                    <input id="bot-wechat-callback-token" type="text" placeholder="可选，建议配置">
-                  </label>
-                  <label class="field field-span-2">
-                    <span>EncodingAESKey</span>
-                    <div class="password-field">
-                      <input id="bot-wechat-callback-aes" type="password" placeholder="可选，43 位">
-                      <button id="bot-wechat-callback-aes-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 EncodingAESKey" data-target="bot-wechat-callback-aes" data-open="false">🙈</button>
+                <div id="notify-routes-empty" class="empty-state notify-empty-message" hidden>请先添加并配置至少一个通知渠道，再设置事件路由。</div>
+                <div class="notify-matrix-grid">
+                  <section class="notify-matrix-column">
+                    <div class="notify-matrix-head">
+                      <strong>已接入事件</strong>
+                      <span>按通道分别控制真实可发送事件</span>
                     </div>
-                  </label>
+                    <div class="notify-route-groups">
+                      <section class="notify-route-group" data-notify-route-pane="telegram">
+                        <div class="notify-route-group-head">
+                          <strong>Telegram</strong>
+                          <span>支持播放通知与入库通知</span>
+                        </div>
+                        <div id="notify-route-grid-telegram" class="notify-route-list"></div>
+                      </section>
+                      <section class="notify-route-group" data-notify-route-pane="wecom" hidden>
+                        <div class="notify-route-group-head">
+                          <strong>企业微信</strong>
+                          <span>仅真实已接入事件可开关</span>
+                        </div>
+                        <div id="notify-route-grid-wecom" class="notify-route-list"></div>
+                      </section>
+                    </div>
+                  </section>
+                  <section class="notify-matrix-column notify-matrix-column-upcoming">
+                    <div class="notify-matrix-head">
+                      <strong>未接入事件</strong>
+                      <span>暂未接入运行时，仅做能力预留</span>
+                    </div>
+                    <div id="notify-upcoming-events" class="notify-upcoming-list"></div>
+                  </section>
                 </div>
-                <div class="route-card">
-                  <div class="panel-head compact">
-                    <strong>微信后台回调 URL 填入</strong>
-                    <button id="bot-copy-callback-url" class="ghost-btn" type="button">复制</button>
+              </article>
+
+              <article class="bot-card bot-card-template bot-card-template-center">
+                <div class="panel-head compact">
+                  <div>
+                    <h3>模板中心</h3>
+                    <p class="section-label">只编辑已配置渠道的事件模板并实时预览</p>
                   </div>
-                  <p id="bot-wechat-callback-url" class="route-copy">等待连接 Emby 后自动生成</p>
+                  <div class="bot-card-actions">
+                    <button id="notify-templates-save" class="ghost-btn" type="button">保存</button>
+                    <button id="bot-template-reset" class="ghost-btn" type="button">恢复默认模板</button>
+                  </div>
+                </div>
+                <div id="notify-templates-empty" class="empty-state notify-empty-message" hidden>请先添加并配置至少一个通知渠道，再编辑模板。</div>
+                <div class="bot-template-grid notify-template-center-grid">
+                  <section class="bot-template-editor notify-template-center-column" data-notify-template-pane="wecom" hidden>
+                    <div class="bot-template-head">
+                      <strong>企业微信模板</strong>
+                    </div>
+                    <div id="notify-template-list-wecom" class="notify-template-list"></div>
+                  </section>
+                  <section class="bot-template-editor notify-template-center-column" data-notify-template-pane="telegram">
+                    <div class="bot-template-head">
+                      <strong>Telegram 模板</strong>
+                    </div>
+                    <div id="notify-template-list-telegram" class="notify-template-list"></div>
+                  </section>
                 </div>
               </article>
             </div>
@@ -987,7 +1142,7 @@
                         </label>
                         <div class="drive115-actions-row">
                           <button id="drive115-test-btn" class="ghost-btn" type="button">测试连接</button>
-                          <button id="drive115-save-btn" class="primary-btn" type="button">保存配置</button>
+                          <button id="drive115-save-btn" class="primary-btn" type="button">保存</button>
                         </div>
                         <p id="drive115-config-feedback" class="tmdb-token-hint field-span-2">115 未配置。</p>
                       </div>
@@ -1025,7 +1180,7 @@
                     </div>
                   </section>
 
-                  <section class="settings-card drive115-card">
+                  <section class="settings-card drive115-card drive115-transfer-card">
                     <div class="settings-card-head">
                       <h4>链接转存</h4>
                       <p>先解析分享资源，确认无误后再提交转存。</p>
@@ -1051,7 +1206,7 @@
                     </div>
                   </section>
 
-                  <section class="settings-card drive115-card">
+                  <section class="settings-card drive115-card drive115-records-card">
                     <div class="settings-card-head">
                       <h4>转存记录</h4>
                       <p>保留最近解析和转存状态，方便排查失败原因。</p>
@@ -1080,7 +1235,7 @@
             </div>
 
             <div class="hdhive-config-grid">
-              <section class="settings-card hdhive-card">
+              <section class="settings-card hdhive-card hdhive-config-card">
                 <div class="settings-card-head">
                   <h4>影巢 OAuth 授权</h4>
                   <p>通过浏览器授权影巢账号，资源查询、解锁和签到都会使用该账号。</p>
@@ -1104,7 +1259,7 @@
                     </select>
                   </label>
                   <label id="hdhive-broker-field" class="field field-span-2">
-                    <span>Vistamirror 授权服务</span>
+                    <span>VistaMirror 授权服务</span>
                     <input id="hdhive-broker-url" type="url" placeholder="https://hdhive.example.com">
                   </label>
                   <details id="hdhive-direct-settings" class="hdhive-advanced field-span-2">
@@ -1129,13 +1284,13 @@
                   </details>
                   <div class="drive115-actions-row field-span-2">
                     <button id="hdhive-test-btn" class="ghost-btn" type="button">测试连接</button>
-                    <button id="hdhive-save-btn" class="primary-btn" type="button">保存配置</button>
+                    <button id="hdhive-save-btn" class="primary-btn" type="button">保存</button>
                   </div>
                   <p id="hdhive-config-feedback" class="tmdb-token-hint field-span-2">影巢尚未配置。</p>
                 </div>
               </section>
 
-              <section class="settings-card hdhive-card">
+              <section class="settings-card hdhive-card hdhive-account-card">
                 <div class="settings-card-head">
                   <h4>账号授权</h4>
                   <p>授权成功后才能查询资源、读取积分和解锁链接。</p>
@@ -1152,7 +1307,7 @@
               </section>
             </div>
 
-            <section class="settings-card hdhive-card">
+            <section class="settings-card hdhive-card hdhive-checkin-card">
               <div class="settings-card-head">
                 <h4>签到设置</h4>
                 <p>使用当前授权账号执行普通签到，不启用可能扣积分的高波动模式。</p>
@@ -1192,7 +1347,7 @@
               </div>
             </section>
 
-            <section class="settings-card hdhive-card">
+            <section class="settings-card hdhive-card hdhive-records-card">
               <div class="settings-card-head">
                 <h4>最近操作</h4>
                 <p>仅保留当前页面会话中的搜索和转存结果。</p>
@@ -1207,19 +1362,155 @@
 
       <section id="view-workshop" class="view-section">
         <div class="dashboard-grid logs-grid">
-          <section class="panel">
-            <div class="panel-head compact">
-              <div>
-                <p class="section-label">映迹工坊</p>
-                <h3>加工工作流</h3>
+          <section class="panel cover-studio-page-panel">
+            <div class="config-shell cover-studio-page-shell">
+              <div class="config-main cover-studio-page-main">
+                <div class="config-grid settings-core-grid">
+                  <section class="settings-card cover-studio-card field-span-2">
+                    <div class="settings-card-head">
+                      <div>
+                        <p class="section-label">系统与构建 / 封面工坊</p>
+                        <h4>封面工坊</h4>
+                        <p>生成预览后可直接覆盖 Emby 媒体库主封面（Primary）。</p>
+                      </div>
+                      <div class="settings-card-actions">
+                        <span id="cover-studio-status-badge" class="tmdb-status-badge is-off">未加载</span>
+                      </div>
+                    </div>
+                    <div class="cover-studio-shell">
+                      <div class="cover-studio-controls">
+                        <div class="cover-studio-target-card">
+                          <div class="cover-studio-target-head">
+                            <div>
+                              <strong>封面目标</strong>
+                              <p>先选择媒体库视图，再生成预览。</p>
+                            </div>
+                            <span id="cover-studio-selection-chip" class="cover-studio-selection-chip">未选择</span>
+                          </div>
+                          <label class="field">
+                            <span>媒体库</span>
+                            <select id="cover-studio-view-select">
+                              <option value="">请选择 Emby 视图</option>
+                            </select>
+                          </label>
+                          <label class="field">
+                            <span>布局模板</span>
+                            <select id="cover-studio-template-key">
+                              <option value="stack_classic">经典堆叠</option>
+                            </select>
+                          </label>
+                          <label class="field">
+                            <span>取图模式</span>
+                            <select id="cover-studio-pick-mode">
+                              <option value="random">随机模式</option>
+                              <option value="recent">最近入库</option>
+                            </select>
+                          </label>
+                          <label class="field">
+                            <span>模板名称</span>
+                            <input id="cover-studio-preset-name" type="text" placeholder="默认封面">
+                          </label>
+                          <div class="cover-studio-preset-actions">
+                            <button id="cover-studio-save-current-btn" class="ghost-btn" type="button">保存当前</button>
+                            <button id="cover-studio-save-as-btn" class="ghost-btn" type="button">另存为</button>
+                          </div>
+                        </div>
+
+                        <label class="field">
+                          <span>主标题</span>
+                          <input id="cover-studio-title-text" type="text" placeholder="例如：国产动漫">
+                        </label>
+                        <label class="field">
+                          <span>副标题</span>
+                          <input id="cover-studio-subtitle-text" type="text" placeholder="例如：Chinese Animation">
+                        </label>
+                        <div class="settings-subgrid">
+                          <label class="field">
+                            <span>字体</span>
+                            <select id="cover-studio-font-key">
+                              <option value="hiragino">苹方黑体</option>
+                            </select>
+                          </label>
+                          <label class="field">
+                            <span>标题字号</span>
+                            <input id="cover-studio-title-size" type="number" min="56" max="180" step="2" value="108">
+                          </label>
+                          <label class="field">
+                            <span>副标题字号</span>
+                            <input id="cover-studio-subtitle-size" type="number" min="22" max="72" step="2" value="44">
+                          </label>
+                        </div>
+                        <div class="cover-studio-tuning-card">
+                          <div class="cover-studio-target-head">
+                            <div>
+                              <strong>布局细调</strong>
+                              <p>不同模板会自动启用或禁用对应参数。</p>
+                            </div>
+                            <span id="cover-studio-template-chip" class="cover-studio-selection-chip">经典堆叠</span>
+                          </div>
+                          <div class="settings-subgrid">
+                            <label class="field">
+                              <span>标题对齐</span>
+                              <select id="cover-studio-title-align">
+                                <option value="left">左对齐</option>
+                                <option value="center">居中</option>
+                                <option value="right">右对齐</option>
+                              </select>
+                            </label>
+                            <label class="field">
+                              <span>海报数量</span>
+                              <input id="cover-studio-poster-count" type="number" min="2" max="8" step="1" value="5">
+                            </label>
+                            <label class="field">
+                              <span>主色倾向</span>
+                              <select id="cover-studio-accent-tone">
+                                <option value="blue">海蓝</option>
+                              </select>
+                            </label>
+                            <label class="field">
+                              <span>旋转幅度</span>
+                              <input id="cover-studio-poster-rotation" type="number" min="0" max="100" step="2" value="42">
+                            </label>
+                            <label class="field">
+                              <span>标题纵向位置</span>
+                              <input id="cover-studio-title-y-offset" type="number" min="-160" max="160" step="4" value="0">
+                            </label>
+                          </div>
+                          <p id="cover-studio-template-hint" class="tmdb-token-hint">当前模板将应用自己的默认布局参数。</p>
+                        </div>
+                        <p id="cover-studio-feedback" class="tmdb-token-hint">先选择视图并生成预览。</p>
+                      </div>
+
+                      <div class="cover-studio-preview-card">
+                        <div id="cover-studio-preview-stage" class="cover-studio-preview-stage">
+                          <div class="empty-state">生成预览后会显示主图。</div>
+                        </div>
+                        <div class="cover-studio-preview-actions">
+                          <button id="cover-studio-preview-btn" class="primary-btn" type="button">生成预览</button>
+                          <button id="cover-studio-apply-btn" class="primary-btn" type="button">应用封面</button>
+                          <button id="cover-studio-restore-btn" class="ghost-btn" type="button">恢复原封面</button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="settings-card field-span-2 cover-studio-roadmap-card">
+                    <div class="settings-card-head">
+                      <div>
+                        <h4>后续工位</h4>
+                        <p>这一页后续继续承接媒体修复、清洗和批量加工能力。</p>
+                      </div>
+                    </div>
+                    <div class="empty-state">当前已启用封面工坊，其它工位后续再逐步接入。</div>
+                  </section>
+                </div>
               </div>
             </div>
-            <div class="empty-state">这里是“映迹工坊”独立界面，后续可接入转码流程、刮削清洗和媒体修复工具。</div>
           </section>
         </div>
       </section>
 
-      <section id="view-settings" class="view-section">
+      <section id="view-media-config" class="view-section">
         <div class="dashboard-grid logs-grid">
           <section class="panel">
             <div class="config-shell">
@@ -1255,7 +1546,7 @@
                       </label>
                       <div class="connection-state field-span-2">
                         <span id="connection-badge" class="status-badge neutral">未连接</span>
-                        <span id="connection-message">尚未连接媒体服务器。填写地址和 API Key 后点击保存配置。</span>
+                        <span id="connection-message">尚未连接媒体服务器。填写地址和 API Key 后点击保存。</span>
                       </div>
                     </div>
                   </section>
@@ -1297,7 +1588,23 @@
                       <p id="tmdb-token-hint" class="tmdb-token-hint field-span-2">TMDB 兜底未启用，系统将仅使用 Emby 海报。</p>
                     </div>
                   </section>
+                  <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
+                    该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
+                  </p>
 
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-ai-config" class="view-section">
+        <div class="dashboard-grid logs-grid">
+          <section class="panel">
+            <div class="config-shell">
+              <div class="config-main">
+                <div class="config-grid settings-core-grid">
                   <section class="settings-card settings-card-ai field-span-2">
                     <div class="settings-card-head">
                       <div>
@@ -1348,9 +1655,33 @@
                     </div>
                   </section>
 
-                  <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
-                    该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
-                  </p>
+                  <section class="settings-card field-span-2">
+                    <div class="settings-card-head">
+                      <div>
+                        <h4>本地目录分类</h4>
+                        <p class="toggle-desc">给 AI 目录类查询提供严格本地目录映射，例如“亚洲电影 / 韩影 / 国产动漫”。</p>
+                      </div>
+                    </div>
+                    <div class="settings-subgrid">
+                      <label class="field field-span-2">
+                        <span>本地媒体根目录</span>
+                        <input id="library-directory-root-path" type="text" placeholder="例如 /Volumes/CloudNAS/115/媒体库 或 /mnt/media">
+                      </label>
+                      <label class="field">
+                        <span>目录名称</span>
+                        <input id="library-directory-root-name" type="text" placeholder="默认：本地媒体库">
+                      </label>
+                      <label class="field">
+                        <span>最大扫描层级</span>
+                        <input id="library-directory-max-depth" type="number" min="1" max="8" step="1" placeholder="4">
+                      </label>
+                      <label class="field field-span-2">
+                        <span>分类映射</span>
+                        <textarea id="library-directory-categories" rows="6" placeholder="每行一条：分类名 | 别名1,别名2 | 相对路径&#10;例如：&#10;亚洲电影 | 韩影,日影,韩国电影,日本电影 | 电影/亚洲电影&#10;华语电影 | 国产电影,中文电影 | 电影/华语电影&#10;国产动漫 | 国漫,中国动漫 | 动漫/国产动漫"></textarea>
+                      </label>
+                      <p id="library-directory-feedback" class="tmdb-token-hint field-span-2">未配置本地目录分类时，“亚洲电影 / 韩影 / 国产动漫”会明确提示未配置，不再回退到 Emby 元数据猜测。</p>
+                    </div>
+                  </section>
                 </div>
               </div>
             </div>
@@ -1808,12 +2139,12 @@
 
       <div class="user-config-footer">
         <button id="uc-user-config-cancel-btn" class="ghost-btn" type="button">取消</button>
-        <button id="uc-user-config-save-btn" class="primary-btn" type="button">保存配置</button>
+        <button id="uc-user-config-save-btn" class="primary-btn" type="button">保存</button>
       </div>
     </div>
   </div>
 
-  <script src="script.js?v=20260622-hdhive-broker"></script>
+  <script src="script.js?v=20260710-cover-studio-canvas"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";
@@ -1850,7 +2181,7 @@
         return {
           serverUrl: String((config && config.serverUrl) || "").trim(),
           apiKey: String((config && config.apiKey) || "").trim(),
-          clientName: "镜界Vistamirror User Console"
+          clientName: "VistaMirror User Console"
         };
       }
 
@@ -1871,7 +2202,7 @@
         config.mediaServers = mediaServers;
         config.serverUrl = mediaServers[nextType].serverUrl;
         config.apiKey = mediaServers[nextType].apiKey;
-        config.clientName = "镜界Vistamirror User Console";
+        config.clientName = "VistaMirror User Console";
         writeConfig(config);
 
         document.querySelectorAll("[data-media-server]").forEach(function (button) {

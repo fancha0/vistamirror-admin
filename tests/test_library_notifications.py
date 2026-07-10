@@ -72,6 +72,22 @@ class LibraryNotificationTests(unittest.TestCase):
                             "ParentIndexNumber": 1,
                             "IndexNumber": 1,
                             "DateCreated": "2026-06-20T12:59:00Z",
+                            "Overview": "单集简介：许安在逐冥战场第一次正面交锋。",
+                        }
+                    ]
+                }
+            if path.startswith("/Items?") and "Ids=episode-no-overview" in path:
+                return {
+                    "Items": [
+                        {
+                            "Id": "episode-no-overview",
+                            "Type": "Episode",
+                            "Name": "第 2 集",
+                            "SeriesName": "云深不知梦",
+                            "SeriesId": "series-1",
+                            "ParentIndexNumber": 1,
+                            "IndexNumber": 2,
+                            "DateCreated": "2026-06-20T13:01:00Z",
                         }
                     ]
                 }
@@ -205,13 +221,15 @@ class LibraryNotificationTests(unittest.TestCase):
 
         self.assertEqual(len(self.sender.photos), 1)
         caption = self.sender.photos[0]["caption"]
-        self.assertIn("🎬 新入库｜云深不知梦（2026）", caption)
-        self.assertIn("> **“上古末世，辉华族少女自惨痛的族地叛乱中出逃”**", caption)
-        self.assertIn("> 评分：⭐ **7** / 10 · 状态：整理完成", caption)
-        self.assertIn("📺 内容类型｜电视剧 · 动画 / 国漫", caption)
-        self.assertIn("🎞 入库信息｜S01E01", caption)
-        self.assertIn("📦 文件数量｜1 个", caption)
-        self.assertIn("👥 主演阵容｜蔡海婷、张若瑜", caption)
+        self.assertIn("🎬 【单集入库】｜ 云深不知梦（2026）", caption)
+        self.assertIn("✨ 评分：7 / 10 ｜ 🔄 状态：整理完成", caption)
+        self.assertIn("💬 “单集简介：许安在逐冥战场第一次正面交锋”", caption)
+        self.assertIn("🏷️ 内容类型 ｜ 电视剧 · 动画 / 国漫", caption)
+        self.assertIn("▶️ 当前更新 ｜ S01E01", caption)
+        self.assertIn("💿 资源规格 ｜ 质量未知 (1 个文件)", caption)
+        self.assertIn("🤖 主演阵容 ｜ 蔡海婷、张若瑜", caption)
+        self.assertIn("= 📖内容简介 =", caption)
+        self.assertIn("单集简介：许安在逐冥战场第一次正面交锋。", caption)
 
         duplicate = self.service.notify_library_item(
             item_id="episode-new",
@@ -220,6 +238,29 @@ class LibraryNotificationTests(unittest.TestCase):
         )
         self.assertEqual(duplicate["status"], "duplicate")
         self.assertEqual(len(self.sender.photos), 1)
+
+    def test_single_episode_without_episode_overview_falls_back_to_series_overview(self):
+        self.service._poll_library_notifications_once()
+        self.rows.insert(
+            0,
+            {
+                "Id": "episode-no-overview",
+                "Type": "Episode",
+                "Name": "第 2 集",
+                "SeriesName": "云深不知梦",
+                "SeriesId": "series-1",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 2,
+                "DateCreated": "2026-06-20T13:01:00Z",
+            },
+        )
+
+        self.service._poll_library_notifications_once()
+
+        self.assertEqual(len(self.sender.photos), 1)
+        caption = self.sender.photos[0]["caption"]
+        self.assertIn("💬 “上古末世，辉华族少女自惨痛的族地叛乱中出逃”", caption)
+        self.assertIn("上古末世，辉华族少女自惨痛的族地叛乱中出逃。", caption)
 
     def test_poll_groups_multiple_new_episodes_into_one_series_card(self):
         self.service._poll_library_notifications_once()
@@ -260,11 +301,11 @@ class LibraryNotificationTests(unittest.TestCase):
 
         self.assertEqual(len(self.sender.photos), 1)
         caption = self.sender.photos[0]["caption"]
-        self.assertIn("🎬 新入库｜南部档案（2026）", caption)
-        self.assertIn("🎞 入库信息｜S01 E01-E03", caption)
-        self.assertIn("📦 文件数量｜3 个", caption)
-        self.assertIn("📺 内容类型｜电视剧 · 华语剧集", caption)
-        self.assertIn("📜 民国初年，南洋上发生水鬼望乡离奇命案。", caption)
+        self.assertIn("📺 【整季入库】｜ 南部档案（2026）", caption)
+        self.assertIn("📑 收录进度 ｜ S01 E01-E03", caption)
+        self.assertIn("💿 资源规格 ｜ 质量未知 (3 个文件)", caption)
+        self.assertIn("🏷️ 内容类型 ｜ 电视剧 · 华语剧集", caption)
+        self.assertIn("民国初年，南洋上发生水鬼望乡离奇命案。", caption)
         state = self.service._read_library_notification_state()
         self.assertIn("episode-batch-1", state["seen"])
         self.assertIn("episode-batch-2", state["seen"])
@@ -315,7 +356,7 @@ class LibraryNotificationTests(unittest.TestCase):
 
         self.assertEqual(len(self.sender.photos), 1)
         caption = self.sender.photos[0]["caption"]
-        self.assertIn("🎞 入库信息｜S01 E01-E02", caption)
+        self.assertIn("📑 收录进度 ｜ S01 E01-E02", caption)
         state = self.service._read_library_notification_state()
         self.assertIn("episode-batch-1", state["seen"])
         self.assertIn("episode-batch-2", state["seen"])
@@ -334,10 +375,64 @@ class LibraryNotificationTests(unittest.TestCase):
         self.assertEqual(result["status"], "sent")
         self.assertFalse(result["photo"])
         self.assertEqual(len(self.sender.texts), 1)
-        self.assertIn("🎬 新入库｜新电影（2026）", self.sender.texts[0]["text"])
-        self.assertIn("> **“电影简介”**", self.sender.texts[0]["text"])
-        self.assertIn("📺 内容类型｜电影 · 剧情", self.sender.texts[0]["text"])
+        self.assertIn("🎬 【电影入库】｜ 新电影（2026）", self.sender.texts[0]["text"])
+        self.assertIn("💬 “电影简介”", self.sender.texts[0]["text"])
+        self.assertIn("🏷️ 内容类型 ｜ 电影 · 剧情", self.sender.texts[0]["text"])
         self.assertIn("movie-new", self.service._read_library_notification_state()["seen"])
+
+    def test_custom_single_library_template_is_used(self):
+        store = json.loads(self.store_path.read_text(encoding="utf-8"))
+        store["botConfig"]["libraryTemplates"] = {
+            "single": "通知：{{title}}{{year_suffix}} | {{episode_info}} | {{file_count}}",
+            "grouped": "{{title}} / {{episode_info}} / {{file_count}}",
+        }
+        self.store_path.write_text(json.dumps(store), encoding="utf-8")
+
+        result = self.service.notify_library_item(
+            item_id="movie-new",
+            payload={"Id": "movie-new", "Type": "Movie", "Name": "新电影"},
+            source="webhook",
+        )
+
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(len(self.sender.photos), 1)
+        self.assertEqual(self.sender.photos[0]["caption"], "通知：新电影（2026） | 电影 | 1")
+
+    def test_custom_grouped_library_template_is_used(self):
+        store = json.loads(self.store_path.read_text(encoding="utf-8"))
+        store["botConfig"]["libraryTemplates"] = {
+            "single": "{{title}}",
+            "grouped": "合并通知：{{title}}{{year_suffix}} / {{episode_info}} / {{file_count}}",
+        }
+        self.store_path.write_text(json.dumps(store), encoding="utf-8")
+        self.service._poll_library_notifications_once()
+        self.rows = [
+            {
+                "Id": "episode-batch-1",
+                "Type": "Episode",
+                "Name": "第 1 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "DateCreated": "2026-06-23T15:10:00Z",
+            },
+            {
+                "Id": "episode-batch-2",
+                "Type": "Episode",
+                "Name": "第 2 集",
+                "SeriesName": "南部档案",
+                "SeriesId": "series-batch",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 2,
+                "DateCreated": "2026-06-23T15:10:01Z",
+            },
+        ]
+
+        self.service._poll_library_notifications_once()
+
+        self.assertEqual(len(self.sender.photos), 1)
+        self.assertEqual(self.sender.photos[0]["caption"], "合并通知：南部档案（2026） / S01 E01-E02 / 2")
 
     def test_library_notification_tagline_falls_back_to_first_overview_sentence(self):
         text = self.service._library_notification_tagline_text(

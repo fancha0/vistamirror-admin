@@ -7,6 +7,7 @@ from .ai_query_service import AIQueryService
 from .ai_tool_base import AIToolBase
 from .ai_tool_handlers import (
     is_hdhive_question,
+    is_library_directory_question,
     is_library_exists_question,
     is_media_detail_question,
     is_playback_question,
@@ -63,6 +64,15 @@ class AIToolProvider:
             ),
             EmbyMediaTool(
                 self.host,
+                name="query_library_directory",
+                description="查询媒体库中某类目录或分类下有哪些资源。",
+                operation="query_library_directory",
+                conversation_key=self.conversation_key,
+                chat_id=self.chat_id,
+                rich=self.rich,
+            ),
+            EmbyMediaTool(
+                self.host,
                 name="query_media_detail",
                 description="查询作品简介、演员、评分和本地入库状态。",
                 operation="query_media_detail",
@@ -107,6 +117,7 @@ class AIToolProvider:
             tool_names=[
                 "search_media",
                 "query_library_exists",
+                "query_library_directory",
                 "query_media_detail",
                 "query_missing_episodes",
             ],
@@ -136,6 +147,7 @@ class AIToolProvider:
         return {
             "search_media": lambda text: self._is_search_media_question(text),
             "query_library_exists": lambda text: self._is_library_exists_question(text),
+            "query_library_directory": lambda text: self._is_library_directory_question(text),
             "query_media_detail": lambda text: self._is_media_detail_question(text),
             "query_playback_history": lambda text: self._is_playback_question(text),
             "query_missing_episodes": lambda text: self.host.media.is_ai_episode_count_question(text) or bool(AIQueryService.parse_missing_episode_request(text)),
@@ -157,6 +169,10 @@ class AIToolProvider:
     @staticmethod
     def _is_library_exists_question(text: str) -> bool:
         return bool(is_library_exists_question(text))
+
+    @staticmethod
+    def _is_library_directory_question(text: str) -> bool:
+        return bool(is_library_directory_question(text))
 
     def _is_search_media_question(self, text: str) -> bool:
         return bool(is_search_media_question(self.host, text))

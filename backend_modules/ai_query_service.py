@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from .ai_host_adapter import AIHostAdapter
+from .ai_library_directory_service import AILibraryDirectoryService
 from .ai_missing_episode_support import parse_missing_episode_request
 from .playback_history_service import PlaybackHistoryService
 
@@ -99,20 +100,21 @@ class AIQueryService:
         return "\n".join(lines) if lines else ""
 
     def build_category_listing_context(self, question: str) -> str:
-        spec = self._parse_category_listing_request(question)
+        spec = self._parse_library_directory_request(question)
         if not spec:
             return ""
         label = str(spec.get("label") or "媒体资源").strip()
         try:
-            items, total = self._fetch_category_items(spec=spec, limit=30)
+            items, total, source, note = self._library_directory_service().fetch_category_items(spec=spec, limit=30)
         except Exception as err:
             return f"分类资源查询：读取“{label}”失败（{self.host.media_service.format_emby_error(err)}）。"
         if not items:
-            return f"分类资源查询：当前 Emby 可读范围内未匹配到“{label}”资源。"
+            return str(note or f"未配置目录分类：{label}\n未找到对应目录或库节点，请先配置 libraryDirectoryConfig.categories。").strip()
         lines = [
             f"分类资源查询：{label}",
             f"- 匹配数量：{total}",
             f"- 已显示前 {len(items)} 条",
+            f"- 查询来源：{self._directory_source_label(source)}",
             "- 资源列表：",
         ]
         for idx, item in enumerate(items, start=1):
@@ -120,6 +122,15 @@ class AIQueryService:
         if total > len(items):
             lines.append("- 提示：结果较多，建议继续缩小关键词或分类。")
         return "\n".join(lines)
+
+    def build_library_directory_reply(self, question: str) -> str:
+        return self.build_category_listing_context(question)
+
+    def _library_directory_service(self) -> AILibraryDirectoryService:
+        return AILibraryDirectoryService(
+            self.host.media_service,
+            store_reader=self.host.platform.read_store,
+        )
 
     def build_recent_library_hint(self, title: str) -> str:
         safe_title = str(title or "").strip()
@@ -302,11 +313,11 @@ class AIQueryService:
             rich=self.rich,
         ).invoke(question)
 
-    def _parse_category_listing_request(self, question: str) -> dict[str, Any] | None:
+    def _parse_library_directory_request(self, question: str) -> dict[str, Any] | None:
         text = str(question or "").strip()
         if not text:
             return None
-        if not re.search(r"列出|列出来|全部|有哪些|查询|查找|看看|看一下|显示|统计|资源|片单|清单|扫描一下", text):
+        if not re.search(r"列出|列出来|全部|有哪些|有什么|有啥|查询|查找|看看|看一下|显示|统计|资源|片单|清单|扫描一下", text):
             return None
 
         lowered = text.lower()
@@ -315,6 +326,7 @@ class AIQueryService:
                 "label": "国产动漫",
                 "needles": ["国产动漫", "国漫", "中国动漫", "华语动漫"],
                 "includeTypes": "Series,Movie",
+                "queryMode": "directory_strict",
                 "match": ["国产动漫", "国漫", "中国动漫", "华语动漫", "动漫", "动画", "animation", "anime"],
                 "prefer": ["国产", "中国", "华语", "大陆", "cn"],
             },
@@ -322,86 +334,79 @@ class AIQueryService:
                 "label": "动漫剧集",
                 "needles": ["动漫剧集", "动画剧集"],
                 "includeTypes": "Series",
+                "queryMode": "directory_strict",
                 "match": ["动漫", "动画", "animation", "anime"],
             },
             {
                 "label": "动漫",
                 "needles": ["动漫", "动画", "anime", "animation"],
                 "includeTypes": "Series,Movie",
+                "queryMode": "directory_strict",
                 "match": ["动漫", "动画", "animation", "anime"],
             },
             {
                 "label": "纪录片",
                 "needles": ["纪录片", "documentary"],
                 "includeTypes": "Series,Movie",
+                "queryMode": "directory_strict",
                 "match": ["纪录片", "documentary"],
             },
             {
                 "label": "华语电影",
                 "needles": ["华语电影", "国产电影", "中文电影"],
                 "includeTypes": "Movie",
+                "queryMode": "directory_strict",
                 "match": ["华语", "国产", "中国", "大陆", "中文"],
+            },
+            {
+                "label": "亚洲电影",
+                "needles": ["亚洲电影", "亚洲影片", "亚洲片", "韩影", "日影", "日韩电影", "韩国电影", "日本电影"],
+                "includeTypes": "Movie",
+                "queryMode": "directory_strict",
+                "match": [
+                    "亚洲电影",
+                    "亚洲影片",
+                    "亚洲片",
+                    "中国",
+                    "大陆",
+                    "香港",
+                    "台湾",
+                    "日本",
+                    "韩国",
+                    "泰国",
+                    "印度",
+                    "新加坡",
+                    "马来西亚",
+                    "越南",
+                    "印尼",
+                ],
             },
             {
                 "label": "电影",
                 "needles": ["电影", "影片"],
                 "includeTypes": "Movie",
+                "queryMode": "directory_strict",
                 "match": [],
             },
             {
                 "label": "剧集",
                 "needles": ["剧集", "电视剧", "连续剧"],
                 "includeTypes": "Series",
+                "queryMode": "directory_strict",
                 "match": [],
             },
         ]
         for spec in specs:
-            if any(needle.lower() in lowered for needle in spec["needles"]):
-                return spec
+            for needle in spec["needles"]:
+                if needle.lower() in lowered:
+                    return {
+                        **spec,
+                        "matchedNeedle": needle,
+                    }
         return None
 
-    def _fetch_category_items(self, *, spec: dict[str, Any], limit: int = 30) -> tuple[list[dict[str, Any]], int]:
-        include_types = str(spec.get("includeTypes") or "Series,Movie")
-        query = urllib.parse.urlencode(
-            {
-                "Recursive": "true",
-                "IncludeItemTypes": include_types,
-                "Fields": "Name,Type,ProductionYear,PremiereDate,Genres,Tags,Path,Overview,ChildCount,RecursiveItemCount,ProviderIds,Studios",
-                "SortBy": "SortName",
-                "SortOrder": "Ascending",
-                "Limit": "500",
-            }
-        )
-        payload = self.host.media_service.emby_get(f"/Items?{query}")
-        rows = payload.get("Items") if isinstance(payload, dict) else payload
-        candidates = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-        matched = [row for row in candidates if self._matches_category_spec(row, spec)]
-        if not matched and not spec.get("match"):
-            matched = candidates
-        return matched[: max(1, min(50, int(limit or 30)))], len(matched)
-
-    def _matches_category_spec(self, item: dict[str, Any], spec: dict[str, Any]) -> bool:
-        match_words = [str(word).lower() for word in spec.get("match", []) if str(word).strip()]
-        prefer_words = [str(word).lower() for word in spec.get("prefer", []) if str(word).strip()]
-        if not match_words and not prefer_words:
-            return True
-        haystack_parts: list[str] = [
-            str(item.get("Name") or ""),
-            str(item.get("SeriesName") or ""),
-            str(item.get("Type") or ""),
-            str(item.get("Path") or ""),
-            str(item.get("Overview") or ""),
-        ]
-        for key in ("Genres", "Tags", "Studios"):
-            values = item.get(key)
-            if isinstance(values, list):
-                haystack_parts.extend(str(value) for value in values)
-        provider_ids = item.get("ProviderIds") if isinstance(item.get("ProviderIds"), dict) else {}
-        haystack_parts.extend(str(value) for value in provider_ids.values())
-        haystack = " ".join(haystack_parts).lower()
-        has_match = not match_words or any(word in haystack for word in match_words)
-        has_prefer = not prefer_words or any(word in haystack for word in prefer_words)
-        return has_match and has_prefer
+    def _parse_category_listing_request(self, question: str) -> dict[str, Any] | None:
+        return self._parse_library_directory_request(question)
 
     def _format_category_item_line(self, item: dict[str, Any]) -> str:
         title = str(item.get("Name") or item.get("SeriesName") or "未知标题").strip()
@@ -419,6 +424,15 @@ class AIQueryService:
         genre_text = " / ".join(str(genre).strip() for genre in genres[:3] if str(genre).strip())
         suffix = f"｜{genre_text}" if genre_text else ""
         return f"《{title}》({year})｜{type_label}｜{pack}{suffix}"
+
+    @staticmethod
+    def _directory_source_label(source: str) -> str:
+        normalized = str(source or "").strip().lower()
+        if normalized == "filesystem":
+            return "本地目录"
+        if normalized == "library":
+            return "库节点目录"
+        return "Emby 元数据匹配"
 
     @staticmethod
     def parse_missing_episode_request(question: str) -> dict[str, str]:

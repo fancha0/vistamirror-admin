@@ -68,7 +68,9 @@ body {
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  box-shadow: 0 8px 16px rgba(114, 46, 209, 0.2);
+  display: block;
+  object-fit: contain;
+  box-shadow: 0 8px 16px rgba(114, 46, 209, 0.12);
 }
 
 .brand-copy {

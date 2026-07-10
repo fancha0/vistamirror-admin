@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="faviconDarkTitle">
+  <title id="faviconDarkTitle">VistaMirror Favicon Dark</title>
+  <defs>
+    <linearGradient id="favDarkStroke" x1="10" y1="12" x2="54" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A07FFF"/>
+      <stop offset="0.45" stop-color="#49AFFF"/>
+      <stop offset="1" stop-color="#67FFF1"/>
+    </linearGradient>
+    <filter id="favDarkGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#1F97FF" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+  <path
+    d="M14 18L30 48L40 31L50 39L50 24"
+    fill="none"
+    stroke="url(#favDarkStroke)"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="8"
+    filter="url(#favDarkGlow)"
+  />
+</svg>

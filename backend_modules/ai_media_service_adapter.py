@@ -13,6 +13,8 @@ import urllib.request
 from typing import TYPE_CHECKING, Any
 
 from .ai_missing_episode_support import MissingEpisodeResult, MissingEpisodeSeason, compress_plain_episode_numbers
+from .ai_runtime_interfaces import AIMediaRuntime
+from .ai_telegram_runtime_bridge import TelegramAIMediaRuntime
 
 if TYPE_CHECKING:
     from .media_identity_service import MediaIdentityService
@@ -26,24 +28,25 @@ LOGGER = logging.getLogger(__name__)
 class AIMediaServiceAdapter:
     """Future business-execution adapter for Emby/TMDB/missing-episode/115 flows."""
 
-    def __init__(self, service: "TelegramCommandService") -> None:
-        self._service = service
+    def __init__(self, service: "AIMediaRuntime | TelegramCommandService") -> None:
+        if isinstance(service, AIMediaRuntime):
+            self._runtime = service
+        else:
+            self._runtime = TelegramAIMediaRuntime(service)
 
     def emby_context(self) -> tuple[str, str]:
-        return self._service._emby_context()
+        return self._runtime.emby_context()
 
     def emby_get(self, path: str) -> dict[str, Any] | list[Any] | None:
-        return self._service._emby_get(path)
+        return self._runtime.emby_get(path)
 
     def format_emby_error(self, err: Exception) -> str:
         return self._format_emby_error(err)
 
     def fetch_latest_items_with_fallback(self, *, limit: int = 10) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Any]:
         safe_limit = max(1, min(30, int(limit or 10)))
-        legacy = getattr(self._service, "_fetch_latest_items_with_fallback", None)
-        original = getattr(type(self._service), "_fetch_latest_items_with_fallback", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_fetch_latest_items_with_fallback")
+        if callable(legacy):
             return legacy(limit=safe_limit)
         tried_paths: list[str] = []
         last_error: Exception | None = None
@@ -104,6 +107,46 @@ class AIMediaServiceAdapter:
         rows = payload.get("Items") if isinstance(payload, dict) else payload
         return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
+    def fetch_emby_libraries(self) -> list[dict[str, str]]:
+        return self._fetch_emby_libraries()
+
+    def fetch_emby_recursive_items(self, *, include_types: str = "Series,Movie", limit: int = 500) -> list[dict[str, Any]]:
+        query = urllib.parse.urlencode(
+            {
+                "Recursive": "true",
+                "IncludeItemTypes": str(include_types or "Series,Movie"),
+                "Fields": "Name,Type,ProductionYear,PremiereDate,Genres,Tags,Path,Overview,ChildCount,RecursiveItemCount,ProviderIds,Studios",
+                "SortBy": "SortName",
+                "SortOrder": "Ascending",
+                "Limit": str(max(1, min(1000, int(limit or 500)))),
+            }
+        )
+        payload = self.emby_get(f"/Items?{query}")
+        rows = payload.get("Items") if isinstance(payload, dict) else payload
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    def fetch_emby_library_items(self, *, library_id: str, include_types: str = "Series,Movie", limit: int = 200) -> list[dict[str, Any]]:
+        safe_library_id = str(library_id or "").strip()
+        if not safe_library_id:
+            return []
+        params = {
+            "ParentId": safe_library_id,
+            "Recursive": "false",
+            "IncludeItemTypes": str(include_types or "Series,Movie"),
+            "Fields": "Name,Type,ProductionYear,PremiereDate,Genres,Tags,Path,Overview,ChildCount,RecursiveItemCount,ProviderIds,Studios",
+            "SortBy": "SortName",
+            "SortOrder": "Ascending",
+            "Limit": str(max(1, min(1000, int(limit or 200)))),
+        }
+        user_id = self._resolve_emby_user_id()
+        if user_id:
+            path = f"/Users/{urllib.parse.quote(user_id, safe='')}/Items?{urllib.parse.urlencode(params)}"
+        else:
+            path = f"/Items?{urllib.parse.urlencode(params)}"
+        payload = self.emby_get(path)
+        rows = payload.get("Items") if isinstance(payload, dict) else payload
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
     def match_scheduled_task_for_question(self, question: str) -> dict[str, Any] | None:
         try:
             tasks = self.fetch_scheduled_tasks()
@@ -152,10 +195,8 @@ class AIMediaServiceAdapter:
         return payload if isinstance(payload, dict) else {}
 
     def media_identity_service(self) -> "MediaIdentityService":
-        legacy = getattr(self._service, "_media_identity_service", None)
-        original = getattr(type(self._service), "_media_identity_service", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_media_identity_service")
+        if callable(legacy):
             return legacy()
         from .media_identity_service import MediaIdentityService
 
@@ -173,10 +214,8 @@ class AIMediaServiceAdapter:
         )
 
     def search_emby_media_candidates(self, keywords: list[str]) -> tuple[str, list[dict[str, Any]], str]:
-        legacy = getattr(self._service, "_search_emby_media_candidates", None)
-        original = getattr(type(self._service), "_search_emby_media_candidates", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_search_emby_media_candidates")
+        if callable(legacy):
             return legacy(keywords)
         last_keyword = str(keywords[0] if keywords else "").strip()
         last_error = ""
@@ -195,10 +234,8 @@ class AIMediaServiceAdapter:
         return last_keyword, [], last_error
 
     def format_ai_matched_item_context(self, item: dict[str, Any], *, keyword: str) -> list[str]:
-        legacy = getattr(self._service, "_format_ai_matched_item_context", None)
-        original = getattr(type(self._service), "_format_ai_matched_item_context", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_format_ai_matched_item_context")
+        if callable(legacy):
             return legacy(item, keyword=keyword)
         item_id = str(item.get("Id") or "").strip()
         detail: dict[str, Any] = {}
@@ -393,7 +430,7 @@ class AIMediaServiceAdapter:
             sources.append(f"冲突处理：{best_source} 高于 Episodes 聚合时，按更高的本地入库集数判断")
 
         try:
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="info",
                 module="webhook",
                 action="ai_media_query_reconciled",
@@ -695,46 +732,40 @@ class AIMediaServiceAdapter:
         )
 
     def missing_episode_report_reply(self, report: dict[str, Any], *, chat_id: str = "") -> "CommandReply":
-        from .telegram_message_renderer import TelegramMessageRenderer
-
-        return TelegramMessageRenderer(self._service, chat_id=chat_id).missing_episode_report_reply(report)
+        return self._runtime.telegram_renderer(chat_id=chat_id).missing_episode_report_reply(report)
 
     def is_library_scan_request(self, text: str) -> bool:
-        return self._service._is_library_scan_request(text)
+        return self._runtime.is_library_scan_request(text)
 
     def extract_library_scan_keyword(self, text: str) -> str:
-        return self._service._extract_library_scan_keyword(text)
+        return self._runtime.extract_library_scan_keyword(text)
 
     def cmd_scan_library(self, keyword: str) -> "CommandReply":
-        legacy = getattr(self._service, "_cmd_scan_library", None)
-        original = getattr(type(self._service), "_cmd_scan_library", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_cmd_scan_library")
+        if callable(legacy):
             return legacy(keyword)
-
-        from .telegram_message_renderer import TelegramMessageRenderer
 
         clean_keyword = str(keyword or "").strip()
         try:
             libraries = self._fetch_emby_libraries()
         except Exception as err:
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="error",
                 module="webhook",
                 action="telegram_library_scan_list_failed",
                 message="Telegram 扫描媒体库列表读取失败。",
                 detail={"keyword": clean_keyword, "error": str(err)},
             )
-            return TelegramMessageRenderer(self._service).ai_markdown_reply("🔄 扫描媒体库", f"读取媒体库失败：{err}")
+            return self._runtime.telegram_renderer().ai_markdown_reply("🔄 扫描媒体库", f"读取媒体库失败：{err}")
         if not libraries:
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="warning",
                 module="webhook",
                 action="telegram_library_scan_list_empty",
                 message="Telegram 扫描媒体库未读取到可展示媒体库。",
                 detail={"keyword": clean_keyword},
             )
-            return TelegramMessageRenderer(self._service).ai_markdown_reply("🔄 扫描媒体库", "未读取到可扫描的 Emby 媒体库。")
+            return self._runtime.telegram_renderer().ai_markdown_reply("🔄 扫描媒体库", "未读取到可扫描的 Emby 媒体库。")
 
         matched = self._filter_emby_libraries(libraries, clean_keyword) if clean_keyword else libraries
         display_rows = matched if matched else libraries
@@ -754,7 +785,7 @@ class AIMediaServiceAdapter:
             intro_lines.append(f"{idx}. {name}｜{lib_type}")
         if len(display_rows) > len(visible_rows):
             intro_lines.append(f"... 还有 {len(display_rows) - len(visible_rows)} 个媒体库未显示，可用 /saomiao 关键词 缩小范围。")
-        self._service._log_project_event(
+        self._runtime.log_project_event(
             level="info",
             module="webhook",
             action="telegram_library_scan_list_ready",
@@ -767,24 +798,21 @@ class AIMediaServiceAdapter:
                 "fallbackToAll": bool(clean_keyword and not matched),
             },
         )
-        return TelegramMessageRenderer(self._service).ai_markdown_reply(
+        return self._runtime.telegram_renderer().ai_markdown_reply(
             "🔄 扫描媒体库",
             "\n".join(intro_lines),
             reply_markup=self._build_scan_library_keyboard(visible_rows),
         )
 
     def cmd_hdhive_search(self, keyword: str) -> "CommandReply":
-        legacy = getattr(self._service, "_cmd_hdhive_search", None)
-        original = getattr(type(self._service), "_cmd_hdhive_search", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_cmd_hdhive_search")
+        if callable(legacy):
             return legacy(keyword)
 
-        from .telegram_message_renderer import TelegramMessageRenderer
         from .hdhive_service import HDHiveError
 
         safe_keyword = str(keyword or "").strip()
-        renderer = TelegramMessageRenderer(self._service)
+        renderer = self._runtime.telegram_renderer()
         if not safe_keyword:
             return renderer.ai_markdown_reply("🪺 影巢资源搜索", "用法：/hdhive 片名\n例如：/hdhive 遮天")
 
@@ -815,9 +843,7 @@ class AIMediaServiceAdapter:
             drive_config = self._apply_drive115_env_overrides(store.get("drive115Config"))
             target_cid = str(drive_config.get("defaultCid") or "0")
             now = time.time()
-            pending = getattr(self._service, "_pending_hdhive_actions", {})
-            if not isinstance(pending, dict):
-                pending = {}
+            pending = self._runtime.get_pending_hdhive_actions()
             pending = {key: value for key, value in pending.items() if now - float(value.get("createdAt") or 0) <= 900}
             lines = [f"《{identity.get('title') or safe_keyword}》找到 {len(resources)} 条资源：", ""]
             buttons: list[list[dict[str, str]]] = []
@@ -831,10 +857,10 @@ class AIMediaServiceAdapter:
                     action_id = secrets.token_urlsafe(7).replace("-", "").replace("_", "")[:10]
                     pending[action_id] = {"createdAt": now, "resource": resource, "targetCid": target_cid}
                     buttons.append([{"text": f"转存 #{index} · {cost}", "callback_data": f"hdhive:pick:{action_id}"}])
-            setattr(self._service, "_pending_hdhive_actions", pending)
+            self._runtime.set_pending_hdhive_actions(pending)
             if not buttons:
                 lines.append("\n当前结果没有可转存的 115 资源。")
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="info",
                 module="hdhive",
                 action="telegram_hdhive_search_success",
@@ -847,7 +873,7 @@ class AIMediaServiceAdapter:
                 reply_markup={"inline_keyboard": buttons} if buttons else None,
             )
         except HDHiveError as err:
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="warning",
                 module="hdhive",
                 action="telegram_hdhive_search_failed",
@@ -860,19 +886,15 @@ class AIMediaServiceAdapter:
             return renderer.ai_markdown_reply("🪺 影巢搜索失败", str(err))
 
     def cmd_drive115_transfer(self, question: str) -> "CommandReply":
-        legacy = getattr(self._service, "_cmd_drive115_transfer", None)
-        original = getattr(type(self._service), "_cmd_drive115_transfer", None)
-        legacy_func = getattr(legacy, "__func__", None)
-        if callable(legacy) and legacy_func is not original:
+        legacy = self._runtime.get_legacy_callable("_cmd_drive115_transfer")
+        if callable(legacy):
             return legacy(question)
 
         from .drive115_service import Drive115Service, extract_115_share
 
         text = str(question or "").strip()
         if not text:
-            from .telegram_message_renderer import TelegramMessageRenderer
-
-            return TelegramMessageRenderer(self._service).ai_markdown_reply(
+            return self._runtime.telegram_renderer().ai_markdown_reply(
                 "📦 115 链接转存",
                 "用法：/zhuancun115 115分享链接\n\n私聊也可以直接发送包含 115 链接的资源消息，机器人识别后会立即转存。",
             )
@@ -903,7 +925,7 @@ class AIMediaServiceAdapter:
                 receive_code=str(share.get("receiveCode") or ""),
             )
         except Exception as err:
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="error",
                 module="drive115",
                 action="telegram_drive115_parse_failed",
@@ -943,7 +965,7 @@ class AIMediaServiceAdapter:
             status = str(result.get("status") or "submitted")
             exists = status == "exists"
             detail.update({"successCount": 0 if exists else 1, "existsCount": 1 if exists else 0, "failureCount": 0, "status": status})
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="info",
                 module="drive115",
                 action="telegram_drive115_transfer_submitted",
@@ -954,7 +976,7 @@ class AIMediaServiceAdapter:
         except Exception as err:
             LOGGER.warning("AI media 115 direct transfer failed: %s", err)
             detail.update({"successCount": 0, "failureCount": 1, "error": str(err)})
-            self._service._log_project_event(
+            self._runtime.log_project_event(
                 level="error",
                 module="drive115",
                 action="telegram_drive115_transfer_failed",
@@ -968,7 +990,7 @@ class AIMediaServiceAdapter:
 
     @property
     def store_path(self) -> pathlib.Path:
-        return pathlib.Path(self._service.store_path)
+        return pathlib.Path(self._runtime.store_path)
 
     def _try_latest_path(self, path: str) -> tuple[list[dict[str, Any]] | None, Exception | None]:
         try:
@@ -1676,7 +1698,7 @@ class AIMediaServiceAdapter:
     def _read_store(self) -> dict[str, Any]:
         path = self.store_path
         if not path.exists():
-            return {"embyConfig": {}, "hdhiveConfig": {}, "drive115Config": {}}
+            return {"embyConfig": {}, "hdhiveConfig": {}, "drive115Config": {}, "libraryDirectoryConfig": {}}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -1687,6 +1709,7 @@ class AIMediaServiceAdapter:
             "embyConfig": data.get("embyConfig") if isinstance(data.get("embyConfig"), dict) else {},
             "hdhiveConfig": data.get("hdhiveConfig") if isinstance(data.get("hdhiveConfig"), dict) else {},
             "drive115Config": data.get("drive115Config") if isinstance(data.get("drive115Config"), dict) else {},
+            "libraryDirectoryConfig": data.get("libraryDirectoryConfig") if isinstance(data.get("libraryDirectoryConfig"), dict) else {},
         }
 
     @staticmethod

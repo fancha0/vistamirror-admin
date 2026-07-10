@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .ai_subagent_registry import AISubagentRegistry
     from .ai_tool_provider import AIToolProvider
     from .ai_tool_registry import AIToolRegistry
-    from .telegram_commands import TelegramCommandService
 
 
 class AIRegistryHost:
-    def __init__(self, service: "TelegramCommandService") -> None:
+    def __init__(self, service: Any) -> None:
         self._service = service
 
     def tool_provider(

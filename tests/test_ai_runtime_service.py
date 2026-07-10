@@ -7,6 +7,8 @@ import json
 from unittest.mock import patch
 
 from backend_modules.media_identity_service import MediaIdentityService
+from backend_modules.ai_host_adapter import AIHostAdapter
+from backend_modules.ai_media_service_adapter import AIMediaServiceAdapter
 from backend_modules.ai_runtime_service import AIRuntimeService
 from backend_modules.ai_tool_base import AIToolBase
 from backend_modules.ai_tool_registry import AIToolRegistry
@@ -38,6 +40,7 @@ class AIRuntimeServiceTests(unittest.TestCase):
         tool_names = [row.name for row in registry.definitions()]
 
         self.assertIn("search_media", tool_names)
+        self.assertIn("query_library_directory", tool_names)
         self.assertIn("query_missing_episodes", tool_names)
         self.assertIn("transfer_115_share", tool_names)
 
@@ -134,6 +137,76 @@ class AIRuntimeServiceTests(unittest.TestCase):
 
         self.assertIn("recent", session)
         self.assertIn("demo", self.service._pending_ai_actions)
+
+    def test_runtime_accepts_prebuilt_host_adapter(self) -> None:
+        host = AIHostAdapter(self.service)
+        runtime = AIRuntimeService(
+            host,
+            conversation_key="chat:runtime",
+            chat_id="100",
+            rich=True,
+        )
+
+        runtime.host.conversations.remember(
+            "chat:runtime",
+            question="遮天多少集",
+            answer="175 集",
+        )
+
+        session = runtime.host.conversations.get("chat:runtime")
+
+        self.assertEqual(session["recent"][0]["user"], "遮天多少集")
+        self.assertIs(runtime.host.platform, host.platform)
+
+    def test_media_service_adapter_accepts_runtime_bridge(self) -> None:
+        root = pathlib.Path(self.temp_dir.name)
+
+        class FakeRenderer:
+            @staticmethod
+            def ai_markdown_reply(title: str, body: str, reply_markup=None):
+                return {"title": title, "text": body, "reply_markup": reply_markup}
+
+        class FakeMediaRuntime:
+            def __init__(self) -> None:
+                self.store_path = root / "invites.json"
+                self.logged: list[dict[str, object]] = []
+                self.pending: dict[str, dict[str, object]] = {}
+
+            def emby_context(self):
+                return "http://emby.local", "api-key"
+
+            def emby_get(self, path: str):
+                if path == "/Library/VirtualFolders":
+                    return [{"ItemId": "lib-1", "Name": "电影库", "CollectionType": "movies"}]
+                return []
+
+            def get_legacy_callable(self, name: str):
+                return None
+
+            def log_project_event(self, **kwargs):
+                self.logged.append(kwargs)
+
+            def is_library_scan_request(self, text: str) -> bool:
+                return "扫描" in text
+
+            def extract_library_scan_keyword(self, text: str) -> str:
+                return "电影"
+
+            def telegram_renderer(self, *, chat_id: str = ""):
+                return FakeRenderer()
+
+            def get_pending_hdhive_actions(self) -> dict[str, dict[str, object]]:
+                return dict(self.pending)
+
+            def set_pending_hdhive_actions(self, actions: dict[str, dict[str, object]]) -> None:
+                self.pending = dict(actions)
+
+        adapter = AIMediaServiceAdapter(FakeMediaRuntime())
+
+        reply = adapter.cmd_scan_library("电影")
+
+        self.assertIn("匹配到 1 个媒体库", reply["text"])
+        self.assertEqual(reply["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "scan_library:one:lib-1")
 
     def test_runtime_host_exposes_media_service(self) -> None:
         runtime = AIRuntimeService(

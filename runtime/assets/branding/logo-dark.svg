@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="logoDarkTitle">
+  <title id="logoDarkTitle">VistaMirror VM Logo Dark</title>
+  <defs>
+    <linearGradient id="vmDarkStroke" x1="38" y1="54" x2="220" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9A7BFF"/>
+      <stop offset="0.4" stop-color="#3AA2FF"/>
+      <stop offset="1" stop-color="#5EFFF4"/>
+    </linearGradient>
+    <filter id="vmDarkGlow" x="-26%" y="-26%" width="152%" height="152%">
+      <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#3AA8FF" flood-opacity="0.36"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="18" flood-color="#2DECF4" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  <g filter="url(#vmDarkGlow)">
+    <path
+      d="M58 70L120 190L165 118L196 146L196 94"
+      fill="none"
+      stroke="url(#vmDarkStroke)"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="28"
+    />
+  </g>
+</svg>

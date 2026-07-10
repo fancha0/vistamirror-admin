@@ -82,7 +82,32 @@ docker compose -f docker-compose.simple.yml up -d
 
 `http://<你的服务器IP或域名>:8091`
 
-## 7) 影巢一键授权代理
+## 7) Emby Webhook 回调地址怎么固定成 VistaMirror 自己的域名
+
+如果你是 Docker 部署，并且希望后台生成的 Emby Webhook 地址始终指向 VistaMirror 自己的公网地址，请设置：
+
+```yaml
+- VISTAMIRROR_PUBLIC_BASE_URL=https://VistaMirror.lshiya.top:333
+```
+
+或在完整版 `docker-compose.yml` / `.env` 中设置：
+
+```text
+VISTAMIRROR_PUBLIC_BASE_URL=https://VistaMirror.lshiya.top:333
+```
+
+生成出来的回调地址就会固定为：
+
+```text
+https://VistaMirror.lshiya.top:333/api/v1/webhook?token=vistamirror
+```
+
+说明：
+- 这里必须填 **VistaMirror 自己的外网访问地址**，不是 Emby 地址。
+- 新版本优先读取 `VISTAMIRROR_PUBLIC_BASE_URL`。
+- 旧变量 `BOT_PUBLIC_BASE_URL` 仍兼容，但建议后续统一改成 `VISTAMIRROR_PUBLIC_BASE_URL`。
+
+## 8) 影巢一键授权代理
 
 一键授权需要单独部署公共代理，并在影巢“我的应用”中把固定回调地址登记为：
 

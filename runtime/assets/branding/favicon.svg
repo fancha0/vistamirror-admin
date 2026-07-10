@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="faviconTitle">
+  <title id="faviconTitle">VistaMirror Favicon Light</title>
+  <defs>
+    <linearGradient id="favStroke" x1="10" y1="12" x2="54" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7652FF"/>
+      <stop offset="0.45" stop-color="#158CFF"/>
+      <stop offset="1" stop-color="#20DFF3"/>
+    </linearGradient>
+  </defs>
+  <path
+    d="M14 18L30 48L40 31L50 39L50 24"
+    fill="none"
+    stroke="url(#favStroke)"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="8"
+  />
+</svg>

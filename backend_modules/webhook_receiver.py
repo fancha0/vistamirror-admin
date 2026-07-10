@@ -5,13 +5,33 @@ from typing import Any
 
 
 def detect_playback_action(payload: dict[str, Any], event_name: str) -> str:
-    event = str(event_name or "").strip().lower()
-    if not event:
-        for key in ("Event", "event", "NotificationType", "notificationType", "Action", "action", "PlaybackState", "playbackState", "Message", "message"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                event = value.strip().lower()
-                break
+    # Emby payloads often contain both the event marker and media fields such
+    # as Type/Name. Always inspect the event marker fields instead of letting a
+    # later, unrelated value hide PlaybackStart/PlaybackPause.
+    values: list[str] = []
+    explicit_event = str(event_name or "").strip()
+    if explicit_event:
+        values.append(explicit_event)
+    for key in (
+        "Event",
+        "event",
+        "NotificationType",
+        "notificationType",
+        "Action",
+        "action",
+        "PlaybackState",
+        "playbackState",
+        "MessageType",
+        "messageType",
+        "Message",
+        "message",
+        "Type",
+        "type",
+    ):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    event = " ".join(values).lower()
     if any(key in event for key in ("resume", "resumed", "恢复")):
         return "resume"
     if any(key in event for key in ("pause", "paused", "playbackpause", "暂停")):

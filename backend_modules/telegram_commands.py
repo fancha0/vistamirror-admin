@@ -30,9 +30,16 @@ from .ai_tool_registry import AIToolRegistry
 from .telegram_message_renderer import TelegramMessageRenderer
 from .drive115_service import Drive115Service, apply_drive115_env_overrides, default_drive115_config, extract_115_share, normalize_drive115_config
 from .hdhive_service import HDHiveError, HDHiveService, apply_hdhive_env_overrides, default_hdhive_config, normalize_hdhive_config
+from .library_notification_service import LibraryNotificationService
 from .media_identity_service import MediaIdentityService
 from .missing_episode_service import MissingEpisodeService
 from .notification_config import normalize_bot_config
+from .notification_platform import (
+    NotificationDispatchService,
+    any_route_enabled,
+    normalize_notification_config,
+    sync_notification_config_to_bot_config,
+)
 from .playback_event_logger import read_recent_playback_events
 from .playback_history_service import PlaybackHistoryService
 from .project_event_logger import read_project_events
@@ -58,7 +65,7 @@ COMMAND_MENU: list[dict[str, str]] = [
 
 LOGGER = logging.getLogger(__name__)
 CommandReply = Union[str, dict[str, Any]]
-DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console"
+DEFAULT_EMBY_CLIENT_NAME = "VistaMirror User Console"
 MARKDOWN_V2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
@@ -70,13 +77,16 @@ EMBY_ENV_FIELD_MAP: dict[str, str] = {
 
 def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
     if not store_path.exists():
+        notification_config = normalize_notification_config({})
         return {
             "embyConfig": {},
             "invites": [],
-            "botConfig": normalize_bot_config({}),
+            "botConfig": sync_notification_config_to_bot_config(notification_config, normalize_bot_config({})),
+            "notificationConfig": notification_config,
             "aiConfig": normalize_ai_config({}),
             "drive115Config": default_drive115_config(),
             "hdhiveConfig": default_hdhive_config(),
+            "libraryDirectoryConfig": {},
         }
     try:
         data = json.loads(store_path.read_text(encoding="utf-8"))
@@ -88,14 +98,16 @@ def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
         "embyConfig": data.get("embyConfig") if isinstance(data.get("embyConfig"), dict) else {},
         "invites": data.get("invites") if isinstance(data.get("invites"), list) else [],
         "botConfig": normalize_bot_config(data.get("botConfig")),
+        "notificationConfig": normalize_notification_config(data.get("notificationConfig"), legacy_bot_config=data.get("botConfig")),
         "aiConfig": normalize_ai_config(data.get("aiConfig")),
         "drive115Config": normalize_drive115_config(data.get("drive115Config")),
         "hdhiveConfig": normalize_hdhive_config(data.get("hdhiveConfig")),
+        "libraryDirectoryConfig": data.get("libraryDirectoryConfig") if isinstance(data.get("libraryDirectoryConfig"), dict) else {},
     }
 
 
 def _help_text() -> str:
-    lines = ["🤖 镜界 Vistamirror Bot 帮助菜单", ""]
+    lines = ["🤖 VistaMirror Bot 帮助菜单", ""]
     lines.extend([f"/{row['command']} - {row['description']}" for row in COMMAND_MENU])
     return "\n".join(lines)
 
@@ -287,6 +299,19 @@ class TelegramCommandService:
     def _library_notification_config(self) -> tuple[dict[str, Any], dict[str, Any]]:
         store = _read_store(self.store_path)
         return normalize_bot_config(store.get("botConfig")), _apply_emby_env_overrides(store.get("embyConfig"))
+
+    def _library_notification_bundle(self) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        store = _read_store(self.store_path)
+        notification = normalize_notification_config(store.get("notificationConfig"), legacy_bot_config=store.get("botConfig"))
+        bot = sync_notification_config_to_bot_config(notification, store.get("botConfig"))
+        emby = _apply_emby_env_overrides(store.get("embyConfig"))
+        return notification, bot, emby
+
+    def _notification_dispatcher(self) -> NotificationDispatchService:
+        return NotificationDispatchService(telegram_sender=self.sender)
+
+    def _library_notification_service(self) -> LibraryNotificationService:
+        return LibraryNotificationService(self)
 
     def _read_library_notification_state(self) -> dict[str, Any]:
         with self._library_state_lock:
@@ -711,56 +736,9 @@ class TelegramCommandService:
         source: str = "webhook",
         state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        safe_item_id = str(item_id or "").strip()
-        if not safe_item_id:
-            return {"ok": False, "status": "missing_item_id"}
-        bot, emby = self._library_notification_config()
-        if not bool(bot.get("enableCore", True) and bot.get("enableLibrary", True)):
-            return {"ok": True, "status": "disabled"}
-        token = str(bot.get("telegramToken") or "").strip()
-        chat_id = str(bot.get("telegramChatId") or "").strip()
-        if not token or not chat_id:
-            return {"ok": False, "status": "telegram_not_configured"}
-
-        state = state if isinstance(state, dict) else self._read_library_notification_state()
-        if safe_item_id in state["seen"]:
-            self._log_project_event(
-                level="info",
-                module="webhook",
-                action="library_notification_duplicate_skipped",
-                message="重复入库资源通知已跳过。",
-                detail={"itemId": safe_item_id, "source": source},
-            )
-            return {"ok": True, "status": "duplicate"}
-
-        try:
-            detail = self._fetch_library_item_detail(safe_item_id)
-        except Exception as err:
-            detail = {}
-            self._log_project_event(
-                level="warning",
-                module="webhook",
-                action="library_notification_detail_fallback",
-                message="入库资源详情读取失败，使用事件基础资料继续发送。",
-                detail={"itemId": safe_item_id, "source": source, "error": str(err)},
-            )
-        if isinstance(payload, dict):
-            merged = dict(payload)
-            merged.update(detail)
-            detail = merged
-        item_type = str(detail.get("Type") or "").strip().lower()
-        if item_type not in {"movie", "episode"}:
-            return {"ok": True, "status": "filtered", "itemType": item_type}
-        if item_type == "episode":
-            buffered = self._buffer_library_episode_group(state=state, payload=detail, source=source)
-            if str(buffered.get("status") or "") == "single_fallback":
-                pass
-            else:
-                return buffered
-
-        return self._send_library_single_notification_unlocked(
-            item_id=safe_item_id,
-            detail=detail,
+        return self._library_notification_service().notify_item_unlocked(
+            item_id=item_id,
+            payload=payload,
             source=source,
             state=state,
         )
@@ -773,51 +751,33 @@ class TelegramCommandService:
         source: str,
         state: dict[str, Any],
     ) -> dict[str, Any]:
-        safe_item_id = str(item_id or "").strip()
-        bot, _emby = self._library_notification_config()
-        token = str(bot.get("telegramToken") or "").strip()
-        chat_id = str(bot.get("telegramChatId") or "").strip()
-        item_type = str(detail.get("Type") or "").strip().lower()
-        series_detail: dict[str, Any] = {}
-        if item_type == "episode":
-            series_id = str(detail.get("SeriesId") or "").strip()
-            if series_id:
-                try:
-                    series_detail = self._fetch_library_item_detail(series_id)
-                except Exception as err:
-                    self._log_project_event(
-                        level="warning",
-                        module="webhook",
-                        action="library_notification_series_detail_fallback",
-                        message="所属剧集资料读取失败，继续发送单集通知。",
-                        detail={"itemId": safe_item_id, "seriesId": series_id, "source": source, "error": str(err)},
-                    )
-        photo_sent = self._send_library_caption(
-            token=token,
-            chat_id=chat_id,
-            caption=self._format_library_notification_caption(detail, series_detail),
-            image_item_ids=self._library_notification_image_ids(detail, series_detail),
-            item_id=safe_item_id,
+        return self._library_notification_service().send_single_notification_unlocked(
+            item_id=item_id,
+            detail=detail,
+            source=source,
+            state=state,
+        )
+
+    @staticmethod
+    def _library_channel_enabled(notification: dict[str, Any], channel: str, event_key: str) -> bool:
+        routes = notification.get("routes") if isinstance(notification.get("routes"), dict) else {}
+        channels = notification.get("channels") if isinstance(notification.get("channels"), dict) else {}
+        route_map = routes.get(channel) if isinstance(routes.get(channel), dict) else {}
+        channel_config = channels.get(channel) if isinstance(channels.get(channel), dict) else {}
+        return bool(notification.get("enabled", True) and channel_config.get("enabled", False) and route_map.get(event_key, False))
+
+    def _resolve_library_notification_photo(
+        self,
+        *,
+        image_item_ids: list[str],
+        item_id: str,
+        source: str,
+    ) -> dict[str, Any]:
+        return self._library_notification_service().resolve_photo(
+            image_item_ids=image_item_ids,
+            item_id=item_id,
             source=source,
         )
-        state["active"] = True
-        state["seen"][safe_item_id] = self._library_notification_now_iso()
-        self._write_library_notification_state(state)
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="library_notification_sent",
-            message="Telegram 新入库海报通知已发送。",
-            detail={
-                "itemId": safe_item_id,
-                "itemType": item_type,
-                "source": source,
-                "photo": photo_sent,
-                "detailSource": str(detail.get("_detailSource") or "event_payload"),
-                "seriesDetailSource": str(series_detail.get("_detailSource") or ""),
-            },
-        )
-        return {"ok": True, "status": "sent", "photo": photo_sent, "itemType": item_type}
 
     def _send_library_caption(
         self,
@@ -1083,6 +1043,200 @@ class TelegramCommandService:
             return "质量未知"
         return quality
 
+    @staticmethod
+    def _library_notification_runtime_text(detail: dict[str, Any]) -> str:
+        try:
+            ticks = int(detail.get("RunTimeTicks") or 0)
+        except (TypeError, ValueError):
+            ticks = 0
+        if ticks <= 0:
+            return "未知时长"
+        total_seconds = max(0, ticks // 10000000)
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    @classmethod
+    def _library_notification_entry_label(cls, detail: dict[str, Any], *, template_kind: str = "single") -> str:
+        if str(template_kind or "").strip().lower() == "grouped":
+            return "整季入库"
+        item_type = str(detail.get("Type") or "").strip().lower()
+        if item_type == "movie":
+            return "电影入库"
+        return "单集入库"
+
+    @classmethod
+    def _library_notification_summary_line(cls, detail: dict[str, Any]) -> str:
+        rating = cls._library_notification_rating(detail)
+        item_type = str(detail.get("Type") or "").strip().lower()
+        if item_type == "movie":
+            return f"✨ 评分：{rating} / 10 ｜ 🔄 影片时长：{cls._library_notification_runtime_text(detail)}"
+        return f"✨ 评分：{rating} / 10 ｜ 🔄 状态：{cls._library_notification_status_text(detail)}"
+
+    @classmethod
+    def _library_notification_tagline_line(cls, detail: dict[str, Any]) -> str:
+        return f"💬 “{cls._library_notification_tagline_text(detail)}”"
+
+    @classmethod
+    def _library_notification_content_type_line(cls, detail: dict[str, Any]) -> str:
+        return f"🏷️ 内容类型 ｜ {cls._library_notification_media_type(detail)} · {cls._library_notification_genres(detail)}"
+
+    @classmethod
+    def _library_notification_scope_line(
+        cls,
+        detail: dict[str, Any],
+        *,
+        episode_info: str,
+        count: int,
+        template_kind: str = "single",
+    ) -> str:
+        safe_episode_info = str(episode_info or "").strip() or "未提供"
+        if str(template_kind or "").strip().lower() == "grouped":
+            return f"📑 收录进度 ｜ {safe_episode_info}"
+        item_type = str(detail.get("Type") or "").strip().lower()
+        if item_type == "movie":
+            premiere = str(detail.get("PremiereDate") or "").strip()
+            date_text = premiere[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", premiere) else "未知"
+            return f"📅 上映日期 ｜ {date_text}"
+        return f"▶️ 当前更新 ｜ {safe_episode_info}"
+
+    @staticmethod
+    def _library_notification_time_line(latest_created_at: str) -> str:
+        return f"⏱️ 入库时间 ｜ {str(latest_created_at or '').strip() or '未知'}"
+
+    def _library_notification_quality_line(self, detail: dict[str, Any], *, count: int) -> str:
+        safe_count = max(1, int(count or 1))
+        count_text = "1 个文件" if safe_count == 1 else f"{safe_count} 个文件"
+        return f"💿 资源规格 ｜ {self._library_notification_quality_text(detail)} ({count_text})"
+
+    @classmethod
+    def _library_notification_actors_line(cls, detail: dict[str, Any]) -> str:
+        return f"🤖 主演阵容 ｜ {cls._library_notification_people(detail)}"
+
+    @staticmethod
+    def _library_notification_template_text(raw: Any, *, fallback: str) -> str:
+        text = str(raw or "").replace("\r\n", "\n").replace("\r", "\n")
+        return text if text.strip() else fallback
+
+    def _library_notification_template_context(
+        self,
+        *,
+        title: str,
+        year: str,
+        detail: dict[str, Any],
+        episode_info: str,
+        count: int,
+        latest_created_at: str,
+        template_kind: str = "single",
+    ) -> dict[str, str]:
+        safe_year = str(year or "").strip()
+        return {
+            "title": str(title or "").strip() or "未命名内容",
+            "year": safe_year,
+            "year_suffix": f"（{safe_year}）" if safe_year and safe_year != "未知" else "",
+            "entry_label": self._library_notification_entry_label(detail, template_kind=template_kind),
+            "tagline": self._library_notification_tagline_text(detail),
+            "tagline_line": self._library_notification_tagline_line(detail),
+            "rating": self._library_notification_rating(detail),
+            "status": self._library_notification_status_text(detail),
+            "summary_line": self._library_notification_summary_line(detail),
+            "processed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "media_type": self._library_notification_media_type(detail),
+            "category": self._library_notification_genres(detail),
+            "content_type_line": self._library_notification_content_type_line(detail),
+            "episode_info": str(episode_info or "").strip() or "未提供",
+            "library_scope_line": self._library_notification_scope_line(
+                detail,
+                episode_info=episode_info,
+                count=count,
+                template_kind=template_kind,
+            ),
+            "latest_created_at": str(latest_created_at or "").strip() or "未知",
+            "library_time_line": self._library_notification_time_line(latest_created_at),
+            "quality": self._library_notification_quality_text(detail),
+            "quality_line": self._library_notification_quality_line(detail, count=count),
+            "file_count": str(max(1, int(count or 1))),
+            "actors": self._library_notification_people(detail),
+            "actors_line": self._library_notification_actors_line(detail),
+            "overview": self._library_notification_overview(detail),
+        }
+
+    @staticmethod
+    def _merge_library_notification_detail(detail: dict[str, Any], series_detail: dict[str, Any]) -> dict[str, Any]:
+        primary = dict(series_detail if isinstance(series_detail, dict) else {})
+        episode = detail if isinstance(detail, dict) else {}
+        if not primary:
+            return dict(episode)
+        if not episode:
+            return primary
+
+        primary.update(
+            {
+                "Id": episode.get("Id"),
+                "Type": episode.get("Type"),
+                "Name": episode.get("Name"),
+                "SeriesName": episode.get("SeriesName") or primary.get("Name") or primary.get("SeriesName"),
+                "SeriesId": episode.get("SeriesId") or primary.get("SeriesId"),
+                "ParentIndexNumber": episode.get("ParentIndexNumber"),
+                "IndexNumber": episode.get("IndexNumber"),
+                "DateCreated": episode.get("DateCreated") or primary.get("DateCreated"),
+            }
+        )
+
+        for key in (
+            "Overview",
+            "Tagline",
+            "Taglines",
+            "MediaSources",
+            "MediaStreams",
+            "Width",
+            "Height",
+            "RunTimeTicks",
+            "PremiereDate",
+            "ImageTags",
+            "PrimaryImageAspectRatio",
+            "ParentPrimaryImageItemId",
+            "ParentPrimaryImageTag",
+            "SeriesPrimaryImageTag",
+            "SeriesPrimaryImageItemId",
+            "PrimaryImageItemId",
+        ):
+            value = episode.get(key)
+            if value not in (None, "", [], {}):
+                primary[key] = value
+        return primary
+
+    def _format_library_notification_context(self, detail: dict[str, Any], series_detail: dict[str, Any]) -> dict[str, str]:
+        item_type = str(detail.get("Type") or "").strip().lower()
+        fallback = series_detail if isinstance(series_detail, dict) else {}
+        primary = detail if item_type == "movie" else self._merge_library_notification_detail(detail, fallback)
+        title = str(
+            (detail.get("Name") if item_type == "movie" else (detail.get("SeriesName") or fallback.get("Name")))
+            or "未命名内容"
+        ).strip()
+        year = self._library_notification_year(primary)
+        latest_created_at = self._library_notification_datetime(detail.get("DateCreated") or fallback.get("DateCreated"))
+        episode_info = self._library_notification_episode_info(detail)
+        return self._library_notification_template_context(
+            title=title,
+            year=year,
+            detail=primary if isinstance(primary, dict) else {},
+            episode_info=episode_info,
+            count=1,
+            latest_created_at=latest_created_at,
+            template_kind="single",
+        )
+
+    @staticmethod
+    def _render_library_notification_template(template: str, context: dict[str, Any]) -> str:
+        payload = dict(context if isinstance(context, dict) else {})
+        return re.sub(
+            r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}",
+            lambda match: str(payload.get(str(match.group(1) or "").strip(), "")),
+            str(template or ""),
+        )
+
     def _build_library_notification_caption(
         self,
         *,
@@ -1092,124 +1246,44 @@ class TelegramCommandService:
         episode_info: str,
         count: int,
         latest_created_at: str,
+        template_kind: str = "single",
     ) -> str:
-        tagline = self._library_notification_tagline_text(detail)
-        rating = self._library_notification_rating(detail)
-        status = self._library_notification_status_text(detail)
-        processed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        media_type = self._library_notification_media_type(detail)
-        category = self._library_notification_genres(detail)
-        quality = self._library_notification_quality_text(detail)
-        actors = self._library_notification_people(detail)
-        overview = self._library_notification_overview(detail)
-
-        lines = [
-            f"🎬 新入库｜{title}（{year}）" if year and year != "未知" else f"🎬 新入库｜{title}",
-            "",
-            f"> **“{tagline}”**",
-            f"> 评分：⭐ **{rating}** / 10 · 状态：{status}",
-            "",
-            "---",
-            "=== 基本信息 ===",
-            f"🕘 整理时间｜{processed_at}",
-            f"📺 内容类型｜{media_type} · {category}",
-            f"🎞 入库信息｜{episode_info}",
-            f"📅 入库时间｜{latest_created_at}",
-            "",
-            "=== 资源详情 ===",
-            f"🧩 资源规格｜{quality}",
-            f"📦 文件数量｜{max(1, int(count or 1))} 个",
-            "",
-            "=== 创作信息 ===",
-            f"👥 主演阵容｜{actors}",
-            "",
-            "=== 内容简介 ===",
-            f"📜 {overview}",
-        ]
-        return self._truncate_library_notification_text("\n".join(lines), limit=1000)
-
-    def _format_library_notification_caption(self, detail: dict[str, Any], series_detail: dict[str, Any]) -> str:
-        item_type = str(detail.get("Type") or "").strip().lower()
-        fallback = series_detail if isinstance(series_detail, dict) else {}
-        primary = detail if item_type == "movie" else (fallback or detail)
-        title = str(
-            (detail.get("Name") if item_type == "movie" else (detail.get("SeriesName") or fallback.get("Name")))
-            or "未命名内容"
-        ).strip()
-        year = self._library_notification_year(primary)
-        latest_created_at = self._library_notification_datetime(detail.get("DateCreated") or fallback.get("DateCreated"))
-        episode_info = self._library_notification_episode_info(detail)
-        return self._build_library_notification_caption(
+        bot, _emby = self._library_notification_config()
+        templates = bot.get("libraryTemplates") if isinstance(bot.get("libraryTemplates"), dict) else {}
+        fallback_templates = normalize_bot_config({}).get("libraryTemplates", {})
+        template_key = "grouped" if str(template_kind or "").strip().lower() == "grouped" else "single"
+        template = self._library_notification_template_text(
+            templates.get(template_key),
+            fallback=str(fallback_templates.get(template_key) or ""),
+        )
+        context = self._library_notification_template_context(
             title=title,
             year=year,
-            detail=primary if isinstance(primary, dict) else {},
+            detail=detail,
             episode_info=episode_info,
-            count=1,
+            count=count,
             latest_created_at=latest_created_at,
+            template_kind=template_kind,
+        )
+        rendered = self._render_library_notification_template(template, context)
+        return self._truncate_library_notification_text(rendered, limit=1000)
+
+    def _format_library_notification_caption(self, detail: dict[str, Any], series_detail: dict[str, Any]) -> str:
+        context = self._format_library_notification_context(detail, series_detail)
+        item_type = str(detail.get("Type") or "").strip().lower()
+        caption_detail = detail if item_type == "movie" else self._merge_library_notification_detail(detail, series_detail)
+        return self._build_library_notification_caption(
+            title=str(context.get("title") or ""),
+            year=str(context.get("year") or ""),
+            detail=caption_detail,
+            episode_info=str(context.get("episode_info") or ""),
+            count=int(context.get("file_count") or "1"),
+            latest_created_at=str(context.get("latest_created_at") or ""),
+            template_kind="single",
         )
 
     def _send_library_notification_group_unlocked(self, group: dict[str, Any]) -> None:
-        bot, _emby = self._library_notification_config()
-        token = str(bot.get("telegramToken") or "").strip()
-        chat_id = str(bot.get("telegramChatId") or "").strip()
-        if not token or not chat_id:
-            raise RuntimeError("telegram_not_configured")
-
-        items = [dict(row) for row in group.get("items", []) if isinstance(row, dict) and str(row.get("Id") or "").strip()]
-        if not items:
-            return
-        series_id = str(group.get("seriesId") or "").strip()
-        sources = sorted({str(value).strip() for value in group.get("sources", []) if str(value).strip()})
-        resolved_items = [self._resolve_library_group_item(row) for row in items]
-        if len(resolved_items) <= 1:
-            row = resolved_items[0]
-            result = self._send_library_single_notification_unlocked(
-                item_id=str(row.get("Id") or "").strip(),
-                detail=row,
-                source="+".join(sources) or "group",
-                state=self._read_library_notification_state(),
-            )
-            if not bool(result.get("ok")):
-                raise RuntimeError(f"group_single_fallback_failed:{result.get('status')}")
-            return
-
-        series_detail = self._fetch_library_item_detail(series_id) if series_id else {}
-        caption = self._format_library_group_notification_caption(group=group, items=resolved_items, series_detail=series_detail)
-        image_item_ids = self._library_notification_image_ids(
-            {"Type": "Episode", "SeriesId": series_id, "PrimaryImageItemId": series_detail.get("PrimaryImageItemId")},
-            series_detail,
-        )
-        item_ids = [str(row.get("Id") or "").strip() for row in resolved_items if str(row.get("Id") or "").strip()]
-        photo_sent = self._send_library_caption(
-            token=token,
-            chat_id=chat_id,
-            caption=caption,
-            image_item_ids=image_item_ids,
-            item_id=series_id or ",".join(item_ids),
-            source="+".join(sources) or "group",
-        )
-        state = self._read_library_notification_state()
-        state["active"] = True
-        sent_at = self._library_notification_now_iso()
-        for item_id in item_ids:
-            state["seen"][item_id] = sent_at
-        self._write_library_notification_state(state)
-        range_text = self._library_group_episode_range_text(resolved_items)
-        self._log_project_event(
-            level="info",
-            module="webhook",
-            action="library_notification_group_sent",
-            message="Telegram 剧集合并入库通知已发送。",
-            detail={
-                "seriesId": series_id,
-                "seriesName": str(series_detail.get("Name") or group.get("seriesName") or ""),
-                "episodeCount": len(item_ids),
-                "seasonCount": self._library_group_season_count(resolved_items),
-                "rangeText": range_text,
-                "photo": photo_sent,
-                "source": "+".join(sources) or "group",
-            },
-        )
+        self._library_notification_service().send_group_notification_unlocked(group)
 
     def _resolve_library_group_item(self, row: dict[str, Any]) -> dict[str, Any]:
         if self._library_group_has_episode_identity(row):
@@ -1310,6 +1384,39 @@ class TelegramCommandService:
             episode_info=episode_text,
             count=item_count,
             latest_created_at=created_at,
+            template_kind="grouped",
+        )
+
+    def _format_library_group_notification_context(
+        self,
+        *,
+        group: dict[str, Any],
+        items: list[dict[str, Any]],
+        series_detail: dict[str, Any],
+    ) -> dict[str, str]:
+        fallback = series_detail if isinstance(series_detail, dict) else {}
+        series_name = str(fallback.get("Name") or group.get("seriesName") or items[0].get("SeriesName") or "未命名剧集").strip()
+        year = self._library_notification_year(fallback or items[0])
+        latest_created_raw = max((str(row.get("DateCreated") or "") for row in items), default="")
+        created_at = self._library_notification_datetime(latest_created_raw)
+        episode_text = self._library_group_episode_range_text(items)
+        item_count = len({str(row.get("Id") or "").strip() for row in items if str(row.get("Id") or "").strip()})
+        primary_detail = dict(fallback or items[0] or {})
+        if items:
+            best_quality_item = max(items, key=self._media_quality_score)
+            if isinstance(best_quality_item, dict):
+                primary_detail["MediaSources"] = best_quality_item.get("MediaSources")
+                primary_detail["MediaStreams"] = best_quality_item.get("MediaStreams")
+                primary_detail["Width"] = best_quality_item.get("Width")
+                primary_detail["Height"] = best_quality_item.get("Height")
+        return self._library_notification_template_context(
+            title=series_name,
+            year=year,
+            detail=primary_detail,
+            episode_info=episode_text,
+            count=item_count,
+            latest_created_at=created_at,
+            template_kind="grouped",
         )
 
     def _handle_update(self, update: dict[str, Any], token: str) -> None:
@@ -2151,7 +2258,7 @@ class TelegramCommandService:
 
     def _dispatch_command(self, cmd: str, args: str) -> CommandReply:
         if cmd in {"start", "help"}:
-            return _help_text() if cmd == "help" else "🚀 镜界机器人已启动\n\n" + _help_text()
+            return _help_text() if cmd == "help" else "🚀 VistaMirror 机器人已启动\n\n" + _help_text()
         if cmd == "check":
             return self._cmd_check()
         if cmd == "zhengzaibofang":

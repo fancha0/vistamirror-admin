@@ -9,6 +9,7 @@ from .ai_host_adapter import AIHostAdapter
 from .ai_orchestrator import AIOrchestrator
 from .ai_query_service import AIQueryService
 from .ai_reply_service import AIReplyService
+from .ai_runtime_interfaces import AIRuntimeHostProtocol
 from .ai_support_service import AISupportService
 from .ai_tool_provider import AIToolProvider
 
@@ -19,14 +20,14 @@ if TYPE_CHECKING:
 class AIRuntimeService:
     def __init__(
         self,
-        service: "TelegramCommandService",
+        service: "AIHostAdapter | AIRuntimeHostProtocol | TelegramCommandService",
         *,
         conversation_key: str = "",
         chat_id: str = "",
         rich: bool = False,
     ) -> None:
         self.service = service
-        self.host = AIHostAdapter(service)
+        self.host = AIHostAdapter.coerce(service)
         self.conversation_key = str(conversation_key or "").strip()
         self.chat_id = str(chat_id or "").strip()
         self.rich = bool(rich)

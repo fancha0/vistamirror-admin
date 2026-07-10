@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from .ai_assistant import chat_completion, stream_chat_completion
 from .ai_host_adapter import AIHostAdapter
+from .ai_runtime_interfaces import AIRuntimeHostProtocol
 from .ai_runtime_service import AIRuntimeService
 
 if TYPE_CHECKING:
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 class AIChatService:
     def __init__(
         self,
-        service: "TelegramCommandService",
+        service: "AIHostAdapter | AIRuntimeHostProtocol | TelegramCommandService",
         *,
         question: str,
         ai_config: dict,
@@ -22,23 +23,27 @@ class AIChatService:
         chat_id: str = "",
     ) -> None:
         self.service = service
-        self.host = AIHostAdapter(service)
+        self.host = AIHostAdapter.coerce(service)
         self.original_question = str(question or "").strip()
         self.ai_config = dict(ai_config if isinstance(ai_config, dict) else {})
         self.conversation_key = str(conversation_key or "").strip()
         self.chat_id = str(chat_id or "").strip()
 
     @classmethod
-    def load_config(cls, service: "TelegramCommandService") -> dict:
+    def load_config(cls, service: "AIHostAdapter | AIRuntimeHostProtocol | TelegramCommandService") -> dict:
         return AIRuntimeService(service).config_service().load()
 
     @classmethod
-    def validate_config(cls, service: "TelegramCommandService", ai_config: dict) -> "CommandReply | None":
+    def validate_config(
+        cls,
+        service: "AIHostAdapter | AIRuntimeHostProtocol | TelegramCommandService",
+        ai_config: dict,
+    ) -> "CommandReply | None":
         return AIRuntimeService(service).config_service().validate(ai_config)
 
     def _runtime(self, *, rich: bool) -> AIRuntimeService:
         return AIRuntimeService(
-            self.service,
+            self.host,
             conversation_key=self.conversation_key,
             chat_id=self.chat_id,
             rich=rich,

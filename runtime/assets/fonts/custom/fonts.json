@@ -1,0 +1,56 @@
+[
+  {
+    "key": "aa_hui_yun_ti",
+    "label": "Aa绘云体",
+    "path": "aa_hui_yun_ti/AaHuiYunTi-2.ttf",
+    "sourceZip": "AaHuiYunTi.zip"
+  },
+  {
+    "key": "aa_kuang_pai_shou_shu",
+    "label": "Aa狂派手书",
+    "path": "aa_kuang_pai_shou_shu/AaKuangPaiShouShu-2.ttf",
+    "sourceZip": "AaKuangPaiShouShu.zip"
+  },
+  {
+    "key": "aa_xin_hua_jing_ma_ti",
+    "label": "Aa新华劲马体",
+    "path": "aa_xin_hua_jing_ma_ti/AaXinHuaJingMaTi-2.ttf",
+    "sourceZip": "AaXinHuaJingMaTi.zip"
+  },
+  {
+    "key": "wang_zha_flash_bold",
+    "label": "超小社王炸简-闪大黑",
+    "path": "wang_zha_flash_bold/ChaoXiaoSheWangZhaJian-Shan-DaHei(Joketype-WangzhaGB-Flash-Bold)-2.ttf",
+    "sourceZip": "ChaoXiaoSheWangZhaJian-Shan-DaHei.zip"
+  },
+  {
+    "key": "fu_lu_da_mao_bi_ti",
+    "label": "福禄大毛笔体",
+    "path": "fu_lu_da_mao_bi_ti/FuLuDaMaoBiTi-3.ttf",
+    "sourceZip": "FuLuDaMaoBiTi.zip"
+  },
+  {
+    "key": "gong_fan_nu_fang_ti",
+    "label": "共犯怒放体",
+    "path": "gong_fan_nu_fang_ti/GongFanNuFangTi(TaoBaoSouGongFanZiKuKeMaiDanZiShouQuan)-2.ttf",
+    "sourceZip": "GongFanNuFangTi.zip"
+  },
+  {
+    "key": "ke_lai_yin_lan_de_ye_wan",
+    "label": "克莱因蓝的夜晚",
+    "path": "ke_lai_yin_lan_de_ye_wan/KeLaiYinLanDeYeWan-2.ttf",
+    "sourceZip": "KeLaiYinLanDeYeWan.zip"
+  },
+  {
+    "key": "the_mordeus",
+    "label": "The Mordeus",
+    "path": "the_mordeus/Themordeusdemo-p76xv-2.otf",
+    "sourceZip": "The-Mordeus.zip"
+  },
+  {
+    "key": "zi_hun_jian_qi_shou_shu",
+    "label": "紫魂剑气手书",
+    "path": "zi_hun_jian_qi_shou_shu/ZiHunJianQiShouShu(ShangYongXuShouQuan)-2.ttf",
+    "sourceZip": "ZiHunJianQiShouShu.zip"
+  }
+]

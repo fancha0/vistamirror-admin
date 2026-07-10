@@ -15,9 +15,12 @@ import argparse
 import base64
 import concurrent.futures
 import atexit
+import copy
+import cgi
 from functools import partial
 import hashlib
 import html
+import io
 import ipaddress
 import io
 import json
@@ -71,7 +74,7 @@ from backend_modules.hdhive_service import (
 )
 from backend_modules.ip_locator import build_ip_display
 from backend_modules.media_identity_service import MediaIdentityService
-from backend_modules.message_formatter import compose_playback_message, normalize_content_type, ticks_to_seconds
+from backend_modules.notification_event_factory import PlaybackNotificationEventFactory
 from backend_modules.missing_episode_service import MissingEpisodeService
 from backend_modules.admin_auth_service import AdminAuthService, AuthConfig
 from backend_modules.notification_config import (
@@ -79,12 +82,49 @@ from backend_modules.notification_config import (
     normalize_bot_config as module_normalize_bot_config,
     validate_bot_config as module_validate_bot_config,
 )
+from backend_modules.notification_platform import (
+    NotificationDispatchService,
+    any_route_enabled,
+    build_notification_preview,
+    deepcopy_default_notification_config,
+    migrate_bot_config_to_notification_config,
+    notification_capabilities,
+    normalize_notification_config as module_normalize_notification_config,
+    sync_notification_config_to_bot_config,
+    validate_notification_config as module_validate_notification_config,
+)
 from backend_modules.playback_event_logger import append_playback_event
 from backend_modules.playback_history_service import PlaybackHistoryService
 from backend_modules.project_event_logger import append_project_event, clear_project_events, read_project_events, redact_sensitive
+from backend_modules.store import app_store
+from backend_modules.cover_studio_service import (
+    CoverStudioService,
+    EmbyCoverService,
+    default_cover_studio_config as module_default_cover_studio_config,
+    normalize_cover_studio_config as module_normalize_cover_studio_config,
+)
 from backend_modules.telegram_commands import TelegramCommandService
 from backend_modules.telegram_sender import TelegramSender
-from backend_modules.webhook_receiver import build_dedupe_key, detect_playback_action, event_enabled, maybe_extract_media_name
+from backend_modules.webhook_receiver import build_dedupe_key, detect_playback_action, maybe_extract_media_name
+from backend_modules.api_handlers.config_handlers import (
+    handle_ai_config_get,
+    handle_ai_config_save,
+    handle_bot_config_get,
+    handle_bot_config_save,
+)
+from backend_modules.api_handlers.invite_sync_handlers import (
+    handle_invite_sync,
+    handle_invite_sync_status,
+)
+from backend_modules.api_handlers.cover_studio_handlers import (
+    handle_cover_studio_apply,
+    handle_cover_studio_config_get,
+    handle_cover_studio_config_save,
+    handle_cover_studio_preview,
+    handle_cover_studio_restore,
+    handle_cover_studio_status_get,
+    handle_cover_studio_views_get,
+)
 
 try:
     from Crypto.Cipher import AES as _AES  # type: ignore[import-not-found]
@@ -112,7 +152,7 @@ ANNUAL_RANKING_CACHE_LOCK = threading.Lock()
 STORE_FILE_NAME = "invites.json"
 LEGACY_STORE_FILE_NAME = "invite_store.json"
 BASE_DIR = pathlib.Path(__file__).resolve().parent
-DEFAULT_EMBY_CLIENT_NAME = "镜界Vistamirror User Console"
+DEFAULT_EMBY_CLIENT_NAME = "VistaMirror User Console"
 RUNTIME_DIR = pathlib.Path(str(os.environ.get("APP_RUNTIME_DIR") or (BASE_DIR / "runtime"))).expanduser()
 DATA_DIR = pathlib.Path(str(os.environ.get("APP_DATA_DIR") or (BASE_DIR / "data"))).expanduser()
 PLAYBACK_EVENT_LOG_FILE = DATA_DIR / "playback_events.jsonl"
@@ -120,7 +160,13 @@ PROJECT_EVENT_LOG_FILE = DATA_DIR / "project_events.jsonl"
 PROJECT_EVENT_STATE_FILE = DATA_DIR / ".project_events_state.json"
 MISSING_SCAN_CACHE_FILE = DATA_DIR / "missing_scan.json"
 DEFAULT_WEBHOOK_TOKEN = "vistamirror"
-LAST_WEBHOOK_STATE: dict[str, Any] = {"lastReceivedAt": "", "lastProcessed": None}
+PUBLIC_BASE_ENV_NAMES = ("VISTAMIRROR_PUBLIC_BASE_URL", "BOT_PUBLIC_BASE_URL")
+LAST_WEBHOOK_STATE: dict[str, Any] = {
+    "lastReceivedAt": "",
+    "lastProcessed": None,
+    "lastPlaybackReceivedAt": "",
+    "lastPlaybackProcessed": None,
+}
 RECENT_WEBHOOK_EVENTS: dict[str, float] = {}
 ANNUAL_RANKING_MEMORY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ANNUAL_RANKING_REDIS_URL = str(os.environ.get("REDIS_URL") or "").strip()
@@ -136,6 +182,7 @@ DRIVE115_QRCODE_SESSIONS: dict[str, dict[str, Any]] = {}
 HDHIVE_OAUTH_LOCK = threading.Lock()
 HDHIVE_OAUTH_STATES: dict[str, dict[str, Any]] = {}
 HDHIVE_CHECKIN_STOP = threading.Event()
+_COVER_STUDIO_SERVICE: CoverStudioService | None = None
 
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
@@ -226,6 +273,13 @@ def _write_project_event(
         print(f"[project_log] write failed: {err}")
 
 
+def _cover_studio_service() -> CoverStudioService:
+    global _COVER_STUDIO_SERVICE
+    if _COVER_STUDIO_SERVICE is None:
+        _COVER_STUDIO_SERVICE = CoverStudioService(data_dir=DATA_DIR)
+    return _COVER_STUDIO_SERVICE
+
+
 def _record_service_start(host: str, port: int) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if PROJECT_EVENT_STATE_FILE.exists():
@@ -269,9 +323,11 @@ def _record_service_stop(reason: str = "shutdown") -> None:
         pass
 
 
-def _mark_webhook_received() -> None:
+def _mark_webhook_received(event_type: str = "") -> None:
     with LAST_WEBHOOK_LOCK:
         LAST_WEBHOOK_STATE["lastReceivedAt"] = _now_iso()
+        if str(event_type or "").strip() == "playback":
+            LAST_WEBHOOK_STATE["lastPlaybackReceivedAt"] = LAST_WEBHOOK_STATE["lastReceivedAt"]
 
 
 def _set_last_webhook_processed(*, event_type: str, result: str, detail: str = "") -> dict[str, str]:
@@ -283,6 +339,8 @@ def _set_last_webhook_processed(*, event_type: str, result: str, detail: str = "
     }
     with LAST_WEBHOOK_LOCK:
         LAST_WEBHOOK_STATE["lastProcessed"] = record
+        if record["eventType"] == "playback":
+            LAST_WEBHOOK_STATE["lastPlaybackProcessed"] = dict(record)
     return record
 
 
@@ -291,12 +349,85 @@ def _build_webhook_status_payload() -> dict[str, Any]:
         last_received_at = str(LAST_WEBHOOK_STATE.get("lastReceivedAt") or "").strip()
         last_processed_raw = LAST_WEBHOOK_STATE.get("lastProcessed")
         last_processed = dict(last_processed_raw) if isinstance(last_processed_raw, dict) else None
+        last_playback_received_at = str(LAST_WEBHOOK_STATE.get("lastPlaybackReceivedAt") or "").strip()
+        last_playback_processed_raw = LAST_WEBHOOK_STATE.get("lastPlaybackProcessed")
+        last_playback_processed = (
+            dict(last_playback_processed_raw) if isinstance(last_playback_processed_raw, dict) else None
+        )
+    playback_status = {
+        "received": bool(last_playback_received_at),
+        "lastReceivedAt": last_playback_received_at or None,
+        "lastProcessed": last_playback_processed,
+        "result": "not_received",
+        "detail": "最近未收到 Emby 播放回调，播放通知不会触发。",
+    }
+    if last_playback_received_at:
+        playback_status["detail"] = "最近已收到 Emby 播放回调。"
+        if last_playback_processed:
+            playback_status["result"] = str(last_playback_processed.get("result") or "unknown").strip() or "unknown"
+            playback_status["detail"] = str(last_playback_processed.get("detail") or "已处理最近一次播放回调").strip() or "已处理最近一次播放回调"
     return {
         "lastReceivedAt": last_received_at or None,
         "lastProcessed": last_processed,
+        "lastPlaybackReceivedAt": last_playback_received_at or None,
+        "lastPlaybackProcessed": last_playback_processed,
+        "playbackStatus": playback_status,
         # backward compatibility for current UI logic
         "lastWebhook": last_processed,
     }
+
+
+def _normalize_playback_user_rows(payload: Any) -> list[dict[str, Any]]:
+    source = payload.get("Items") if isinstance(payload, dict) and isinstance(payload.get("Items"), list) else payload
+    rows = source if isinstance(source, list) else []
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        user_id = str(row.get("Id") or row.get("UserId") or "").strip()
+        user_name = str(row.get("Name") or row.get("UserName") or row.get("Username") or "").strip()
+        if not user_name and not user_id:
+            continue
+        dedupe_key = (user_name.casefold(), user_id.casefold())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        policy = row.get("Policy") if isinstance(row.get("Policy"), dict) else {}
+        result.append(
+            {
+                "id": user_id,
+                "name": user_name,
+                "disabled": bool(policy.get("IsDisabled", False)),
+            }
+        )
+    return sorted(result, key=lambda item: (str(item.get("name") or "").casefold(), str(item.get("id") or "").casefold()))
+
+
+def _playback_user_scope_matches(notification_config: Any, *, user_name: str = "", user_id: str = "") -> tuple[bool, str]:
+    normalized = module_normalize_notification_config(notification_config)
+    playback_runtime = normalized.get("runtime", {}).get("playback", {})
+    user_scope = playback_runtime.get("userScope") if isinstance(playback_runtime.get("userScope"), dict) else {}
+    mode = str(user_scope.get("mode") or "all").strip().lower() or "all"
+    if mode != "selected":
+        return True, ""
+
+    selected_names = user_scope.get("selectedUserNames") if isinstance(user_scope.get("selectedUserNames"), list) else []
+    selected_meta = user_scope.get("selectedUsersMeta") if isinstance(user_scope.get("selectedUsersMeta"), list) else []
+    selected_name_keys = {str(name or "").strip().casefold() for name in selected_names if str(name or "").strip()}
+    selected_id_keys = {
+        str(row.get("id") or row.get("userId") or "").strip().casefold()
+        for row in selected_meta
+        if isinstance(row, dict) and str(row.get("id") or row.get("userId") or "").strip()
+    }
+    safe_user_name = str(user_name or "").strip()
+    safe_user_id = str(user_id or "").strip()
+    if safe_user_name and safe_user_name.casefold() in selected_name_keys:
+        return True, ""
+    if safe_user_id and safe_user_id.casefold() in selected_id_keys:
+        return True, ""
+    display_user = safe_user_name or safe_user_id or "未知用户"
+    return False, f"播放用户 {display_user} 不在通知名单中"
 
 
 def _json_clone(payload: dict[str, Any]) -> dict[str, Any]:
@@ -474,6 +605,18 @@ def _default_ai_config() -> dict[str, Any]:
     return module_default_ai_config()
 
 
+def _default_cover_studio_config() -> dict[str, Any]:
+    return module_default_cover_studio_config()
+
+
+def _default_notification_config() -> dict[str, Any]:
+    return deepcopy_default_notification_config()
+
+
+def _default_library_directory_config() -> dict[str, Any]:
+    return {"roots": []}
+
+
 def _normalize_bot_config(raw: Any) -> dict[str, Any]:
     return module_normalize_bot_config(raw)
 
@@ -482,12 +625,84 @@ def _normalize_ai_config(raw: Any) -> dict[str, Any]:
     return module_normalize_ai_config(raw)
 
 
+def _normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
+    return module_normalize_cover_studio_config(raw)
+
+
+def _normalize_notification_config(raw: Any, *, legacy_bot_config: Any = None) -> dict[str, Any]:
+    return module_normalize_notification_config(raw, legacy_bot_config=legacy_bot_config)
+
+
+def _clamp_positive_int(value: Any, *, fallback: int = 0, minimum: int = 0, maximum: int = 0) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = int(fallback or 0)
+    if number < minimum:
+        number = minimum
+    if maximum > 0:
+        number = min(number, maximum)
+    return number
+
+
+def _normalize_library_directory_config(raw: Any) -> dict[str, Any]:
+    source = raw if isinstance(raw, dict) else {}
+    raw_roots = source.get("roots")
+    if not isinstance(raw_roots, list):
+        raw_roots = source.get("directories") if isinstance(source.get("directories"), list) else []
+    roots: list[dict[str, Any]] = []
+    for item in raw_roots:
+        if isinstance(item, str):
+            item = {"path": item, "enabled": True}
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        name = str(item.get("name") or pathlib.Path(path).name or "本地媒体库").strip() or "本地媒体库"
+        enabled = bool(item.get("enabled", True))
+        max_depth = _clamp_positive_int(item.get("maxDepth"), fallback=4, minimum=1, maximum=8)
+        raw_categories = item.get("categories") if isinstance(item.get("categories"), list) else []
+        categories: list[dict[str, Any]] = []
+        for category in raw_categories:
+            if isinstance(category, str):
+                category = {"label": category}
+            if not isinstance(category, dict):
+                continue
+            label = str(category.get("label") or category.get("name") or "").strip()
+            aliases = category.get("aliases") if isinstance(category.get("aliases"), list) else []
+            path_value = str(category.get("path") or category.get("relativePath") or "").strip()
+            if not label and not path_value:
+                continue
+            categories.append(
+                {
+                    "label": label,
+                    "aliases": [str(value).strip() for value in aliases if str(value).strip()],
+                    "path": path_value,
+                }
+            )
+        roots.append(
+            {
+                "name": name,
+                "path": path,
+                "enabled": enabled,
+                "maxDepth": max_depth,
+                "categories": categories,
+            }
+        )
+    return {"roots": roots}
+
+
 def _validate_bot_config(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     return module_validate_bot_config(raw)
 
 
 def _validate_ai_config(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     return module_validate_ai_config(raw)
+
+
+def _validate_notification_config(raw: Any, *, legacy_bot_config: Any = None) -> tuple[dict[str, Any] | None, str | None]:
+    return module_validate_notification_config(raw, legacy_bot_config=legacy_bot_config)
 
 
 def _env_override_value(env_name: str) -> str:
@@ -634,6 +849,58 @@ def _apply_bot_env_overrides(raw: Any) -> dict[str, Any]:
     return _normalize_bot_config(merged)
 
 
+def _notification_env_controlled_fields() -> list[str]:
+    managed: list[str] = []
+    if _env_override_value("APP_BOT_TELEGRAM_TOKEN"):
+        managed.append("channels.telegram.botToken")
+    if _env_override_value("APP_BOT_TELEGRAM_CHAT_ID"):
+        managed.append("channels.telegram.chatId")
+    return managed
+
+
+def _apply_notification_env_overrides(raw: Any, *, legacy_bot_config: Any = None) -> dict[str, Any]:
+    source = _normalize_notification_config(raw, legacy_bot_config=legacy_bot_config)
+    merged = copy.deepcopy(source)
+    channels = merged.get("channels") if isinstance(merged.get("channels"), dict) else {}
+    telegram = channels.get("telegram") if isinstance(channels.get("telegram"), dict) else {}
+    env_token = _env_override_value("APP_BOT_TELEGRAM_TOKEN")
+    env_chat_id = _env_override_value("APP_BOT_TELEGRAM_CHAT_ID")
+    if env_token:
+        telegram["botToken"] = env_token
+    if env_chat_id:
+        telegram["chatId"] = env_chat_id
+    channels["telegram"] = telegram
+    merged["channels"] = channels
+    return _normalize_notification_config(merged, legacy_bot_config=legacy_bot_config)
+
+
+def _sync_bot_config_into_notification(current_notification: Any, bot_config: Any) -> dict[str, Any]:
+    current = _normalize_notification_config(current_notification, legacy_bot_config=bot_config)
+    legacy = migrate_bot_config_to_notification_config(bot_config)
+    current["enabled"] = bool(legacy.get("enabled", current.get("enabled", True)))
+    current["channels"]["telegram"].update(legacy.get("channels", {}).get("telegram", {}))
+    current["channels"]["wecom"].update(legacy.get("channels", {}).get("wecom", {}))
+    current["routes"]["telegram"].update(legacy.get("routes", {}).get("telegram", {}))
+    current["templates"]["telegram"]["library.single"] = legacy.get("templates", {}).get("telegram", {}).get(
+        "library.single",
+        current["templates"]["telegram"].get("library.single", ""),
+    )
+    current["templates"]["telegram"]["library.grouped"] = legacy.get("templates", {}).get("telegram", {}).get(
+        "library.grouped",
+        current["templates"]["telegram"].get("library.grouped", ""),
+    )
+    current["templates"]["wecom"]["library.single"] = legacy.get("templates", {}).get("wecom", {}).get(
+        "library.single",
+        current["templates"]["wecom"].get("library.single", ""),
+    )
+    current["templates"]["wecom"]["library.grouped"] = legacy.get("templates", {}).get("wecom", {}).get(
+        "library.grouped",
+        current["templates"]["wecom"].get("library.grouped", ""),
+    )
+    current["runtime"] = legacy.get("runtime", current.get("runtime", {}))
+    return _normalize_notification_config(current, legacy_bot_config=bot_config)
+
+
 def _apply_ai_env_overrides(raw: Any) -> dict[str, Any]:
     return apply_ai_env_overrides(raw)
 
@@ -654,6 +921,7 @@ def _env_controlled_fields_payload() -> dict[str, list[str]]:
     return {
         "embyConfig": _env_managed_emby_fields(),
         "botConfig": _env_managed_bot_fields(),
+        "notificationConfig": _notification_env_controlled_fields(),
         "aiConfig": _env_managed_ai_fields(),
         "drive115Config": _env_managed_drive115_fields(),
         "hdhiveConfig": _env_managed_hdhive_fields(),
@@ -710,79 +978,76 @@ def _extract_host_from_origin(origin: str) -> str:
     return str(parsed.hostname or "").strip().lower()
 
 
+def _guess_public_origins_from_store() -> list[str]:
+    candidates: list[str] = []
+    try:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+    except Exception:
+        return candidates
+
+    notification = store.get("notificationConfig") if isinstance(store, dict) else {}
+    if isinstance(notification, dict):
+        channels = notification.get("channels") if isinstance(notification.get("channels"), dict) else {}
+        wecom = channels.get("wecom") if isinstance(channels.get("wecom"), dict) else {}
+        callback_origin = _parse_origin_from_url(str(wecom.get("callbackUrl") or "").strip())
+        if callback_origin and not _is_local_or_private_host(_extract_host_from_origin(callback_origin)):
+            candidates.append(callback_origin)
+
+    emby = store.get("embyConfig") if isinstance(store, dict) else {}
+    if isinstance(emby, dict):
+        server_origin = _parse_origin_from_url(str(emby.get("serverUrl") or "").strip())
+        if server_origin and not _is_local_or_private_host(_extract_host_from_origin(server_origin)):
+            candidates.append(server_origin)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        safe = candidate.rstrip("/")
+        if safe and safe not in seen:
+            seen.add(safe)
+            deduped.append(safe)
+    return deduped
+
+
 def _store_path() -> pathlib.Path:
-    current = DATA_DIR / STORE_FILE_NAME
-    legacy_current = BASE_DIR / STORE_FILE_NAME
-    legacy = BASE_DIR / LEGACY_STORE_FILE_NAME
-    if current.exists():
-        return current
-    current.parent.mkdir(parents=True, exist_ok=True)
-    if legacy_current.exists():
-        try:
-            os.replace(legacy_current, current)
-            return current
-        except OSError:
-            return legacy_current
-    if legacy.exists():
-        try:
-            os.replace(legacy, current)
-            return current
-        except OSError:
-            return legacy
-    return current
+    return app_store.store_path(
+        base_dir=BASE_DIR,
+        data_dir=DATA_DIR,
+        store_file_name=STORE_FILE_NAME,
+        legacy_store_file_name=LEGACY_STORE_FILE_NAME,
+    )
 
 
 def _read_store_unlocked() -> dict[str, Any]:
-    path = _store_path()
-    if not path.exists():
-        return {
-            "embyConfig": {},
-            "invites": [],
-            "botConfig": _default_bot_config(),
-            "aiConfig": _default_ai_config(),
-            "drive115Config": _default_drive115_config(),
-            "hdhiveConfig": _default_hdhive_config(),
-        }
+    def _default_store_factory() -> dict[str, Any]:
+        return app_store.default_store_payload(
+            default_notification_config=_default_notification_config,
+            default_bot_config=_default_bot_config,
+            default_ai_config=_default_ai_config,
+            default_cover_studio_config=_default_cover_studio_config,
+            default_drive115_config=_default_drive115_config,
+            default_hdhive_config=_default_hdhive_config,
+            default_library_directory_config=_default_library_directory_config,
+            sync_notification_config_to_bot_config=sync_notification_config_to_bot_config,
+        )
 
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "embyConfig": {},
-            "invites": [],
-            "botConfig": _default_bot_config(),
-            "aiConfig": _default_ai_config(),
-            "drive115Config": _default_drive115_config(),
-            "hdhiveConfig": _default_hdhive_config(),
-        }
-
-    emby_config = data.get("embyConfig") if isinstance(data, dict) else {}
-    invites = data.get("invites") if isinstance(data, dict) else []
-    bot_config = data.get("botConfig") if isinstance(data, dict) else {}
-    ai_config = data.get("aiConfig") if isinstance(data, dict) else {}
-    drive115_config = data.get("drive115Config") if isinstance(data, dict) else {}
-    hdhive_config = data.get("hdhiveConfig") if isinstance(data, dict) else {}
-    if not isinstance(emby_config, dict):
-        emby_config = {}
-    if not isinstance(invites, list):
-        invites = []
-    return {
-        "embyConfig": emby_config,
-        "invites": invites,
-        "botConfig": _normalize_bot_config(bot_config),
-        "aiConfig": _normalize_ai_config(ai_config),
-        "drive115Config": _normalize_drive115_config(drive115_config),
-        "hdhiveConfig": _normalize_hdhive_config(hdhive_config),
-    }
+    return app_store.read_store_unlocked(
+        path=_store_path(),
+        default_store_factory=_default_store_factory,
+        normalize_bot_config=_normalize_bot_config,
+        normalize_notification_config=_normalize_notification_config,
+        sync_notification_config_to_bot_config=sync_notification_config_to_bot_config,
+        normalize_ai_config=_normalize_ai_config,
+        normalize_cover_studio_config=_normalize_cover_studio_config,
+        normalize_drive115_config=_normalize_drive115_config,
+        normalize_hdhive_config=_normalize_hdhive_config,
+        normalize_library_directory_config=_normalize_library_directory_config,
+    )
 
 
 def _write_store_unlocked(store: dict[str, Any]) -> None:
-    path = _store_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    payload = json.dumps(store, ensure_ascii=False, indent=2)
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, path)
+    app_store.write_store_unlocked(path=_store_path(), store=store)
 
 
 def _sanitize_invite_record(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -954,8 +1219,26 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/bot/config":
             self._handle_bot_config_get()
             return
+        if path == "/api/notifications/config":
+            self._handle_notifications_config_get()
+            return
+        if path == "/api/notifications/capabilities":
+            self._handle_notifications_capabilities_get()
+            return
+        if path == "/api/notifications/playback-users":
+            self._handle_notifications_playback_users_get()
+            return
         if path == "/api/ai/config":
             self._handle_ai_config_get()
+            return
+        if path == "/api/cover-studio/config":
+            self._handle_cover_studio_config_get()
+            return
+        if path == "/api/cover-studio/views":
+            self._handle_cover_studio_views_get()
+            return
+        if path == "/api/cover-studio/status":
+            self._handle_cover_studio_status_get(parsed.query)
             return
         if path == "/api/drive115/config":
             self._handle_drive115_config_get()
@@ -980,6 +1263,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/bot/webhook-status":
             self._handle_bot_webhook_status_get()
+            return
+        if path == "/api/v1/webhook":
+            self._handle_emby_webhook_probe_get(parsed.query)
             return
         if path == "/api/logs":
             self._handle_project_logs_query(parsed.query)
@@ -1035,8 +1321,29 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/bot/config":
             self._handle_bot_config_save()
             return
+        if path == "/api/notifications/config":
+            self._handle_notifications_config_save()
+            return
+        if path == "/api/notifications/test":
+            self._handle_notifications_test()
+            return
+        if path == "/api/notifications/preview":
+            self._handle_notifications_preview()
+            return
         if path == "/api/ai/config":
             self._handle_ai_config_save()
+            return
+        if path == "/api/cover-studio/config":
+            self._handle_cover_studio_config_save()
+            return
+        if path == "/api/cover-studio/preview":
+            self._handle_cover_studio_preview()
+            return
+        if path == "/api/cover-studio/apply":
+            self._handle_cover_studio_apply()
+            return
+        if path == "/api/cover-studio/restore":
+            self._handle_cover_studio_restore()
             return
         if path == "/api/ai/test":
             self._handle_ai_config_test()
@@ -2004,82 +2311,35 @@ class AppHandler(SimpleHTTPRequestHandler):
         print(f"[wecom_webhook] {code}: {message}; config={safe}")
 
     def _handle_bot_config_get(self) -> None:
-        with STORE_LOCK:
-            store = _read_store_unlocked()
-            path = _store_path()
-            needs_persist = True
-            if path.exists():
-                try:
-                    raw = json.loads(path.read_text(encoding="utf-8"))
-                    needs_persist = not isinstance(raw, dict) or not isinstance(raw.get("botConfig"), dict)
-                except Exception:
-                    needs_persist = True
-            if needs_persist:
-                _write_store_unlocked(store)
-
-            bot_config = _apply_bot_env_overrides(store.get("botConfig"))
-
-        self._send_json(
-            200,
-            {
-                "ok": True,
-                "botConfig": bot_config,
-                "envControlledFields": _env_controlled_fields_payload(),
-                "managedByEnv": _env_controlled_fields_payload(),
-            },
+        handle_bot_config_get(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            store_path=_store_path,
+            apply_bot_env_overrides=_apply_bot_env_overrides,
+            apply_notification_env_overrides=_apply_notification_env_overrides,
+            env_controlled_fields_payload=_env_controlled_fields_payload,
         )
 
     def _handle_bot_config_save(self) -> None:
-        payload = self._read_json_body()
-        if payload is None:
-            return
-
-        raw_bot_config = payload.get("botConfig")
-        if raw_bot_config is None:
-            raw_bot_config = payload
-
-        bot_config, error = _validate_bot_config(raw_bot_config)
-        if error:
-            self._send_json(400, {"error": error})
-            return
-        if bot_config is None:
-            self._send_json(400, {"error": "机器人配置无效"})
-            return
-
-        with STORE_LOCK:
-            store = _read_store_unlocked()
-            current = _normalize_bot_config(store.get("botConfig"))
-            locked = _env_managed_bot_fields()
-            if locked:
-                for field in locked:
-                    bot_config[field] = current.get(field)
-            store["botConfig"] = _normalize_bot_config(bot_config)
-            _write_store_unlocked(store)
-            saved_config = _apply_bot_env_overrides(store.get("botConfig"))
-
-        if TELEGRAM_COMMAND_SERVICE is not None:
-            TELEGRAM_COMMAND_SERVICE.wakeup()
-
-        self._log_event(
-            level="info",
-            module="system",
-            action="bot_config_saved",
-            message="机器人配置已保存。",
-            status=200,
-            detail={"changedFields": sorted(redact_sensitive(raw_bot_config).keys()) if isinstance(raw_bot_config, dict) else []},
+        handle_bot_config_save(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            validate_bot_config=_validate_bot_config,
+            normalize_bot_config=_normalize_bot_config,
+            env_managed_bot_fields=_env_managed_bot_fields,
+            sync_bot_config_into_notification=_sync_bot_config_into_notification,
+            apply_bot_env_overrides=_apply_bot_env_overrides,
+            apply_notification_env_overrides=_apply_notification_env_overrides,
+            env_controlled_fields_payload=_env_controlled_fields_payload,
+            redact_sensitive=redact_sensitive,
+            telegram_wakeup=TELEGRAM_COMMAND_SERVICE.wakeup if TELEGRAM_COMMAND_SERVICE is not None else None,
         )
 
-        self._send_json(
-            200,
-            {
-                "ok": True,
-                "botConfig": saved_config,
-                "envControlledFields": _env_controlled_fields_payload(),
-                "managedByEnv": _env_controlled_fields_payload(),
-            },
-        )
-
-    def _handle_ai_config_get(self) -> None:
+    def _handle_notifications_config_get(self) -> None:
         with STORE_LOCK:
             store = _read_store_unlocked()
             path = _store_path()
@@ -2087,84 +2347,199 @@ class AppHandler(SimpleHTTPRequestHandler):
             if path.exists():
                 try:
                     raw = json.loads(path.read_text(encoding="utf-8"))
-                    needs_persist = not isinstance(raw, dict) or not isinstance(raw.get("aiConfig"), dict)
+                    needs_persist = not isinstance(raw, dict) or not isinstance(raw.get("notificationConfig"), dict)
                 except Exception:
                     needs_persist = True
             if needs_persist:
                 _write_store_unlocked(store)
-            ai_config = _apply_ai_env_overrides(store.get("aiConfig"))
-
+            notification_config = _apply_notification_env_overrides(
+                store.get("notificationConfig"),
+                legacy_bot_config=store.get("botConfig"),
+            )
         self._send_json(
             200,
             {
                 "ok": True,
-                "aiConfig": ai_config,
+                "notificationConfig": notification_config,
+                "botConfig": sync_notification_config_to_bot_config(notification_config, store.get("botConfig")),
                 "envControlledFields": _env_controlled_fields_payload(),
                 "managedByEnv": _env_controlled_fields_payload(),
             },
         )
 
-    def _handle_ai_config_save(self) -> None:
+    def _handle_notifications_capabilities_get(self) -> None:
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "capabilities": notification_capabilities(),
+                "defaults": _default_notification_config(),
+            },
+        )
+
+    def _handle_notifications_playback_users_get(self) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
+        server_url = str(emby_config.get("serverUrl") or "").strip()
+        api_key = str(emby_config.get("apiKey") or "").strip()
+        if not server_url or not api_key:
+            self._send_json(200, {"ok": True, "users": [], "detail": "尚未配置 Emby，暂时无法读取播放用户列表。"})
+            return
+        try:
+            payload = self._emby_request(base_url=server_url, api_key=api_key, path="/Users/Query?Limit=200", method="GET")
+            users = _normalize_playback_user_rows(payload)
+            if not users:
+                payload = self._emby_request(base_url=server_url, api_key=api_key, path="/Users", method="GET")
+                users = _normalize_playback_user_rows(payload)
+        except urllib.error.HTTPError as err:
+            message = f"读取 Emby 用户列表失败（HTTP {err.code}）"
+            self._send_json(502, {"error": message})
+            return
+        except Exception as err:
+            self._send_json(502, {"error": f"读取 Emby 用户列表失败：{err}"})
+            return
+        self._send_json(200, {"ok": True, "users": users, "detail": f"已读取 {len(users)} 个 Emby 用户。"})
+
+    def _handle_notifications_config_save(self) -> None:
         payload = self._read_json_body()
         if payload is None:
             return
-
-        raw_ai_config = payload.get("aiConfig")
-        if raw_ai_config is None:
-            raw_ai_config = payload
-
-        if not isinstance(raw_ai_config, dict):
-            self._send_json(400, {"error": "AI 配置必须是对象"})
-            return
-
+        raw_notification_config = payload.get("notificationConfig")
+        if raw_notification_config is None:
+            raw_notification_config = payload
         with STORE_LOCK:
-            current_store = _read_store_unlocked()
-            current_config = _apply_ai_env_overrides(current_store.get("aiConfig"))
-            locked = _env_managed_ai_fields()
-        if locked:
-            raw_ai_config = dict(raw_ai_config)
-            for field in locked:
-                raw_ai_config[field] = current_config.get(field)
-
-        ai_config, error = _validate_ai_config(raw_ai_config)
+            store = _read_store_unlocked()
+            current_bot = _normalize_bot_config(store.get("botConfig"))
+        notification_config, error = _validate_notification_config(
+            raw_notification_config,
+            legacy_bot_config=current_bot,
+        )
         if error:
             self._send_json(400, {"error": error})
             return
-        if ai_config is None:
-            self._send_json(400, {"error": "AI 配置无效"})
+        if notification_config is None:
+            self._send_json(400, {"error": "通知配置无效"})
             return
-
         with STORE_LOCK:
             store = _read_store_unlocked()
-            current = _normalize_ai_config(store.get("aiConfig"))
-            locked = _env_managed_ai_fields()
-            if locked:
-                for field in locked:
-                    ai_config[field] = current.get(field)
-            store["aiConfig"] = _normalize_ai_config(ai_config)
+            current_notification = _normalize_notification_config(
+                store.get("notificationConfig"),
+                legacy_bot_config=store.get("botConfig"),
+            )
+            for field in _notification_env_controlled_fields():
+                if field == "channels.telegram.botToken":
+                    notification_config["channels"]["telegram"]["botToken"] = current_notification["channels"]["telegram"].get("botToken", "")
+                if field == "channels.telegram.chatId":
+                    notification_config["channels"]["telegram"]["chatId"] = current_notification["channels"]["telegram"].get("chatId", "")
+            store["notificationConfig"] = _normalize_notification_config(
+                notification_config,
+                legacy_bot_config=store.get("botConfig"),
+            )
+            store["botConfig"] = sync_notification_config_to_bot_config(
+                store["notificationConfig"],
+                store.get("botConfig"),
+            )
             _write_store_unlocked(store)
-            saved_config = _apply_ai_env_overrides(store.get("aiConfig"))
-
+            saved_notification_config = _apply_notification_env_overrides(
+                store.get("notificationConfig"),
+                legacy_bot_config=store.get("botConfig"),
+            )
+            saved_bot_config = _apply_bot_env_overrides(store.get("botConfig"))
         if TELEGRAM_COMMAND_SERVICE is not None:
             TELEGRAM_COMMAND_SERVICE.wakeup()
-
         self._log_event(
             level="info",
             module="system",
-            action="ai_config_saved",
-            message="AI 助手配置已保存。",
+            action="notification_config_saved",
+            message="通知配置已保存。",
             status=200,
-            detail={"changedFields": sorted(redact_sensitive(raw_ai_config).keys()) if isinstance(raw_ai_config, dict) else []},
+            detail={"changedFields": sorted(redact_sensitive(raw_notification_config).keys()) if isinstance(raw_notification_config, dict) else []},
         )
-
         self._send_json(
             200,
             {
                 "ok": True,
-                "aiConfig": saved_config,
+                "notificationConfig": saved_notification_config,
+                "botConfig": saved_bot_config,
                 "envControlledFields": _env_controlled_fields_payload(),
                 "managedByEnv": _env_controlled_fields_payload(),
             },
+        )
+
+    def _handle_notifications_preview(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        channel = str(payload.get("channel") or "").strip().lower()
+        event_key = str(payload.get("eventKey") or "").strip()
+        template = str(payload.get("template") or "")
+        sample_key = str(payload.get("sampleKey") or "default").strip() or "default"
+        payload_overrides = payload.get("payloadOverrides")
+        if not isinstance(payload_overrides, dict):
+            payload_overrides = None
+        try:
+            result = build_notification_preview(
+                channel=channel,
+                event_key=event_key,
+                template=template,
+                sample_key=sample_key,
+                payload_overrides=payload_overrides,
+            )
+        except ValueError as err:
+            self._send_json(400, {"error": str(err)})
+            return
+        self._send_json(200, {"ok": True, **result})
+
+    def _handle_notifications_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        channel = str(payload.get("channel") or "").strip().lower()
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            notification_config = _apply_notification_env_overrides(
+                store.get("notificationConfig"),
+                legacy_bot_config=store.get("botConfig"),
+            )
+        dispatcher = NotificationDispatchService(telegram_sender=TELEGRAM_SENDER)
+        try:
+            result = dispatcher.send_test(config=notification_config, channel=channel)
+        except ValueError as err:
+            self._send_json(400, {"error": str(err)})
+            return
+        except RuntimeError as err:
+            self._send_json(502, {"error": str(err)})
+            return
+        except Exception as err:
+            self._send_json(502, {"error": f"通知测试发送失败：{err}"})
+            return
+        self._send_json(200, {"ok": True, **result})
+
+    def _handle_ai_config_get(self) -> None:
+        handle_ai_config_get(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            store_path=_store_path,
+            apply_ai_env_overrides=_apply_ai_env_overrides,
+            env_controlled_fields_payload=_env_controlled_fields_payload,
+        )
+
+    def _handle_ai_config_save(self) -> None:
+        handle_ai_config_save(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            apply_ai_env_overrides=_apply_ai_env_overrides,
+            env_managed_ai_fields=_env_managed_ai_fields,
+            validate_ai_config=_validate_ai_config,
+            normalize_ai_config=_normalize_ai_config,
+            env_controlled_fields_payload=_env_controlled_fields_payload,
+            redact_sensitive=redact_sensitive,
+            telegram_wakeup=TELEGRAM_COMMAND_SERVICE.wakeup if TELEGRAM_COMMAND_SERVICE is not None else None,
         )
 
     def _handle_ai_config_test(self) -> None:
@@ -2212,6 +2587,89 @@ class AppHandler(SimpleHTTPRequestHandler):
         self._send_json(
             200,
             {"ok": True, "message": "AI 连接测试成功", "sample": self._shorten(answer, limit=80), "elapsedMs": elapsed_ms},
+        )
+
+    def _build_emby_cover_service(self, config: dict[str, Any]) -> EmbyCoverService:
+        return EmbyCoverService(
+            base_url=str(config.get("serverUrl") or "").strip(),
+            api_key=str(config.get("apiKey") or "").strip(),
+            client_name=str(config.get("clientName") or DEFAULT_EMBY_CLIENT_NAME).strip() or DEFAULT_EMBY_CLIENT_NAME,
+        )
+
+    def _handle_cover_studio_config_get(self) -> None:
+        handle_cover_studio_config_get(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+            cover_studio_service=_cover_studio_service(),
+        )
+
+    def _handle_cover_studio_config_save(self) -> None:
+        handle_cover_studio_config_save(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+        )
+
+    def _handle_cover_studio_views_get(self) -> None:
+        handle_cover_studio_views_get(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            apply_emby_env_overrides=_apply_emby_env_overrides,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+            build_emby_service=self._build_emby_cover_service,
+            cover_studio_service=_cover_studio_service(),
+        )
+
+    def _handle_cover_studio_status_get(self, raw_query: str) -> None:
+        handle_cover_studio_status_get(
+            self,
+            query_params=urllib.parse.parse_qs(raw_query or ""),
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+            cover_studio_service=_cover_studio_service(),
+        )
+
+    def _handle_cover_studio_preview(self) -> None:
+        handle_cover_studio_preview(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            apply_emby_env_overrides=_apply_emby_env_overrides,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+            build_emby_service=self._build_emby_cover_service,
+            cover_studio_service=_cover_studio_service(),
+        )
+
+    def _handle_cover_studio_apply(self) -> None:
+        handle_cover_studio_apply(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            apply_emby_env_overrides=_apply_emby_env_overrides,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+            build_emby_service=self._build_emby_cover_service,
+            cover_studio_service=_cover_studio_service(),
+        )
+
+    def _handle_cover_studio_restore(self) -> None:
+        handle_cover_studio_restore(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            apply_emby_env_overrides=_apply_emby_env_overrides,
+            normalize_cover_studio_config=_normalize_cover_studio_config,
+            build_emby_service=self._build_emby_cover_service,
+            cover_studio_service=_cover_studio_service(),
         )
 
     def _handle_tmdb_test(self) -> None:
@@ -2888,9 +3346,16 @@ class AppHandler(SimpleHTTPRequestHandler):
             return ""
         return raw.split(",")[0].strip()
 
+    def _resolve_manual_public_origin(self) -> tuple[str, str]:
+        for env_name in PUBLIC_BASE_ENV_NAMES:
+            raw = str(os.environ.get(env_name) or "").strip()
+            origin = _parse_origin_from_url(raw)
+            if origin:
+                return origin, env_name
+        return "", ""
+
     def _resolve_public_origin(self) -> str:
-        manual_base = str(os.environ.get("BOT_PUBLIC_BASE_URL") or "").strip()
-        manual_origin = _parse_origin_from_url(manual_base)
+        manual_origin, _ = self._resolve_manual_public_origin()
         if manual_origin:
             return manual_origin
 
@@ -2919,6 +3384,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         if referer_origin:
             candidates.append(referer_origin)
 
+        candidates.extend(_guess_public_origins_from_store())
+
         server_host = str(getattr(self.server, "server_name", "") or "").strip() or "127.0.0.1"
         server_port = int(getattr(self.server, "server_port", 8080) or 8080)
         if server_host in {"0.0.0.0", "::"}:
@@ -2934,14 +3401,50 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _handle_bot_webhook_url_get(self) -> None:
         token = str(os.environ.get("BOT_WEBHOOK_TOKEN") or DEFAULT_WEBHOOK_TOKEN).strip() or DEFAULT_WEBHOOK_TOKEN
         base_url = self._resolve_public_origin()
+        _, env_name = self._resolve_manual_public_origin()
         encoded_token = urllib.parse.quote(token, safe="")
         webhook_url = f"{base_url}/api/v1/webhook?token={encoded_token}"
-        self._send_json(200, {"ok": True, "webhookUrl": webhook_url})
+        source = f"env:{env_name}" if env_name else "auto-detected"
+        self._send_json(200, {"ok": True, "webhookUrl": webhook_url, "source": source, "preferredEnv": PUBLIC_BASE_ENV_NAMES[0]})
 
     def _handle_bot_webhook_status_get(self) -> None:
         payload = {"ok": True}
         payload.update(_build_webhook_status_payload())
         self._send_json(200, payload)
+
+    def _handle_emby_webhook_probe_get(self, raw_query: str) -> None:
+        params = urllib.parse.parse_qs(raw_query or "")
+        token = str((params.get("token") or [""])[0]).strip()
+        expected = str(os.environ.get("BOT_WEBHOOK_TOKEN") or DEFAULT_WEBHOOK_TOKEN).strip() or DEFAULT_WEBHOOK_TOKEN
+        if token != expected:
+            self._send_json(
+                403,
+                {
+                    "ok": False,
+                    "error": "Webhook token 无效",
+                    "expectedPath": "/api/v1/webhook?token=***",
+                },
+            )
+            return
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "message": "VistaMirror Emby webhook endpoint is ready.",
+                "acceptedMethods": ["GET", "POST"],
+                "acceptedContentTypes": [
+                    "application/json",
+                    "application/x-www-form-urlencoded",
+                    "multipart/form-data",
+                ],
+                "samplePayload": {
+                    "Event": "PlaybackStart",
+                    "ItemId": "123456",
+                    "UserName": "demo",
+                    "NotificationType": "PlaybackStart",
+                },
+            },
+        )
 
     def _record_webhook_status(self, *, event_type: str, result: str, detail: str = "") -> None:
         _set_last_webhook_processed(event_type=event_type, result=result, detail=detail)
@@ -2957,8 +3460,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             detail={"eventType": event_type, "result": result, "detail": detail},
         )
 
-    def _mark_webhook_received(self) -> None:
-        _mark_webhook_received()
+    def _mark_webhook_received(self, event_type: str = "") -> None:
+        _mark_webhook_received(event_type)
 
     def _build_telegram_opener(self) -> urllib.request.OpenerDirector:
         # deprecated: keep for compatibility
@@ -3005,6 +3508,22 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _classify_webhook_type(self, payload: dict[str, Any]) -> tuple[str, str]:
         event_name = ""
         event_sources: list[str] = []
+        event_marker_keys = (
+            ("Event",),
+            ("event",),
+            ("NotificationType",),
+            ("notificationType",),
+            ("MessageType",),
+            ("messageType",),
+            ("EventId",),
+            ("eventId",),
+            ("Action",),
+            ("action",),
+            ("PlaybackState",),
+            ("playbackState",),
+            ("Message",),
+            ("message",),
+        )
         for keys in (
             ("Event",),
             ("event",),
@@ -3018,12 +3537,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             value = self._get_payload_str(payload, *keys)
             if value:
                 event_sources.append(value.lower())
-                event_name = value
+                if not event_name and keys in event_marker_keys:
+                    event_name = value
         if not event_sources:
-            for keys in (("MessageType",), ("messageType",), ("EventId",), ("eventId",), ("Action",), ("action",)):
+            for keys in event_marker_keys:
                 value = self._get_payload_str(payload, *keys)
                 if value:
                     event_sources.append(value.lower())
+                    if not event_name:
+                        event_name = value
 
         combined = " ".join(event_sources)
         if any(keyword in combined for keyword in PLAYBACK_EVENT_KEYWORDS):
@@ -3273,6 +3795,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "RecursiveItemCount",
                 "PrimaryImageItemId",
                 "ImageTags",
+                "SeriesPrimaryImageTag",
+                "ParentPrimaryImageTag",
                 "Container",
                 "Path",
             ]
@@ -3328,6 +3852,22 @@ class AppHandler(SimpleHTTPRequestHandler):
             detail_url = f"{web_base}/web/index.html#!/item?id={encoded_item_id}"
 
         return poster_url, detail_url
+
+    def _build_emby_primary_image_url_for_config(self, *, emby_config: dict[str, Any], item_id: str, image_tag: str = "") -> str:
+        safe_item_id = str(item_id or "").strip()
+        if not safe_item_id:
+            return ""
+        api_base = self._resolve_emby_api_base(emby_config)
+        api_key = str(emby_config.get("apiKey") or "").strip()
+        if not api_base:
+            return ""
+        params = {"maxWidth": "1100", "quality": "90"}
+        if api_key:
+            params["api_key"] = api_key
+        safe_tag = str(image_tag or "").strip()
+        if safe_tag:
+            params["tag"] = safe_tag
+        return f"{api_base.rstrip('/')}/Items/{urllib.parse.quote(safe_item_id, safe='')}/Images/Primary?{urllib.parse.urlencode(params)}"
 
     def _handle_annual_ranking(self, query: str) -> None:
         with STORE_LOCK:
@@ -4283,110 +4823,136 @@ class AppHandler(SimpleHTTPRequestHandler):
         emby_config: dict[str, Any],
         bot_config: dict[str, Any],
     ) -> dict[str, str]:
-        session_id = self._extract_session_id(payload)
-        session_detail = self._fetch_emby_session_detail(emby_config=emby_config, session_id=session_id)
-        if session_detail:
-            merged_payload = dict(payload)
-            for key in ("UserName", "DeviceName", "Client", "RemoteEndPoint"):
-                if not str(merged_payload.get(key) or "").strip() and str(session_detail.get(key) or "").strip():
-                    merged_payload[key] = session_detail.get(key)
-            if not isinstance(merged_payload.get("Session"), dict):
-                merged_payload["Session"] = {}
-            if isinstance(merged_payload.get("Session"), dict):
-                session_map = dict(merged_payload["Session"])
-                for key in ("UserName", "DeviceName", "Client", "RemoteEndPoint"):
-                    if not str(session_map.get(key) or "").strip() and str(session_detail.get(key) or "").strip():
-                        session_map[key] = session_detail.get(key)
-                merged_payload["Session"] = session_map
-            payload = merged_payload
-
-        item_id = self._extract_item_id(payload)
-        item_detail = self._fetch_emby_item_detail(emby_config=emby_config, item_id=item_id)
-
-        user_name = self._pick_first_value(
+        return PlaybackNotificationEventFactory(
+            fetch_session_detail=self._fetch_emby_session_detail,
+            extract_item_id=self._extract_item_id,
+            fetch_item_detail=self._fetch_emby_item_detail,
+            pick_first_value=self._pick_first_value,
+            safe_float=self._safe_float,
+            build_item_urls=self._build_emby_item_urls,
+            format_hms=self._format_hms,
+            shorten_caption=lambda text: self._shorten(text, limit=1000),
+            shorten_overview=lambda text: self._shorten(text, limit=220),
+        ).build(
             payload,
-            [("UserName",), ("userName",), ("User", "Name"), ("user", "name"), ("Session", "UserName"), ("session", "userName")],
-        ) or "未知用户"
-        item_name = self._pick_first_value(
-            payload,
-            [
-                ("ItemName",),
-                ("itemName",),
-                ("NowPlayingItem", "Name"),
-                ("nowPlayingItem", "name"),
-                ("Item", "Name"),
-                ("item", "name"),
-                ("Name",),
-            ],
-        )
-        series_name = self._pick_first_value(
-            payload,
-            [("SeriesName",), ("seriesName",), ("NowPlayingItem", "SeriesName"), ("nowPlayingItem", "seriesName"), ("Item", "SeriesName")],
-        ) or str(item_detail.get("SeriesName") or "").strip()
-        if not item_name:
-            item_name = str(item_detail.get("Name") or "").strip() or "未知内容"
-
-        content_type = self._pick_first_value(payload, [("ItemType",), ("itemType",), ("Type",), ("type",)])
-        if not content_type:
-            content_type = str(item_detail.get("Type") or "").strip()
-        content_type = normalize_content_type(content_type)
-
-        rating = self._safe_float(
-            self._pick_first_value(payload, [("CommunityRating",), ("communityRating",), ("Item", "CommunityRating"), ("item", "communityRating")])
-            or item_detail.get("CommunityRating")
-        )
-        rating_text = f"{rating:.1f}/10" if rating is not None and rating > 0 else ""
-
-        position_ticks = self._pick_first_value(
-            payload,
-            [("PositionTicks",), ("positionTicks",), ("PlaybackPositionTicks",), ("Session", "PlayState", "PositionTicks"), ("session", "playState", "positionTicks")],
-        )
-        runtime_ticks = self._pick_first_value(
-            payload,
-            [("RunTimeTicks",), ("runTimeTicks",), ("Item", "RunTimeTicks"), ("item", "runTimeTicks"), ("Session", "NowPlayingItem", "RunTimeTicks")],
-        )
-        position_sec = ticks_to_seconds(position_ticks)
-        runtime_sec = ticks_to_seconds(runtime_ticks or item_detail.get("RunTimeTicks"))
-        percent = ""
-        if runtime_sec > 0:
-            ratio = max(0.0, min(1.0, float(position_sec) / float(runtime_sec)))
-            percent = f"{int(round(ratio * 100))}%"
-
-        device_name = self._pick_first_value(
-            payload,
-            [("DeviceName",), ("deviceName",), ("Session", "DeviceName"), ("session", "deviceName"), ("Client",), ("client")],
-        )
-        overview = self._pick_first_value(payload, [("Overview",), ("overview",), ("Item", "Overview"), ("item", "overview")]) or str(item_detail.get("Overview") or "").strip()
-
-        poster_url, detail_url = self._build_emby_item_urls(emby_config=emby_config, item_id=item_id)
-
-        caption = compose_playback_message(
-            payload=payload,
-            item_detail=item_detail,
             action=action,
-            username=user_name,
-            series_name=series_name,
-            item_name=item_name,
-            content_type=content_type,
-            rating_text=rating_text,
-            position_sec=position_sec,
-            runtime_sec=runtime_sec,
-            percent_text=percent,
-            device_name=device_name,
-            overview=overview,
-            show_ip=bool(bot_config.get("showIp", True)),
-            show_ip_geo=bool(bot_config.get("showIpGeo", True)),
-            show_overview=bool(bot_config.get("showOverview", True)),
+            event_name=event_name,
+            emby_config=emby_config,
+            bot_config=bot_config,
+            session_id=self._extract_session_id(payload),
         )
-        if len(caption) > 1000:
-            caption = self._shorten(caption, limit=1000)
+
+    def _resolve_playback_notification_image_assets(
+        self,
+        *,
+        emby_config: dict[str, Any],
+        item_id: str,
+        event_key: str,
+        image_candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        safe_item_id = str(item_id or "").strip()
+        safe_event_key = str(event_key or "").strip()
+        normalized_candidates = [row for row in image_candidates if isinstance(row, dict) and str(row.get("itemId") or "").strip()]
+        preferred_sources = {"series_primary", "parent_primary"}
+        preferred_candidates = [row for row in normalized_candidates if str(row.get("source") or "").strip() in preferred_sources]
+        fallback_candidates = [
+            row
+            for row in normalized_candidates
+            if str(row.get("source") or "").strip() not in preferred_sources and str(row.get("source") or "").strip() != "item_primary"
+        ]
+        if preferred_candidates:
+            candidate_queue = preferred_candidates + fallback_candidates
+        else:
+            candidate_queue = normalized_candidates
+        selected_candidate: dict[str, str] = {}
+        poster_url = ""
+        photo_payload: dict[str, Any] = {}
+        mode = "text_only"
+
+        for raw_candidate in candidate_queue:
+            candidate = raw_candidate if isinstance(raw_candidate, dict) else {}
+            candidate_item_id = str(candidate.get("itemId") or "").strip()
+            candidate_tag = str(candidate.get("tag") or "").strip()
+            candidate_source = str(candidate.get("source") or "").strip()
+            if not candidate_item_id:
+                continue
+            candidate_url = self._build_emby_primary_image_url_for_config(
+                emby_config=emby_config,
+                item_id=candidate_item_id,
+                image_tag="",
+            )
+            if candidate_url and not poster_url:
+                poster_url = candidate_url
+                selected_candidate = {
+                    "itemId": candidate_item_id,
+                    "tag": candidate_tag,
+                    "source": candidate_source,
+                }
+                mode = "photo_url"
+            try:
+                photo_bytes = self._fetch_emby_primary_image_for_config(
+                    emby_config=emby_config,
+                    item_id=candidate_item_id,
+                    image_tag="",
+                )
+                if not photo_bytes:
+                    continue
+                photo_payload = {
+                    "photoBytes": photo_bytes,
+                    "filename": f"{candidate_item_id}.jpg",
+                    "contentType": "image/jpeg",
+                }
+                poster_url = candidate_url or poster_url
+                selected_candidate = {
+                    "itemId": candidate_item_id,
+                    "tag": candidate_tag,
+                    "source": candidate_source,
+                }
+                mode = "photo_bytes"
+                break
+            except Exception as err:
+                self._log_event(
+                    level="warning",
+                    module="webhook",
+                    action="playback_notification_photo_fallback",
+                    message="播放通知海报读取失败，将继续尝试其他图片或回退为 URL/文本。",
+                    detail={
+                        "eventKey": safe_event_key,
+                        "itemId": safe_item_id,
+                        "imageItemId": candidate_item_id,
+                        "imageTag": candidate_tag,
+                        "imageSource": candidate_source,
+                        "error": str(err),
+                    },
+                )
+
         return {
-            "caption": caption,
             "posterUrl": poster_url,
-            "detailUrl": detail_url,
-            "itemId": item_id,
-            "eventName": str(event_name or "").strip(),
+            "photoPayload": photo_payload,
+            "selectedCandidate": selected_candidate,
+            "mode": mode,
+            "candidateCount": len(normalized_candidates),
         }
+
+    def _fetch_emby_primary_image_for_config(self, *, emby_config: dict[str, Any], item_id: str, image_tag: str = "") -> bytes:
+        api_base = self._resolve_emby_api_base(emby_config)
+        api_key = str(emby_config.get("apiKey") or "").strip()
+        safe_item_id = str(item_id or "").strip()
+        if not api_base or not api_key or not safe_item_id:
+            return b""
+        query = urllib.parse.urlencode({"maxWidth": "1000", "quality": "90"})
+        safe_tag = str(image_tag or "").strip()
+        if safe_tag:
+            query = urllib.parse.urlencode({"maxWidth": "1000", "quality": "90", "tag": safe_tag})
+        path = f"/Items/{urllib.parse.quote(safe_item_id, safe='')}/Images/Primary?{query}"
+        request = urllib.request.Request(
+            f"{api_base.rstrip('/')}{path}",
+            method="GET",
+            headers={"X-Emby-Token": api_key},
+        )
+        ssl_ctx = ssl._create_unverified_context()
+        with urllib.request.urlopen(request, context=ssl_ctx, timeout=20) as response:
+            return response.read()
 
     def _library_event_source_text(self, payload: dict[str, Any], event_name: str) -> str:
         values = [str(event_name or "").strip()]
@@ -4684,7 +5250,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 break
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        lines = ["镜界Vistamirror 通知", f"类型：{title}"]
+        lines = ["VistaMirror 通知", f"类型：{title}"]
         if event_name:
             lines.append(f"事件：{event_name}")
         if item_name:
@@ -4702,31 +5268,18 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         channel = str(payload.get("channel") or "").strip().lower() or "telegram"
-        if channel != "telegram":
-            self._send_json(400, {"error": "目前仅支持 Telegram 测试"})
-            return
-
         with STORE_LOCK:
             store = _read_store_unlocked()
-            bot_config = _apply_bot_env_overrides(store.get("botConfig"))
-
-        token = str(bot_config.get("telegramToken") or "").strip()
-        chat_id = str(bot_config.get("telegramChatId") or "").strip()
-        if not token or not chat_id:
-            self._send_json(400, {"error": "请先保存 Telegram Token 和 Chat ID"})
-            return
-
-        message = "\n".join(
-            [
-                "【镜界 VistaMirror】测试通知",
-                "",
-                "▸ 状态  ✅ 通道可用",
-                f"▸ 时间  🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            ]
-        )
+            notification_config = _apply_notification_env_overrides(
+                store.get("notificationConfig"),
+                legacy_bot_config=store.get("botConfig"),
+            )
 
         try:
-            self._send_telegram_text(token=token, chat_id=chat_id, text=message)
+            result = NotificationDispatchService(telegram_sender=TELEGRAM_SENDER).send_test(
+                config=notification_config,
+                channel=channel,
+            )
         except ValueError as err:
             self._send_json(400, {"error": str(err)})
             return
@@ -4734,10 +5287,17 @@ class AppHandler(SimpleHTTPRequestHandler):
             self._send_json(502, {"error": str(err)})
             return
         except Exception as err:
-            self._send_json(502, {"error": f"Telegram 发送失败：{err}"})
+            self._send_json(502, {"error": f"通知测试发送失败：{err}"})
             return
 
-        self._send_json(200, {"ok": True, "detail": "Telegram 测试消息发送成功"})
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "channel": channel,
+                "detail": result.get("detail") or "测试通知发送成功",
+            },
+        )
 
     def _handle_emby_webhook(self, raw_query: str) -> None:
         self._mark_webhook_received()
@@ -4749,40 +5309,35 @@ class AppHandler(SimpleHTTPRequestHandler):
             self._send_json(403, {"error": "Webhook token 无效"})
             return
 
-        payload = self._read_json_body()
+        payload = self._read_object_body()
         if payload is None:
             self._record_webhook_status(event_type="unknown", result="invalid_payload", detail="Webhook 请求体无效")
             return
 
         with STORE_LOCK:
             store = _read_store_unlocked()
-            bot_config = _apply_bot_env_overrides(store.get("botConfig"))
+            notification_config = _apply_notification_env_overrides(
+                store.get("notificationConfig"),
+                legacy_bot_config=store.get("botConfig"),
+            )
+            bot_config = sync_notification_config_to_bot_config(notification_config, store.get("botConfig"))
             emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
 
-        if not bot_config.get("enableCore", True):
+        if not notification_config.get("enabled", True):
             self._record_webhook_status(event_type="unknown", result="core_disabled", detail="总开关已关闭")
             self._send_json(200, {"ok": True, "skipped": "core_disabled"})
             return
 
         event_type, event_name = self._classify_webhook_type(payload)
-        if event_type == "playback" and not bot_config.get("enablePlayback", True):
-            self._record_webhook_status(event_type=event_type, result="playback_disabled", detail="播放通知开关已关闭")
-            self._send_json(200, {"ok": True, "skipped": "playback_disabled"})
-            return
-        if event_type == "library" and not bot_config.get("enableLibrary", True):
+        if event_type == "playback":
+            self._mark_webhook_received("playback")
+        if event_type == "library" and not any_route_enabled(notification_config, ("library.single", "library.grouped")):
             self._record_webhook_status(event_type=event_type, result="library_disabled", detail="入库通知开关已关闭")
             self._send_json(200, {"ok": True, "skipped": "library_disabled"})
             return
         if event_type == "other":
             self._record_webhook_status(event_type=event_type, result="unsupported_event", detail="未识别事件类型")
             self._send_json(200, {"ok": True, "skipped": "unsupported_event"})
-            return
-
-        token_value = str(bot_config.get("telegramToken") or "").strip()
-        chat_id = str(bot_config.get("telegramChatId") or "").strip()
-        if not token_value or not chat_id:
-            self._record_webhook_status(event_type=event_type, result="telegram_not_configured", detail="Telegram 未配置完整")
-            self._send_json(200, {"ok": True, "skipped": "telegram_not_configured"})
             return
 
         if event_type == "playback":
@@ -4792,7 +5347,8 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self._send_json(200, {"ok": True, "skipped": "playback_event_filtered"})
                 return
 
-            if not event_enabled(bot_config, action):
+            event_key = f"playback.{action}"
+            if not any_route_enabled(notification_config, (event_key,)):
                 self._record_webhook_status(event_type=event_type, result="playback_event_disabled", detail=f"{action} 事件已关闭")
                 self._send_json(200, {"ok": True, "skipped": "playback_event_disabled"})
                 return
@@ -4800,6 +5356,19 @@ class AppHandler(SimpleHTTPRequestHandler):
             session_id = self._extract_session_id(payload)
             item_id = self._extract_item_id(payload)
             user_name = self._pick_first_value(payload, [("UserName",), ("userName",), ("Session", "UserName"), ("session", "userName")])
+            user_id = self._pick_first_value(
+                payload,
+                [("UserId",), ("userId",), ("User", "Id"), ("user", "id"), ("Session", "UserId"), ("session", "userId")],
+            )
+            scope_allowed, scope_detail = _playback_user_scope_matches(
+                notification_config,
+                user_name=user_name,
+                user_id=user_id,
+            )
+            if not scope_allowed:
+                self._record_webhook_status(event_type=event_type, result="playback_user_filtered", detail=scope_detail)
+                self._send_json(200, {"ok": True, "skipped": "playback_user_filtered"})
+                return
             media_name = maybe_extract_media_name(payload)
             dedupe_key = build_dedupe_key(username=user_name, item_id=item_id, media_name=media_name, action=action)
             dedupe_window = int(bot_config.get("eventDedupSeconds") or 10)
@@ -4835,46 +5404,98 @@ class AppHandler(SimpleHTTPRequestHandler):
                 bot_config=bot_config,
             )
             caption = card.get("caption") or "播放状态通知"
-            poster_url = str(card.get("posterUrl") or "").strip()
             detail_url = str(card.get("detailUrl") or "").strip()
+            image_candidates = card.get("imageCandidates") if isinstance(card.get("imageCandidates"), list) else []
+            image_asset = self._resolve_playback_notification_image_assets(
+                emby_config=emby_config,
+                item_id=str(card.get("itemId") or "").strip(),
+                event_key=event_key,
+                image_candidates=image_candidates,
+            )
+            poster_url = str(image_asset.get("posterUrl") or str(card.get("posterUrl") or "")).strip()
+            photo_payload = image_asset.get("photoPayload") if isinstance(image_asset.get("photoPayload"), dict) else {}
+            selected_candidate = image_asset.get("selectedCandidate") if isinstance(image_asset.get("selectedCandidate"), dict) else {}
+            dispatcher = NotificationDispatchService(telegram_sender=TELEGRAM_SENDER)
             try:
-                if poster_url:
-                    try:
-                        self._send_telegram_photo(
-                            token=token_value,
-                            chat_id=chat_id,
-                            photo_url=poster_url,
-                            caption=caption,
-                            button_text="🔗 跳转详情",
-                            button_url=detail_url,
-                        )
-                    except RuntimeError as err:
-                        lowered = str(err).lower()
-                        should_fallback = any(
-                            key in lowered
-                            for key in ("wrong type", "failed to get http url", "wrong file identifier", "http url", "bad request")
-                        )
-                        if not should_fallback:
-                            raise
-                        self._send_telegram_text(token=token_value, chat_id=chat_id, text=caption)
-                else:
-                    self._send_telegram_text(token=token_value, chat_id=chat_id, text=caption)
+                dispatch_result = dispatcher.dispatch(
+                    config=notification_config,
+                    event={
+                        "eventKey": event_key,
+                        "payload": card.get("templatePayload") if isinstance(card.get("templatePayload"), dict) else {"headline": caption},
+                        "channelContext": {
+                            "telegram": {
+                                **photo_payload,
+                                "photoUrl": poster_url,
+                                "buttonText": "🔗 跳转详情" if detail_url else "",
+                                "buttonUrl": detail_url,
+                            }
+                        },
+                        "source": "webhook",
+                        "traceId": dedupe_key,
+                    },
+                )
             except ValueError as err:
                 self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
                 self._send_json(400, {"error": str(err)})
                 return
             except RuntimeError as err:
-                self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
+                self._record_webhook_status(event_type=event_type, result="dispatch_error", detail=str(err))
                 self._send_json(502, {"error": str(err)})
                 return
             except Exception as err:
-                self._record_webhook_status(event_type=event_type, result="telegram_error", detail=str(err))
-                self._send_json(502, {"error": f"Telegram 发送失败：{err}"})
+                self._record_webhook_status(event_type=event_type, result="dispatch_error", detail=str(err))
+                self._send_json(502, {"error": f"通知发送失败：{err}"})
                 return
 
+            if not bool(dispatch_result.get("sentCount")):
+                self._log_event(
+                    level="info",
+                    module="webhook",
+                    action="playback_notification_image_selected",
+                    message="播放通知未成功发送，已记录本次海报候选解析结果。",
+                    detail={
+                        "eventKey": event_key,
+                        "itemId": str(card.get("itemId") or "").strip(),
+                        "selectedImageItemId": str(selected_candidate.get("itemId") or "").strip(),
+                        "selectedImageTag": str(selected_candidate.get("tag") or "").strip(),
+                        "selectedImageSource": str(selected_candidate.get("source") or "").strip(),
+                        "candidateCount": int(image_asset.get("candidateCount") or 0),
+                        "mode": str(image_asset.get("mode") or "text_only"),
+                    },
+                )
+                skipped = [row for row in dispatch_result.get("results", []) if isinstance(row, dict) and row.get("status") == "skipped"]
+                first_reason = str(skipped[0].get("reason") or "not_configured") if skipped else "not_configured"
+                self._record_webhook_status(event_type=event_type, result=first_reason, detail="播放事件未发送到任何通道")
+                self._send_json(200, {"ok": True, "skipped": first_reason, "eventType": event_type, "action": action})
+                return
             action_text = action
-            self._record_webhook_status(event_type=event_type, result="sent", detail=f"Telegram 富媒体推送成功（{action_text}）")
-            self._send_json(200, {"ok": True, "sent": True, "eventType": event_type, "action": action})
+            sent_channels = [str(row.get("channel") or "") for row in dispatch_result.get("results", []) if isinstance(row, dict) and row.get("status") == "sent"]
+            sent_result = next((row for row in dispatch_result.get("results", []) if isinstance(row, dict) and row.get("status") == "sent"), {})
+            dispatch_mode = str(sent_result.get("mode") or "").strip()
+            normalized_mode = "text_only"
+            if dispatch_mode == "photo_file":
+                normalized_mode = "photo_bytes"
+            elif dispatch_mode == "photo_url":
+                normalized_mode = "photo_url"
+            elif dispatch_mode in {"text", "text_fallback"}:
+                normalized_mode = "text_only"
+            self._log_event(
+                level="info",
+                module="webhook",
+                action="playback_notification_image_selected",
+                message="播放通知海报候选已确定。",
+                detail={
+                    "eventKey": event_key,
+                    "itemId": str(card.get("itemId") or "").strip(),
+                    "selectedImageItemId": str(selected_candidate.get("itemId") or "").strip(),
+                    "selectedImageTag": str(selected_candidate.get("tag") or "").strip(),
+                    "selectedImageSource": str(selected_candidate.get("source") or "").strip(),
+                    "candidateCount": int(image_asset.get("candidateCount") or 0),
+                    "mode": normalized_mode,
+                },
+            )
+            self._record_webhook_status(event_type=event_type, result="sent", detail=f"通知推送成功（{action_text} -> {','.join(sent_channels)}）")
+            self._send_json(200, {"ok": True, "sent": True, "eventType": event_type, "action": action, "channels": sent_channels})
             return
 
         if event_type == "library":
@@ -5081,7 +5702,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 </head>
 <body>
   <main class="card">
-    <p class="brand">镜界Vistamirror</p>
+    <p class="brand">VistaMirror</p>
     <h1>{title_text}</h1>
     <p>{detail_text}</p>
   </main>
@@ -5132,6 +5753,73 @@ class AppHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"error": "JSON body must be an object"})
             return None
         return payload
+
+    def _read_object_body(self) -> dict[str, Any] | None:
+        content_length = self.headers.get("Content-Length")
+        try:
+            length = int(content_length or "0")
+        except ValueError:
+            self._send_json(400, {"error": "Invalid Content-Length"})
+            return None
+
+        if length <= 0:
+            self._send_json(400, {"error": "Request body is required"})
+            return None
+
+        raw_body = self.rfile.read(length)
+        content_type = str(self.headers.get("Content-Type") or "").strip()
+        mime_type, params = cgi.parse_header(content_type)
+        mime_type = mime_type.lower().strip()
+
+        if mime_type == "application/json" or not mime_type:
+            try:
+                payload = json.loads(raw_body.decode("utf-8"))
+            except Exception:
+                self._send_json(400, {"error": "Invalid JSON body"})
+                return None
+            if not isinstance(payload, dict):
+                self._send_json(400, {"error": "JSON body must be an object"})
+                return None
+            return payload
+
+        if mime_type == "application/x-www-form-urlencoded":
+            parsed = urllib.parse.parse_qs(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True)
+            return self._coerce_form_payload(parsed)
+
+        if mime_type == "multipart/form-data":
+            boundary = params.get("boundary")
+            if not boundary:
+                self._send_json(400, {"error": "Multipart boundary is required"})
+                return None
+            parsed = cgi.parse_multipart(io.BytesIO(raw_body), {"boundary": boundary.encode("utf-8"), "CONTENT-LENGTH": str(length)})
+            return self._coerce_form_payload(parsed)
+
+        self._send_json(400, {"error": f"Unsupported Content-Type: {mime_type or 'unknown'}"})
+        return None
+
+    def _coerce_form_payload(self, parsed: dict[str, list[Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, values in (parsed or {}).items():
+            safe_key = str(key or "").strip()
+            if not safe_key:
+                continue
+            normalized_values = values if isinstance(values, list) else [values]
+            first = normalized_values[0] if normalized_values else ""
+            if isinstance(first, bytes):
+                first = first.decode("utf-8", errors="replace")
+            if isinstance(first, str):
+                text = first.strip()
+                if safe_key.lower() in {"data", "payload", "body"} and text.startswith("{") and text.endswith("}"):
+                    try:
+                        payload = json.loads(text)
+                    except Exception:
+                        payload = None
+                    if isinstance(payload, dict):
+                        return payload
+                result[safe_key] = text
+                continue
+            result[safe_key] = first
+        return result
 
     def _find_invite_by_code(self, invites: list[dict[str, Any]], code: str) -> tuple[int, dict[str, Any]] | tuple[None, None]:
         normalized = _normalize_invite_code(code)
@@ -5252,99 +5940,30 @@ class AppHandler(SimpleHTTPRequestHandler):
         )
 
     def _handle_invite_sync_status(self) -> None:
-        with STORE_LOCK:
-            store = _read_store_unlocked()
-            invites = store.get("invites", [])
-            if not isinstance(invites, list):
-                invites = []
-            emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
-
-            rows = [self._invite_to_public(item) for item in invites if isinstance(item, dict)]
-
-        rows.sort(key=lambda item: str(item.get("createdAt") or ""), reverse=True)
-        active_count = sum(1 for item in rows if item.get("statusCode") == "active")
-        used_count = sum(1 for item in rows if item.get("statusCode") == "used")
-        self._send_json(
-            200,
-            {
-                "ok": True,
-                "synced": True,
-                "inviteCount": len(rows),
-                "activeCount": active_count,
-                "usedCount": used_count,
-                "invites": rows,
-                "embyConfig": emby_config,
-                "envControlledFields": _env_controlled_fields_payload(),
-                "managedByEnv": _env_controlled_fields_payload(),
-                "updatedAt": _now_iso(),
-            },
+        handle_invite_sync_status(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            apply_emby_env_overrides=_apply_emby_env_overrides,
+            normalize_library_directory_config=_normalize_library_directory_config,
+            env_controlled_fields_payload=_env_controlled_fields_payload,
+            invite_to_public=lambda invite: self._invite_to_public(invite),
+            now_iso=_now_iso,
         )
 
     def _handle_invite_sync(self) -> None:
-        payload = self._read_json_body()
-        if payload is None:
-            return
-
-        emby_config_raw = payload.get("embyConfig")
-        invites_raw = payload.get("invites")
-
-        if not isinstance(emby_config_raw, dict):
-            self._send_json(400, {"error": "embyConfig must be an object"})
-            return
-        if not isinstance(invites_raw, list):
-            self._send_json(400, {"error": "invites must be an array"})
-            return
-
-        sanitized_invites: list[dict[str, Any]] = []
-        for invite in invites_raw:
-            sanitized = _sanitize_invite_record(invite)
-            if sanitized:
-                sanitized_invites.append(sanitized)
-
-        with STORE_LOCK:
-            stored = _read_store_unlocked()
-            current_emby_config = stored.get("embyConfig") if isinstance(stored.get("embyConfig"), dict) else {}
-
-        emby_config = _merge_emby_config_for_save(current_emby_config, emby_config_raw)
-
-        with STORE_LOCK:
-            store = _read_store_unlocked()
-            current_emby_config = store.get("embyConfig") if isinstance(store.get("embyConfig"), dict) else {}
-            locked = _env_managed_emby_fields()
-            if locked:
-                for field in locked:
-                    emby_config[field] = str(current_emby_config.get(field) or "").strip()
-            merged_invites = _merge_invites(store.get("invites", []), sanitized_invites)
-            store["embyConfig"] = emby_config
-            store["invites"] = merged_invites
-            _write_store_unlocked(store)
-            effective_emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
-
-        self._log_event(
-            level="info",
-            module="system",
-            action="server_config_synced",
-            message="媒体服务器配置与邀请码已同步到后端。",
-            status=200,
-            detail={
-                "inviteCount": len(sanitized_invites),
-                "storedInviteCount": len(merged_invites),
-                "changedFields": ["serverUrl", "apiKey", "clientName", "tmdbEnabled", "tmdbToken", "tmdbLanguage", "tmdbRegion"],
-                "envLockedFields": sorted(_env_managed_emby_fields()),
-                "tmdbConfigured": bool(effective_emby_config.get("tmdbToken")),
-            },
-        )
-        self._send_json(
-            200,
-            {
-                "ok": True,
-                "message": "Invite store synced",
-                "inviteCount": len(sanitized_invites),
-                "storedInviteCount": len(merged_invites),
-                "embyConfig": effective_emby_config,
-                "envControlledFields": _env_controlled_fields_payload(),
-                "managedByEnv": _env_controlled_fields_payload(),
-            },
+        handle_invite_sync(
+            self,
+            store_lock=STORE_LOCK,
+            read_store=_read_store_unlocked,
+            write_store=_write_store_unlocked,
+            sanitize_invite_record=_sanitize_invite_record,
+            normalize_library_directory_config=_normalize_library_directory_config,
+            merge_emby_config_for_save=_merge_emby_config_for_save,
+            env_managed_emby_fields=_env_managed_emby_fields,
+            merge_invites=_merge_invites,
+            apply_emby_env_overrides=_apply_emby_env_overrides,
+            env_controlled_fields_payload=_env_controlled_fields_payload,
         )
 
     def _handle_invite_query(self, path: str) -> None:
@@ -5816,6 +6435,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.send_response(response.status)
                 content_type = response.headers.get("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Type", content_type)
+                self.send_header("Cache-Control", "no-store, no-cache, max-age=0")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 if payload:
@@ -5833,6 +6455,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_response(err.code)
             content_type = err.headers.get("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store, no-cache, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             if payload:
@@ -5848,6 +6473,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     )
                     self.send_response(status_code if status_code > 0 else 502)
                     self.send_header("Content-Type", content_type)
+                    self.send_header("Cache-Control", "no-store, no-cache, max-age=0")
+                    self.send_header("Pragma", "no-cache")
+                    self.send_header("Expires", "0")
                     self.send_header("Content-Length", str(len(payload)))
                     self.end_headers()
                     if payload:

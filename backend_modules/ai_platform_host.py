@@ -4,49 +4,41 @@ import pathlib
 import re
 from typing import TYPE_CHECKING, Any
 
-from .ai_assistant import apply_ai_env_overrides
 from .ai_conversation_host import AIConversationHost
+from .ai_runtime_interfaces import AIPlatformRuntime
 
 if TYPE_CHECKING:
-    from .telegram_commands import TelegramCommandService
     from .telegram_message_renderer import TelegramMessageRenderer
 
 
 class AIPlatformHost:
-    def __init__(self, service: "TelegramCommandService") -> None:
-        self._service = service
-        self._conversations = AIConversationHost(service)
+    def __init__(self, runtime: AIPlatformRuntime, *, conversations: AIConversationHost) -> None:
+        self._runtime = runtime
+        self._conversations = conversations
 
     @property
     def store_path(self) -> pathlib.Path:
-        return self._service.store_path
+        return self._runtime.store_path
 
     @property
     def event_log_path(self) -> pathlib.Path:
-        return self._service.event_log_path
+        return self._runtime.event_log_path
 
     @property
     def sender(self) -> Any:
-        return self._service.sender
+        return self._runtime.sender
 
     def read_store(self) -> dict[str, Any]:
-        from .telegram_commands import _read_store
-
-        return _read_store(self.store_path)
+        return self._runtime.read_store()
 
     def apply_emby_env_overrides(self, raw: Any) -> dict[str, Any]:
-        from .telegram_commands import _apply_emby_env_overrides
-
-        return _apply_emby_env_overrides(raw)
+        return self._runtime.apply_emby_env_overrides(raw)
 
     def load_ai_config(self, *, chat_id: str = "") -> dict[str, Any]:
-        store = self.read_store()
-        return apply_ai_env_overrides(store.get("aiConfig"))
+        return self._runtime.load_ai_config(chat_id=chat_id)
 
     def build_library_stats_context(self) -> str:
-        from .ai_support_service import AISupportService
-
-        return AISupportService(self._service).build_library_stats_context()
+        return self._runtime.build_library_stats_context()
 
     def limit_ai_context_text(self, text: str, *, ai_config: dict[str, Any] | None = None) -> str:
         config = ai_config if isinstance(ai_config, dict) else {}
@@ -131,35 +123,13 @@ class AIPlatformHost:
         )
 
     def truncate_text(self, text: str, limit: int) -> str:
-        return self._service._truncate_text(text, limit)
+        return self._runtime.truncate_text(text, limit)
 
     def extract_telegram_message_id(self, result: Any) -> int:
-        payload = result if isinstance(result, dict) else {}
-        message = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-        try:
-            return int(message.get("message_id") or 0)
-        except Exception:
-            return 0
+        return self._runtime.extract_telegram_message_id(result)
 
     def format_ai_event_detail(self, *, action: str, detail: dict[str, Any]) -> str:
-        keys_by_action = {
-            "telegram_library_scan_submitted": ("libraryName", "libraryId", "target"),
-            "telegram_library_scan_failed": ("libraryName", "libraryId", "target", "error"),
-            "telegram_library_scan_reply_sent": ("command",),
-            "telegram_library_scan_list_ready": ("keyword", "total", "matched", "displayed"),
-            "telegram_command_reply_failed": ("command", "error"),
-            "telegram_ai_success": ("model", "elapsedMs", "streaming"),
-            "telegram_ai_failed": ("model", "error"),
-            "telegram_callback_failed": ("callback", "error"),
-            "client_sync_event": ("description",),
-        }
-        parts: list[str] = []
-        for key in keys_by_action.get(action, ()):
-            value = detail.get(key)
-            if value in (None, ""):
-                continue
-            parts.append(f"{key}={str(value)[:160]}")
-        return "，".join(parts)
+        return self._runtime.format_ai_event_detail(action=action, detail=detail)
 
     def log_project_event(
         self,
@@ -170,12 +140,12 @@ class AIPlatformHost:
         message: str = "",
         detail: dict[str, Any] | None = None,
     ) -> None:
-        self._service._log_project_event(
+        self._runtime.log_project_event(
             level=level,
             module=module,
             action=action,
             message=message,
-            detail=detail or {},
+            detail=detail,
         )
 
     def log_ai_media_query_diagnostic(
@@ -186,18 +156,11 @@ class AIPlatformHost:
         candidates: list[str],
         detail: dict[str, Any],
     ) -> None:
-        payload = {
-            "question": self.truncate_text(str(question or ""), 160),
-            "keyword": keyword,
-            "candidates": candidates[:5],
-        }
-        payload.update(detail)
-        self.log_project_event(
-            level="info",
-            module="webhook",
-            action="ai_media_query_diagnostic",
-            message="AI 媒体库片名识别与集数查询已完成。",
-            detail=payload,
+        self._runtime.log_ai_media_query_diagnostic(
+            question=question,
+            keyword=keyword,
+            candidates=candidates,
+            detail=detail,
         )
 
     def log_ai_missing_query_diagnostic(
@@ -215,25 +178,19 @@ class AIPlatformHost:
         missing_count: int = 0,
         elapsed_ms: int = 0,
     ) -> None:
-        self.log_project_event(
-            level="info",
-            module="webhook",
-            action="ai_missing_query_diagnostic",
-            message="AI 单剧缺集查询已完成。",
-            detail={
-                "question": self.truncate_text(str(question or ""), 160),
-                "keyword": keyword,
-                "usedContext": used_context,
-                "embySeriesId": series_id,
-                "result": result,
-                "numberingMode": numbering_mode,
-                "tmdbId": tmdb_id,
-                "expectedCount": expected_count,
-                "existingCount": existing_count,
-                "missingCount": missing_count,
-                "elapsedMs": elapsed_ms,
-            },
+        self._runtime.log_ai_missing_query_diagnostic(
+            question=question,
+            keyword=keyword,
+            used_context=used_context,
+            series_id=series_id,
+            result=result,
+            numbering_mode=numbering_mode,
+            tmdb_id=tmdb_id,
+            expected_count=expected_count,
+            existing_count=existing_count,
+            missing_count=missing_count,
+            elapsed_ms=elapsed_ms,
         )
 
     def telegram_renderer(self, *, chat_id: str = "") -> "TelegramMessageRenderer":
-        return self._service._telegram_renderer(chat_id=chat_id)
+        return self._runtime.telegram_renderer(chat_id=chat_id)
