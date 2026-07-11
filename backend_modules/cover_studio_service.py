@@ -26,6 +26,7 @@ DEFAULT_CANVAS_SIZE = (1600, 900)
 DEFAULT_THUMB_SIZE = (1280, 720)
 PREVIEW_TTL_SECONDS = 60 * 60 * 6
 DEFAULT_TEMPLATE_KEY = "fan_spread"
+DEFAULT_COVER_STUDIO_CRON = "0 */6 * * *"
 ALL_TEMPLATE_SUPPORTS = [
     "titleAlign",
     "posterCount",
@@ -146,6 +147,7 @@ def default_cover_studio_config() -> dict[str, Any]:
         "lastViewId": "",
         "draft": {
             "viewId": "",
+            "viewIds": [],
             "templateKey": DEFAULT_TEMPLATE_KEY,
             "pickMode": "random",
             "titleText": "",
@@ -183,6 +185,15 @@ def default_cover_studio_config() -> dict[str, Any]:
             }
         ],
         "backups": {},
+        "schedule": {
+            "enabled": False,
+            "cron": DEFAULT_COVER_STUDIO_CRON,
+            "lastRunAt": "",
+            "lastStatus": "idle",
+            "lastMessage": "未启用自动更新。",
+            "lastResultCount": 0,
+        },
+        "schedules": [],
     }
 
 
@@ -192,10 +203,14 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
     draft_source = source.get("draft") if isinstance(source.get("draft"), dict) else {}
     presets_source = source.get("presets") if isinstance(source.get("presets"), list) else defaults["presets"]
     backups_source = source.get("backups") if isinstance(source.get("backups"), dict) else {}
+    schedule_source = source.get("schedule") if isinstance(source.get("schedule"), dict) else {}
+    schedules_source = source.get("schedules") if isinstance(source.get("schedules"), list) else []
     draft_template_key = _normalize_template_key(draft_source.get("templateKey"))
     draft_mode_defaults = _mode_defaults(draft_template_key)
+    draft_view_ids = _normalize_view_ids(draft_source.get("viewIds"), fallback=draft_source.get("viewId"))
     draft = {
-        "viewId": str(draft_source.get("viewId") or "").strip(),
+        "viewId": draft_view_ids[0] if draft_view_ids else "",
+        "viewIds": draft_view_ids,
         "templateKey": draft_template_key,
         "pickMode": "recent" if str(draft_source.get("pickMode") or "").strip().lower() == "recent" else "random",
         "titleText": str(draft_source.get("titleText") or "").strip(),
@@ -258,13 +273,152 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
             "appliedAt": str(row.get("appliedAt") or "").strip(),
         }
     current_preset_id = str(source.get("currentPresetId") or presets[0]["id"]).strip() or presets[0]["id"]
+    schedule = normalize_cover_studio_schedule(schedule_source)
+    schedules = _normalize_cover_studio_schedules(schedules_source, draft=draft)
+    # Upgrade the short-lived global scheduler to independent library plans.
+    if not schedules and schedule["enabled"]:
+        schedules = _normalize_cover_studio_schedules(
+            [{"viewId": view_id, "cron": schedule["cron"], "enabled": True, "template": draft} for view_id in draft_view_ids],
+            draft=draft,
+        )
     return {
         "currentPresetId": current_preset_id,
         "lastViewId": str(source.get("lastViewId") or draft.get("viewId") or "").strip(),
         "draft": draft,
         "presets": presets,
         "backups": backups,
+        "schedule": schedule,
+        "schedules": schedules,
     }
+
+
+def normalize_cover_studio_schedule(raw: Any) -> dict[str, Any]:
+    source = raw if isinstance(raw, dict) else {}
+    cron = str(source.get("cron") or DEFAULT_COVER_STUDIO_CRON).strip()
+    if not is_valid_cover_studio_cron(cron):
+        cron = DEFAULT_COVER_STUDIO_CRON
+    status = str(source.get("lastStatus") or "idle").strip().lower()
+    if status not in {"idle", "success", "error", "running"}:
+        status = "idle"
+    try:
+        result_count = max(0, min(30, int(source.get("lastResultCount") or 0)))
+    except (TypeError, ValueError):
+        result_count = 0
+    return {
+        "enabled": bool(source.get("enabled")),
+        "cron": cron,
+        "lastRunAt": str(source.get("lastRunAt") or "").strip(),
+        "lastStatus": status,
+        "lastMessage": str(source.get("lastMessage") or "未启用自动更新。").strip(),
+        "lastResultCount": result_count,
+    }
+
+
+def _normalize_cover_studio_schedules(raw: list[Any], *, draft: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_view_ids: set[str] = set()
+    for index, value in enumerate(raw[:30]):
+        source = value if isinstance(value, dict) else {}
+        view_id = str(source.get("viewId") or "").strip()
+        if not view_id or view_id in seen_view_ids:
+            continue
+        seen_view_ids.add(view_id)
+        schedule_id = str(source.get("id") or f"view-{view_id}").strip() or f"view-{view_id}"
+        cron = str(source.get("cron") or DEFAULT_COVER_STUDIO_CRON).strip()
+        if not is_valid_cover_studio_cron(cron):
+            cron = DEFAULT_COVER_STUDIO_CRON
+        status = str(source.get("lastStatus") or "idle").strip().lower()
+        if status not in {"idle", "initialized", "no_change", "success", "error", "running"}:
+            status = "idle"
+        fingerprint_source = source.get("fingerprint") if isinstance(source.get("fingerprint"), dict) else {}
+        try:
+            item_count = max(0, int(fingerprint_source.get("itemCount") or 0))
+        except (TypeError, ValueError):
+            item_count = 0
+        rows.append(
+            {
+                "id": schedule_id,
+                "viewId": view_id,
+                "viewName": str(source.get("viewName") or "").strip(),
+                "enabled": bool(source.get("enabled")),
+                "cron": cron,
+                "template": _normalize_cover_studio_schedule_template(source.get("template"), fallback=draft),
+                "fingerprint": {
+                    "itemCount": item_count,
+                    "latestItemId": str(fingerprint_source.get("latestItemId") or "").strip(),
+                    "latestCreatedAt": str(fingerprint_source.get("latestCreatedAt") or "").strip(),
+                },
+                "initializedAt": str(source.get("initializedAt") or "").strip(),
+                "lastCheckedAt": str(source.get("lastCheckedAt") or "").strip(),
+                "lastUpdatedAt": str(source.get("lastUpdatedAt") or "").strip(),
+                "lastStatus": status,
+                "lastMessage": str(source.get("lastMessage") or "尚未检查。").strip(),
+            }
+        )
+    return rows
+
+
+def _normalize_cover_studio_schedule_template(raw: Any, *, fallback: dict[str, Any]) -> dict[str, Any]:
+    source = raw if isinstance(raw, dict) else fallback
+    template_key = _normalize_template_key(source.get("templateKey"))
+    mode_defaults = _mode_defaults(template_key)
+    return {
+        "templateKey": template_key,
+        "pickMode": "recent" if str(source.get("pickMode") or "").strip().lower() == "recent" else "random",
+        "titleText": str(source.get("titleText") or "").strip(),
+        "subtitleText": str(source.get("subtitleText") or "").strip(),
+        "fontKey": str(source.get("fontKey") or "hiragino").strip() or "hiragino",
+        "titleFontSize": _clamp_int(source.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
+        "subtitleFontSize": _clamp_int(source.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
+        "titleAlign": _normalize_title_align(source.get("titleAlign"), fallback=mode_defaults["titleAlign"]),
+        "posterCount": _clamp_int(source.get("posterCount"), fallback=mode_defaults["posterCount"], minimum=2, maximum=8),
+        "accentTone": _normalize_accent_tone(source.get("accentTone"), fallback=mode_defaults["accentTone"]),
+        "posterRotation": _clamp_int(source.get("posterRotation"), fallback=mode_defaults["posterRotation"], minimum=0, maximum=100),
+        "titleYOffset": _clamp_int(source.get("titleYOffset"), fallback=mode_defaults["titleYOffset"], minimum=-160, maximum=160),
+    }
+
+
+def is_valid_cover_studio_cron(expression: str) -> bool:
+    fields = str(expression or "").strip().split()
+    if len(fields) != 5:
+        return False
+    limits = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))
+    return all(_is_valid_cron_field(field, minimum, maximum) for field, (minimum, maximum) in zip(fields, limits))
+
+
+def _is_valid_cron_field(field: str, minimum: int, maximum: int) -> bool:
+    for part in str(field or "").split(","):
+        chunk = part.strip()
+        if not chunk:
+            return False
+        base, separator, step_text = chunk.partition("/")
+        if separator:
+            try:
+                step = int(step_text)
+            except (TypeError, ValueError):
+                return False
+            if step <= 0 or step > maximum - minimum + 1:
+                return False
+        if base == "*":
+            continue
+        if "-" in base:
+            start_text, end_text, *extra = base.split("-")
+            if extra:
+                return False
+            try:
+                start, end = int(start_text), int(end_text)
+            except (TypeError, ValueError):
+                return False
+            if not (minimum <= start <= end <= maximum):
+                return False
+            continue
+        try:
+            value = int(base)
+        except (TypeError, ValueError):
+            return False
+        if not minimum <= value <= maximum:
+            return False
+    return True
 
 
 def available_cover_fonts() -> list[dict[str, str]]:
@@ -333,7 +487,7 @@ class EmbyCoverService:
             "ParentId": str(view_id or "").strip(),
             "Recursive": "true",
             "IncludeItemTypes": "Movie,Series",
-            "Fields": "Name,Type,DateCreated,ImageTags,PrimaryImageItemId,SeriesId,ParentId,ProductionYear,PremiereDate",
+            "Fields": "Name,Type,DateCreated,ImageTags,BackdropImageTags,PrimaryImageItemId,BackdropImageItemId,SeriesId,ParentId,ProductionYear,PremiereDate",
             "Limit": str(max(8, min(limit, 60))),
             "SortBy": "DateCreated",
             "SortOrder": "Descending",
@@ -349,6 +503,8 @@ class EmbyCoverService:
             if not isinstance(item, dict):
                 continue
             image_tags = item.get("ImageTags") if isinstance(item.get("ImageTags"), dict) else {}
+            backdrop_tags = item.get("BackdropImageTags") if isinstance(item.get("BackdropImageTags"), list) else []
+            backdrop_tag = str(backdrop_tags[0] or "").strip() if backdrop_tags else ""
             image_item_id = str(item.get("PrimaryImageItemId") or item.get("Id") or "").strip()
             if not image_item_id:
                 continue
@@ -359,6 +515,8 @@ class EmbyCoverService:
                     "id": str(item.get("Id") or "").strip(),
                     "imageItemId": image_item_id,
                     "primaryTag": str(image_tags.get("Primary") or "").strip(),
+                    "backdropImageItemId": str(item.get("BackdropImageItemId") or item.get("Id") or "").strip(),
+                    "backdropTag": backdrop_tag,
                     "name": str(item.get("Name") or "").strip(),
                     "type": str(item.get("Type") or "").strip(),
                     "dateCreated": str(item.get("DateCreated") or "").strip(),
@@ -372,12 +530,49 @@ class EmbyCoverService:
             items = pool
         return items[: max(4, min(limit, 12))]
 
+    def fetch_view_fingerprint(self, *, view_id: str) -> dict[str, Any]:
+        """Return a compact library marker so scheduled refreshes run only on change."""
+        params = {
+            "ParentId": str(view_id or "").strip(),
+            "Recursive": "true",
+            "IncludeItemTypes": "Movie,Series,Episode",
+            "Fields": "DateCreated",
+            "Limit": "1",
+            "SortBy": "DateCreated",
+            "SortOrder": "Descending",
+        }
+        payload = self._request_json(f"/Items?{urllib.parse.urlencode(params)}")
+        rows = payload.get("Items") if isinstance(payload, dict) else []
+        latest = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+        try:
+            item_count = max(0, int(payload.get("TotalRecordCount") or 0)) if isinstance(payload, dict) else 0
+        except (TypeError, ValueError):
+            item_count = 0
+        return {
+            "itemCount": item_count,
+            "latestItemId": str(latest.get("Id") or "").strip(),
+            "latestCreatedAt": str(latest.get("DateCreated") or "").strip(),
+        }
+
     def fetch_primary_image_bytes(self, *, item_id: str, image_tag: str = "", max_width: int = 700) -> bytes:
         params = {"maxWidth": str(max(320, min(int(max_width or 700), 2000))), "quality": "92"}
         if str(image_tag or "").strip():
             params["tag"] = str(image_tag).strip()
         query = urllib.parse.urlencode(params)
         return self._request_bytes(f"/Items/{urllib.parse.quote(str(item_id), safe='')}/Images/Primary?{query}")
+
+    def fetch_backdrop_image_bytes(self, *, item_id: str, image_tag: str = "", max_width: int = 1800) -> bytes:
+        """Read an item's horizontal Emby backdrop for cinematic cover templates."""
+        params = {
+            "maxWidth": str(max(640, min(int(max_width or 1800), 2400))),
+            "quality": "94",
+            "Index": "0",
+        }
+        if str(image_tag or "").strip():
+            params["tag"] = str(image_tag).strip()
+        query = urllib.parse.urlencode(params)
+        safe_item_id = urllib.parse.quote(str(item_id or "").strip(), safe="")
+        return self._request_bytes(f"/Items/{safe_item_id}/Images/Backdrop?{query}")
 
     def fetch_view_image_bytes(self, *, view_id: str, image_type: str) -> bytes | None:
         safe_view_id = str(view_id or "").strip()
@@ -647,6 +842,11 @@ class CoverStudioService:
         if not prepared:
             raise RuntimeError("未能从 Emby 读取到可用海报，无法生成预览。")
         safe_template_key = _normalize_template_key(template_key)
+        hero_image = self._resolve_showcase_hero_image(
+            template_key=safe_template_key,
+            prepared=prepared,
+            emby_service=emby_service,
+        )
         safe_title_size = _clamp_int(title_font_size, fallback=108, minimum=56, maximum=180)
         safe_subtitle_size = _clamp_int(subtitle_font_size, fallback=44, minimum=22, maximum=72)
         safe_title_align = _normalize_title_align(title_align, fallback=_mode_defaults(safe_template_key)["titleAlign"])
@@ -661,6 +861,7 @@ class CoverStudioService:
         primary_canvas = self._render_mode_cover(
             template_key=safe_template_key,
             images=[image for _, image in prepared][:safe_poster_count],
+            hero_image=hero_image,
             title_text=title_text,
             subtitle_text=subtitle_text,
             font_key=font_key,
@@ -689,6 +890,34 @@ class CoverStudioService:
             template_key=safe_template_key,
             selected_items=selected_items,
         )
+
+    @staticmethod
+    def _resolve_showcase_hero_image(
+        *,
+        template_key: str,
+        prepared: list[tuple[dict[str, Any], Image.Image]],
+        emby_service: EmbyCoverService,
+    ) -> Image.Image:
+        """Prefer Emby's backdrop so the hero stays cinematic instead of a blown-up poster."""
+        mode = _mode_meta(template_key)
+        if str(mode.get("family") or "").strip() != "cinematic_showcase":
+            return prepared[0][1]
+        fetch_backdrop = getattr(emby_service, "fetch_backdrop_image_bytes", None)
+        if callable(fetch_backdrop):
+            for item, _poster in prepared:
+                item_id = str(item.get("backdropImageItemId") or item.get("id") or "").strip()
+                if not item_id:
+                    continue
+                try:
+                    payload = fetch_backdrop(
+                        item_id=item_id,
+                        image_tag=str(item.get("backdropTag") or "").strip(),
+                    )
+                    if payload:
+                        return Image.open(BytesIO(payload)).convert("RGB")
+                except Exception:
+                    continue
+        return prepared[0][1]
 
     def backup_and_apply(
         self,
@@ -801,6 +1030,7 @@ class CoverStudioService:
         *,
         template_key: str,
         images: list[Image.Image],
+        hero_image: Image.Image | None,
         title_text: str,
         subtitle_text: str,
         font_key: str,
@@ -819,6 +1049,7 @@ class CoverStudioService:
         if str(mode.get("family") or "").strip() == "cinematic_showcase":
             canvas = self._render_cinematic_showcase_cover(
                 images=images,
+                hero_image=hero_image,
                 tone=tone,
                 overlay_strength=overlay_strength,
                 poster_rotation=poster_rotation,
@@ -1017,13 +1248,14 @@ class CoverStudioService:
         self,
         *,
         images: list[Image.Image],
+        hero_image: Image.Image | None,
         tone: dict[str, tuple[int, int, int]],
         overlay_strength: int,
         poster_rotation: int,
         variant: str,
     ) -> Image.Image:
         meta = _cinematic_showcase_variant(variant, thumb=False)
-        hero_source = images[min(len(images) - 1, meta.get("hero_image_index", 0))]
+        hero_source = hero_image or images[min(len(images) - 1, meta.get("hero_image_index", 0))]
         canvas = self._build_cinematic_showcase_background(
             source_image=images[0],
             hero_image=hero_source,
@@ -1041,6 +1273,7 @@ class CoverStudioService:
             reflection_opacity=meta["reflection_opacity"],
             reflection_scale=meta["reflection_scale"],
             angle_tune_scale=float(meta.get("angle_tune_scale", 0.035)),
+            strict_poster_row=bool(meta.get("strict_poster_row")),
         )
         return canvas
 
@@ -1048,13 +1281,14 @@ class CoverStudioService:
         self,
         *,
         images: list[Image.Image],
+        hero_image: Image.Image | None = None,
         tone: dict[str, tuple[int, int, int]],
         overlay_strength: int,
         poster_rotation: int,
         variant: str,
     ) -> Image.Image:
         meta = _cinematic_showcase_variant(variant, thumb=True)
-        hero_source = images[min(len(images) - 1, meta.get("hero_image_index", 0))]
+        hero_source = hero_image or images[min(len(images) - 1, meta.get("hero_image_index", 0))]
         canvas = self._build_cinematic_showcase_background(
             source_image=images[0],
             hero_image=hero_source,
@@ -1072,6 +1306,7 @@ class CoverStudioService:
             reflection_opacity=meta["reflection_opacity"],
             reflection_scale=meta["reflection_scale"],
             angle_tune_scale=float(meta.get("angle_tune_scale", 0.035)),
+            strict_poster_row=bool(meta.get("strict_poster_row")),
         )
         return canvas
 
@@ -1252,6 +1487,13 @@ class CoverStudioService:
         overlay_strength: int,
         variant_meta: dict[str, Any],
     ) -> Image.Image:
+        if str(variant_meta.get("layout_style") or "").strip() == "streaming_banner":
+            return self._build_streaming_banner_background(
+                hero_image=hero_image,
+                size=size,
+                tone=tone,
+                variant_meta=variant_meta,
+            )
         width, height = size
         background = ImageOps_fit(source_image, size).filter(ImageFilter.GaussianBlur(radius=12))
         overlay = Image.new("RGBA", size, (0, 0, 0, 0))
@@ -1315,6 +1557,80 @@ class CoverStudioService:
 
         return canvas
 
+    def _build_streaming_banner_background(
+        self,
+        *,
+        hero_image: Image.Image,
+        size: tuple[int, int],
+        tone: dict[str, tuple[int, int, int]],
+        variant_meta: dict[str, Any],
+    ) -> Image.Image:
+        """Build the unified dark streaming panel used by the horizontal showcase."""
+        width, height = size
+        inset = int(variant_meta.get("frame_inset", 36))
+        radius = int(variant_meta.get("frame_radius", 40))
+        inner_box = (inset, inset, width - inset, height - inset)
+        inner_size = (max(1, inner_box[2] - inner_box[0]), max(1, inner_box[3] - inner_box[1]))
+
+        canvas = Image.new("RGBA", size, (4, 8, 14, 255))
+        ambient = Image.new("RGBA", size, (0, 0, 0, 0))
+        ambient_draw = ImageDraw.Draw(ambient)
+        ambient_draw.ellipse(
+            (int(width * 0.48), -int(height * 0.18), int(width * 1.08), int(height * 0.62)),
+            fill=(tone["glow"][0], tone["glow"][1], tone["glow"][2], 28),
+        )
+        ambient = ambient.filter(ImageFilter.GaussianBlur(radius=max(20, inset)))
+        canvas = Image.alpha_composite(canvas, ambient)
+
+        hero = ImageOps_fit(hero_image, inner_size).convert("RGBA")
+        hero_mask = Image.new("L", inner_size, 0)
+        ImageDraw.Draw(hero_mask).rounded_rectangle(
+            (0, 0, inner_size[0], inner_size[1]),
+            radius=radius,
+            fill=255,
+        )
+        hero.putalpha(hero_mask)
+        canvas.alpha_composite(hero, (inner_box[0], inner_box[1]))
+
+        # A permanent left-side falloff keeps titles legible without a glass tray.
+        title_ratio = max(0.28, min(float(variant_meta.get("left_panel_ratio", 0.36)), 0.50))
+        gradient = Image.new("RGBA", inner_size, (0, 0, 0, 0))
+        gradient_pixels = gradient.load()
+        edge = max(1, int(inner_size[0] * title_ratio))
+        fade_end = min(inner_size[0] - 1, int(inner_size[0] * (title_ratio + 0.18)))
+        for x in range(inner_size[0]):
+            if x <= edge:
+                alpha = 224
+            elif x >= fade_end:
+                alpha = 20
+            else:
+                progress = (x - edge) / max(1, fade_end - edge)
+                alpha = int(224 - progress * 204)
+            for y in range(inner_size[1]):
+                gradient_pixels[x, y] = (2, 6, 12, alpha)
+        gradient = gradient.filter(ImageFilter.GaussianBlur(radius=12))
+        canvas.alpha_composite(gradient, (inner_box[0], inner_box[1]))
+
+        bottom_shade = Image.new("RGBA", inner_size, (0, 0, 0, 0))
+        bottom_draw = ImageDraw.Draw(bottom_shade)
+        bottom_draw.rectangle(
+            (0, int(inner_size[1] * 0.60), inner_size[0], inner_size[1]),
+            fill=(1, 4, 10, 76),
+        )
+        bottom_shade = bottom_shade.filter(ImageFilter.GaussianBlur(radius=18))
+        canvas.alpha_composite(bottom_shade, (inner_box[0], inner_box[1]))
+
+        frame = Image.new("RGBA", size, (0, 0, 0, 0))
+        frame_draw = ImageDraw.Draw(frame)
+        frame_draw.rounded_rectangle(
+            inner_box,
+            radius=radius,
+            outline=(196, 216, 240, int(variant_meta.get("frame_outline_alpha", 108))),
+            width=max(1, int(inset * 0.06)),
+        )
+        canvas = Image.alpha_composite(canvas, frame)
+        return canvas
+
     def _paste_cinematic_posters(
         self,
         canvas: Image.Image,
@@ -1326,6 +1642,7 @@ class CoverStudioService:
         reflection_opacity: float,
         reflection_scale: float,
         angle_tune_scale: float,
+        strict_poster_row: bool = False,
     ) -> None:
         spec_count = min(len(images), len(specs))
         if spec_count <= 0:
@@ -1334,15 +1651,15 @@ class CoverStudioService:
         visible_specs = specs[spec_start : spec_start + spec_count]
         visible_images = images[:spec_count]
         focus_index = max(range(len(visible_specs)), key=lambda idx: int(visible_specs[idx].get("elevation", 0)))
-        ordering = sorted(range(spec_count), key=lambda idx: int(visible_specs[idx].get("elevation", 0)))
-        angle_tune = (max(0, min(poster_rotation, 100)) - 50) * angle_tune_scale
+        ordering = list(range(spec_count)) if strict_poster_row else sorted(range(spec_count), key=lambda idx: int(visible_specs[idx].get("elevation", 0)))
+        angle_tune = 0.0 if strict_poster_row else (max(0, min(poster_rotation, 100)) - 50) * angle_tune_scale
         for idx in ordering:
             spec = visible_specs[idx]
             size = spec["size"]
             base_angle = float(spec.get("rotation", 0.0))
             radius = int(spec.get("radius", 22))
             glow_alpha = int(spec.get("glow_alpha", 72 if idx != focus_index else 118))
-            glow_color = tone["glow"] if idx == focus_index else tone["accent"]
+            glow_color = tone["accent"] if strict_poster_row else (tone["glow"] if idx == focus_index else tone["accent"])
             card = self._create_showcase_poster_card(
                 visible_images[idx],
                 size=size,
@@ -1391,21 +1708,35 @@ class CoverStudioService:
             fill=(255, 255, 255, 255),
             shadow=(0, 0, 0, 168),
         )
+        marker_style = str(decor.get("marker") or "").strip().lower()
         line_y = title_y + title_height + int(decor.get("line_gap", 18))
-        line_length = int(decor.get("line_length", 72))
         line_height = int(decor.get("line_height", 5))
-        line_radius = max(2, line_height // 2)
-        line_x = _aligned_x(left, right, line_length, safe_align)
-        draw.rounded_rectangle(
-            (line_x, line_y, line_x + line_length, line_y + line_height),
-            radius=line_radius,
-            fill=(tone["accent"][0], tone["accent"][1], tone["accent"][2], 235),
-        )
+        if marker_style == "vertical":
+            marker_gap = int(decor.get("marker_gap", 26))
+            marker_width = int(decor.get("marker_width", max(4, line_height)))
+            marker_x = title_x - marker_gap
+            marker_top = title_y + max(2, title_height // 8)
+            marker_bottom = title_y + title_height + int(decor.get("subtitle_gap", 18)) + max(18, title_height // 3)
+            draw.rounded_rectangle(
+                (marker_x, marker_top, marker_x + marker_width, marker_bottom),
+                radius=max(2, marker_width // 2),
+                fill=(tone["accent"][0], tone["accent"][1], tone["accent"][2], 220),
+            )
+            subtitle_y = title_y + title_height + int(decor.get("subtitle_gap", 18))
+        else:
+            line_length = int(decor.get("line_length", 72))
+            line_radius = max(2, line_height // 2)
+            line_x = _aligned_x(left, right, line_length, safe_align)
+            draw.rounded_rectangle(
+                (line_x, line_y, line_x + line_length, line_y + line_height),
+                radius=line_radius,
+                fill=(tone["accent"][0], tone["accent"][1], tone["accent"][2], 235),
+            )
+            subtitle_y = line_y + line_height + int(decor.get("subtitle_gap", 18))
         if subtitle_text:
             subtitle_box = draw.textbbox((0, 0), subtitle_text, font=subtitle_font)
             subtitle_width = subtitle_box[2] - subtitle_box[0]
             subtitle_x = _aligned_x(left, right, subtitle_width, safe_align)
-            subtitle_y = line_y + line_height + int(decor.get("subtitle_gap", 18))
             self._draw_text_shadow(
                 draw,
                 (subtitle_x, subtitle_y),
@@ -1671,6 +2002,19 @@ def _normalize_backup_meta(raw: Any) -> dict[str, Any]:
         "path": str(source.get("path") or "").strip(),
         "contentType": str(source.get("contentType") or "image/png").strip() or "image/png",
     }
+
+
+def _normalize_view_ids(value: Any, *, fallback: Any = "") -> list[str]:
+    source = value if isinstance(value, list) else [fallback]
+    rows: list[str] = []
+    seen: set[str] = set()
+    for item in source:
+        view_id = str(item or "").strip()
+        if not view_id or view_id in seen:
+            continue
+        seen.add(view_id)
+        rows.append(view_id)
+    return rows[:30]
 
 
 def _cover_font_dir() -> pathlib.Path:

@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260710-cover-studio-canvas">
+  <link rel="stylesheet" href="styles.css?v=20260711-cover-studio-tabs-2">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -758,7 +758,7 @@
                     <span class="client-chart-title-icon" aria-hidden="true">🏆</span>
                     <h3>历史高频设备 TOP 10</h3>
                   </div>
-                  <span class="client-chart-hint">点击图表筛选</span>
+                  <span class="client-chart-hint">点击设备筛选</span>
                 </div>
                 <div id="client-top-devices-chart" class="client-bar-chart" role="img" aria-label="历史设备TOP10柱状图"></div>
                 <p id="client-top-devices-empty" class="client-chart-empty" hidden>暂无播放历史设备数据。</p>
@@ -832,20 +832,24 @@
                       <div>
                         <h3 id="notify-channel-modal-title">配置渠道</h3>
                         <p id="notify-channel-modal-subtitle">填写当前通知渠道的接入信息与运行设置</p>
+                        <div id="notify-channel-modal-tabs" class="notify-channel-modal-tabs" role="tablist" aria-label="通知渠道配置区域">
+                          <button class="notify-channel-modal-tab" type="button" data-notify-modal-section-target="channel">接入信息</button>
+                          <button class="notify-channel-modal-tab" type="button" data-notify-modal-section-target="platform">平台设置</button>
+                          <button class="notify-channel-modal-tab" type="button" data-notify-modal-section-target="playback">播放通知用户</button>
+                        </div>
                       </div>
                     </div>
                     <button id="notify-channel-modal-close" class="invite-manage-close-icon" type="button" aria-label="关闭通知渠道配置弹窗">×</button>
                   </div>
-                  <div class="notify-channel-modal-content">
-                    <details id="notify-channel-platform-panel" class="notify-channel-platform-panel">
-                      <summary>
-                        <span class="notify-template-summary-copy">
+                  <div id="notify-channel-modal-content" class="notify-channel-modal-content">
+                    <section id="notify-channel-platform-panel" class="notify-channel-platform-panel notify-modal-section" data-notify-modal-section="platform">
+                      <div class="notify-modal-section-head">
+                        <div>
                           <strong>平台设置</strong>
                           <small id="notify-channel-platform-summary">通知开关 · Webhook 状态</small>
-                        </span>
-                        <span class="notify-template-summary-chevron" aria-hidden="true"></span>
-                      </summary>
-                      <div class="notify-template-panel-body">
+                        </div>
+                      </div>
+                      <div class="notify-modal-section-body">
                         <label class="toggle-row notify-platform-toggle">
                           <div>
                             <strong>启用通知平台</strong>
@@ -862,37 +866,31 @@
                             <p id="bot-webhook-status" class="route-status" hidden></p>
                           </div>
                         </div>
-                        <section class="route-card notify-playback-scope-card">
-                          <div class="panel-head compact">
-                            <div>
-                              <strong>播放通知适用用户</strong>
-                              <p class="section-label">用于播放事件通知</p>
-                            </div>
-                          </div>
-                          <div class="notify-playback-scope-mode" role="radiogroup" aria-label="播放通知用户范围">
-                            <label class="notify-playback-scope-pill">
-                              <input id="notify-playback-user-scope-all" type="radio" name="notify-playback-user-scope" value="all">
-                              <span>全部用户</span>
-                            </label>
-                            <label class="notify-playback-scope-pill">
-                              <input id="notify-playback-user-scope-selected" type="radio" name="notify-playback-user-scope" value="selected">
-                              <span>指定用户</span>
-                            </label>
-                          </div>
-                          <p class="hint-text">默认通知全部用户，可按需选择指定用户。</p>
-                          <div id="notify-playback-user-picker" class="notify-playback-user-picker">
-                            <div class="notify-playback-user-picker-head">
-                              <strong>当前 Emby 用户列表</strong>
-                              <button id="notify-playback-users-refresh" class="ghost-btn" type="button">刷新</button>
-                            </div>
-                            <p id="notify-playback-users-status" class="hint-text">正在读取用户列表…</p>
-                            <div id="notify-playback-users-list" class="notify-playback-user-list"></div>
-                          </div>
-                        </section>
                       </div>
-                    </details>
+                    </section>
 
-                    <section id="notify-pane-telegram" class="notify-channel-pane notify-channel-modal-pane" data-notify-pane="telegram">
+                    <section id="notify-playback-scope-card" class="notify-playback-scope-card notify-modal-section" data-notify-modal-section="playback">
+                      <div class="notify-modal-section-head">
+                        <div>
+                          <strong>播放通知适用用户</strong>
+                          <small>开始、暂停、恢复和停止播放共用此规则</small>
+                        </div>
+                      </div>
+                      <div class="notify-modal-section-body">
+                        <div class="notify-playback-scope-mode" role="radiogroup" aria-label="播放通知用户范围">
+                          <label class="notify-playback-scope-pill"><input id="notify-playback-user-scope-all" type="radio" name="notify-playback-user-scope" value="all"><span>全部用户</span></label>
+                          <label class="notify-playback-scope-pill"><input id="notify-playback-user-scope-selected" type="radio" name="notify-playback-user-scope" value="selected"><span>指定用户</span></label>
+                        </div>
+                        <p class="hint-text">默认通知全部用户；选择指定用户后，再勾选下方 Emby 用户。</p>
+                        <div id="notify-playback-user-picker" class="notify-playback-user-picker">
+                          <div class="notify-playback-user-picker-head"><strong>当前 Emby 用户列表</strong><button id="notify-playback-users-refresh" class="ghost-btn" type="button">刷新</button></div>
+                          <p id="notify-playback-users-status" class="hint-text">正在读取用户列表…</p>
+                          <div id="notify-playback-users-list" class="notify-playback-user-list"></div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section id="notify-pane-telegram" class="notify-channel-pane notify-channel-modal-pane notify-modal-section" data-notify-pane="telegram" data-notify-modal-section="channel">
                       <div class="notify-channel-pane-head">
                         <div class="bot-card-title-wrap">
                           <span class="bot-channel-icon bot-channel-icon-telegram" aria-hidden="true"></span>
@@ -939,7 +937,7 @@
                       <p id="notify-telegram-status" class="hint-text">Telegram 未启用</p>
                     </section>
 
-                    <section id="notify-pane-wecom" class="notify-channel-pane notify-channel-modal-pane" data-notify-pane="wecom" hidden>
+                    <section id="notify-pane-wecom" class="notify-channel-pane notify-channel-modal-pane notify-modal-section" data-notify-pane="wecom" data-notify-modal-section="channel" hidden>
                       <div class="notify-channel-pane-head">
                         <div class="bot-card-title-wrap">
                           <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
@@ -1022,10 +1020,7 @@
                 <div id="notify-routes-empty" class="empty-state notify-empty-message" hidden>请先添加并配置至少一个通知渠道，再设置事件路由。</div>
                 <div class="notify-matrix-grid">
                   <section class="notify-matrix-column">
-                    <div class="notify-matrix-head">
-                      <strong>已接入事件</strong>
-                      <span>按通道分别控制真实可发送事件</span>
-                    </div>
+                    <div id="notify-route-channel-tabs" class="notify-workspace-tabs" role="tablist" aria-label="选择通知渠道"></div>
                     <div class="notify-route-groups">
                       <section class="notify-route-group" data-notify-route-pane="telegram">
                         <div class="notify-route-group-head">
@@ -1043,13 +1038,10 @@
                       </section>
                     </div>
                   </section>
-                  <section class="notify-matrix-column notify-matrix-column-upcoming">
-                    <div class="notify-matrix-head">
-                      <strong>未接入事件</strong>
-                      <span>暂未接入运行时，仅做能力预留</span>
-                    </div>
+                  <details class="notify-upcoming-disclosure">
+                    <summary>能力预告 <span>未接入事件</span></summary>
                     <div id="notify-upcoming-events" class="notify-upcoming-list"></div>
-                  </section>
+                  </details>
                 </div>
               </article>
 
@@ -1065,19 +1057,15 @@
                   </div>
                 </div>
                 <div id="notify-templates-empty" class="empty-state notify-empty-message" hidden>请先添加并配置至少一个通知渠道，再编辑模板。</div>
-                <div class="bot-template-grid notify-template-center-grid">
-                  <section class="bot-template-editor notify-template-center-column" data-notify-template-pane="wecom" hidden>
-                    <div class="bot-template-head">
-                      <strong>企业微信模板</strong>
+                <div class="notify-template-workspace">
+                  <div id="notify-template-channel-tabs" class="notify-workspace-tabs" role="tablist" aria-label="选择模板渠道"></div>
+                  <div class="notify-template-workspace-body">
+                    <aside id="notify-template-event-list" class="notify-template-event-list" aria-label="通知事件列表"></aside>
+                    <div id="notify-template-workspace-editor" class="notify-template-workspace-editor">
+                      <div id="notify-template-list-wecom" class="notify-template-list" hidden></div>
+                      <div id="notify-template-list-telegram" class="notify-template-list"></div>
                     </div>
-                    <div id="notify-template-list-wecom" class="notify-template-list"></div>
-                  </section>
-                  <section class="bot-template-editor notify-template-center-column" data-notify-template-pane="telegram">
-                    <div class="bot-template-head">
-                      <strong>Telegram 模板</strong>
-                    </div>
-                    <div id="notify-template-list-telegram" class="notify-template-list"></div>
-                  </section>
+                  </div>
                 </div>
               </article>
             </div>
@@ -1377,6 +1365,11 @@
                         <span id="cover-studio-status-badge" class="tmdb-status-badge is-off">未加载</span>
                       </div>
                     </div>
+                    <div id="cover-studio-mode-tabs" class="cover-studio-mode-tabs" role="tablist" aria-label="封面工坊模式">
+                      <button class="cover-studio-mode-tab is-active" type="button" role="tab" aria-selected="true" data-cover-studio-mode="manual">手动封面</button>
+                      <button class="cover-studio-mode-tab" type="button" role="tab" aria-selected="false" data-cover-studio-mode="auto">自动封面</button>
+                    </div>
+                    <section id="cover-studio-manual-panel" class="cover-studio-mode-panel" role="tabpanel">
                     <div class="cover-studio-shell">
                       <div class="cover-studio-controls">
                         <div class="cover-studio-target-card">
@@ -1388,10 +1381,16 @@
                             <span id="cover-studio-selection-chip" class="cover-studio-selection-chip">未选择</span>
                           </div>
                           <label class="field">
-                            <span>媒体库</span>
-                            <select id="cover-studio-view-select">
+                            <span>媒体库（可多选）</span>
+                            <div class="cover-studio-view-picker-actions">
+                              <button id="cover-studio-select-all-btn" class="text-btn" type="button">全选</button>
+                              <button id="cover-studio-clear-selection-btn" class="text-btn" type="button">清空</button>
+                            </div>
+                            <div id="cover-studio-view-picker" class="cover-studio-view-picker" role="group" aria-label="选择媒体库视图"></div>
+                            <select id="cover-studio-view-select" class="cover-studio-legacy-view-select" aria-hidden="true" tabindex="-1">
                               <option value="">请选择 Emby 视图</option>
                             </select>
+                            <small>每个勾选的媒体库都会分别取图、生成并应用自己的封面。</small>
                           </label>
                           <label class="field">
                             <span>布局模板</span>
@@ -1419,6 +1418,7 @@
                         <label class="field">
                           <span>主标题</span>
                           <input id="cover-studio-title-text" type="text" placeholder="例如：国产动漫">
+                          <small id="cover-studio-title-mode-hint">单选时可自定义标题；多选时自动使用每个媒体库自己的名称。</small>
                         </label>
                         <label class="field">
                           <span>副标题</span>
@@ -1492,17 +1492,67 @@
                         </div>
                       </div>
                     </div>
+                    </section>
+                    <section id="cover-studio-auto-panel" class="cover-studio-mode-panel cover-studio-auto-panel" role="tabpanel" hidden>
+                      <div class="cover-studio-auto-head">
+                        <div>
+                          <h5>自动封面计划</h5>
+                          <p>每条计划只绑定一个媒体库。首次检查建立基线，发现新影视后自动更新 Primary 主图。</p>
+                        </div>
+                      </div>
+                      <div class="cover-studio-auto-workspace">
+                        <div class="cover-studio-auto-editor">
+                          <div class="cover-studio-auto-create">
+                            <label class="field">
+                              <span>媒体库</span>
+                              <select id="cover-studio-schedule-view-select">
+                                <option value="">请选择 Emby 媒体库</option>
+                              </select>
+                            </label>
+                            <label class="field">
+                              <span>计划时间（Cron）</span>
+                              <input id="cover-studio-schedule-cron" type="text" value="*/5 * * * *" placeholder="例如 */5 * * * *">
+                              <small>例如 <code>*/5 * * * *</code> 表示每 5 分钟检查一次。</small>
+                            </label>
+                            <button id="cover-studio-schedule-add-btn" class="primary-btn" type="button">添加自动计划</button>
+                          </div>
+                          <section class="cover-studio-auto-template" aria-label="新建计划封面参数">
+                            <div class="cover-studio-target-head">
+                              <div>
+                                <strong>新建计划参数</strong>
+                                <p>每个计划创建时保存一份独立参数快照。</p>
+                              </div>
+                            </div>
+                            <div class="settings-subgrid cover-studio-auto-template-grid">
+                              <label class="field"><span>布局模板</span><select id="cover-studio-schedule-template-key"></select></label>
+                              <label class="field"><span>取图模式</span><select id="cover-studio-schedule-pick-mode"><option value="random">随机模式</option><option value="recent">最近入库</option></select></label>
+                              <label class="field"><span>主标题</span><input id="cover-studio-schedule-title-text" type="text" placeholder="默认使用媒体库名称"></label>
+                              <label class="field"><span>副标题</span><input id="cover-studio-schedule-subtitle-text" type="text" placeholder="可留空"></label>
+                              <label class="field"><span>字体</span><select id="cover-studio-schedule-font-key"></select></label>
+                              <label class="field"><span>标题对齐</span><select id="cover-studio-schedule-title-align"></select></label>
+                              <label class="field"><span>标题字号</span><input id="cover-studio-schedule-title-size" type="number" min="56" max="180" step="2"></label>
+                              <label class="field"><span>副标题字号</span><input id="cover-studio-schedule-subtitle-size" type="number" min="22" max="72" step="2"></label>
+                              <label class="field"><span>海报数量</span><input id="cover-studio-schedule-poster-count" type="number" min="2" max="8" step="1"></label>
+                              <label class="field"><span>主色倾向</span><select id="cover-studio-schedule-accent-tone"></select></label>
+                              <label class="field"><span>旋转幅度</span><input id="cover-studio-schedule-poster-rotation" type="number" min="0" max="100" step="2"></label>
+                              <label class="field"><span>标题纵向位置</span><input id="cover-studio-schedule-title-y-offset" type="number" min="-160" max="160" step="4"></label>
+                            </div>
+                          </section>
+                          <p class="cover-studio-auto-note">计划创建后，以上参数会独立保存，不受手动页面后续修改影响。</p>
+                        </div>
+                        <div class="cover-studio-auto-preview-card">
+                          <div id="cover-studio-schedule-preview-stage" class="cover-studio-preview-stage">
+                            <div class="empty-state">选择媒体库并生成预览后，会在这里显示自动封面。</div>
+                          </div>
+                          <button id="cover-studio-schedule-preview-btn" class="primary-btn" type="button">生成预览</button>
+                        </div>
+                      </div>
+                      <div id="cover-studio-schedule-list" class="cover-studio-schedule-list">
+                        <div class="empty-state">暂无自动封面计划。</div>
+                      </div>
+                    </section>
                   </section>
 
-                  <section class="settings-card field-span-2 cover-studio-roadmap-card">
-                    <div class="settings-card-head">
-                      <div>
-                        <h4>后续工位</h4>
-                        <p>这一页后续继续承接媒体修复、清洗和批量加工能力。</p>
-                      </div>
-                    </div>
-                    <div class="empty-state">当前已启用封面工坊，其它工位后续再逐步接入。</div>
-                  </section>
                 </div>
               </div>
             </div>
@@ -2144,7 +2194,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260710-cover-studio-canvas"></script>
+  <script src="script.js?v=20260711-cover-studio-tabs-2"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

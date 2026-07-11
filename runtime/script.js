@@ -179,6 +179,7 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
   lastViewId: "",
   draft: {
     viewId: "",
+    viewIds: [],
     templateKey: "fan_spread",
     pickMode: "random",
     titleText: "",
@@ -215,7 +216,16 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
       lockedItemIds: []
     }
   ],
-  backups: {}
+  backups: {},
+  schedule: {
+    enabled: false,
+    cron: "0 */6 * * *",
+    lastRunAt: "",
+    lastStatus: "idle",
+    lastMessage: "未启用自动更新。",
+    lastResultCount: 0
+  },
+  schedules: []
 };
 
 const DEFAULT_COVER_STUDIO_MODES = [
@@ -331,6 +341,10 @@ const appState = {
   notificationConfig: loadJson(STORAGE_KEYS.notificationConfig, DEFAULT_NOTIFICATION_CONFIG),
   aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
   coverStudioConfig: loadJson(STORAGE_KEYS.coverStudioConfig, DEFAULT_COVER_STUDIO_CONFIG),
+  coverStudioMode: "manual",
+  coverStudioScheduleDraft: null,
+  coverStudioSchedulePreviewDataUrl: "",
+  coverStudioSchedulePreviewLoading: false,
   libraryDirectoryConfig: loadJson(STORAGE_KEYS.libraryDirectoryConfig, DEFAULT_LIBRARY_DIRECTORY_CONFIG),
   drive115Config: loadJson(STORAGE_KEYS.drive115Config, DEFAULT_DRIVE115_CONFIG),
   hdhiveConfig: loadJson(STORAGE_KEYS.hdhiveConfig, DEFAULT_HDHIVE_CONFIG),
@@ -382,6 +396,7 @@ const appState = {
   coverStudioViews: [],
   coverStudioPreviewToken: "",
   coverStudioPreviewDataUrl: "",
+  coverStudioPreviews: [],
   coverStudioSelectedItems: [],
   coverStudioLoading: false,
   missingRows: [],
@@ -445,6 +460,9 @@ const appState = {
   notificationChannelMenuOpen: false,
   notificationChannelModalChannel: "",
   notificationChannelDraftChannel: "",
+  notificationWorkspaceChannel: "telegram",
+  notificationWorkspaceEvent: "",
+  notificationModalSection: "channel",
   qualityRescanPromise: null,
   qualityLastScanAt: Number(localStorage.getItem(STORAGE_KEYS.qualityLastScanAt) || 0) || 0,
   liveSessionsRefreshPromise: null,
@@ -825,7 +843,8 @@ function normalizeCoverStudioConfig(rawConfig) {
   const draftTemplateKey = normalizeTemplateKey(draftSource.templateKey);
   const draftDefaults = resolveModeDefaults(draftTemplateKey);
   const draft = {
-    viewId: String(draftSource.viewId || "").trim(),
+    viewId: "",
+    viewIds: [],
     templateKey: draftTemplateKey,
     pickMode: String(draftSource.pickMode || "random").trim().toLowerCase() === "recent" ? "recent" : "random",
     titleText: String(draftSource.titleText || "").trim(),
@@ -844,6 +863,9 @@ function normalizeCoverStudioConfig(rawConfig) {
       ? draftSource.lockedItemIds.map((item) => String(item || "").trim()).filter(Boolean)
       : []
   };
+  const viewIdSource = Array.isArray(draftSource.viewIds) ? draftSource.viewIds : [draftSource.viewId];
+  draft.viewIds = [...new Set(viewIdSource.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 30);
+  draft.viewId = draft.viewIds[0] || "";
   const presets = Array.isArray(config.presets) && config.presets.length
     ? config.presets
         .map((item, index) => {
@@ -892,12 +914,51 @@ function normalizeCoverStudioConfig(rawConfig) {
         : { primary: {}, thumb: {}, appliedAt: "" }
     ])
   );
+  const scheduleSource = config.schedule && typeof config.schedule === "object" ? config.schedule : {};
+  const schedule = {
+    enabled: Boolean(scheduleSource.enabled),
+    cron: String(scheduleSource.cron || "0 */6 * * *").trim() || "0 */6 * * *",
+    lastRunAt: String(scheduleSource.lastRunAt || "").trim(),
+    lastStatus: String(scheduleSource.lastStatus || "idle").trim().toLowerCase(),
+    lastMessage: String(scheduleSource.lastMessage || "未启用自动更新。").trim(),
+    lastResultCount: Math.max(0, Number.parseInt(String(scheduleSource.lastResultCount || 0), 10) || 0)
+  };
+  const schedules = Array.isArray(config.schedules)
+    ? config.schedules
+        .map((item) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+          const viewId = String(item.viewId || "").trim();
+          if (!viewId) {
+            return null;
+          }
+          const templateSource = item.template && typeof item.template === "object" ? item.template : draft;
+          return {
+            id: String(item.id || `view-${viewId}`).trim() || `view-${viewId}`,
+            viewId,
+            viewName: String(item.viewName || "").trim(),
+            enabled: Boolean(item.enabled),
+            cron: String(item.cron || "0 */6 * * *").trim() || "0 */6 * * *",
+            template: { ...templateSource },
+            fingerprint: item.fingerprint && typeof item.fingerprint === "object" ? item.fingerprint : {},
+            initializedAt: String(item.initializedAt || "").trim(),
+            lastCheckedAt: String(item.lastCheckedAt || "").trim(),
+            lastUpdatedAt: String(item.lastUpdatedAt || "").trim(),
+            lastStatus: String(item.lastStatus || "idle").trim(),
+            lastMessage: String(item.lastMessage || "尚未检查。").trim()
+          };
+        })
+        .filter(Boolean)
+    : [];
   return {
     currentPresetId: String(config.currentPresetId || presets[0]?.id || "default").trim() || presets[0]?.id || "default",
     lastViewId: String(config.lastViewId || draft.viewId || "").trim(),
     draft,
     presets,
-    backups
+    backups,
+    schedule,
+    schedules
   };
 }
 
@@ -1190,11 +1251,35 @@ const elements = {
   coverStudioStatusBadge: document.getElementById("cover-studio-status-badge"),
   coverStudioSelectionChip: document.getElementById("cover-studio-selection-chip"),
   coverStudioViewSelect: document.getElementById("cover-studio-view-select"),
+  coverStudioViewPicker: document.getElementById("cover-studio-view-picker"),
+  coverStudioSelectAllBtn: document.getElementById("cover-studio-select-all-btn"),
+  coverStudioClearSelectionBtn: document.getElementById("cover-studio-clear-selection-btn"),
   coverStudioTemplateKey: document.getElementById("cover-studio-template-key"),
   coverStudioPickMode: document.getElementById("cover-studio-pick-mode"),
   coverStudioPresetName: document.getElementById("cover-studio-preset-name"),
   coverStudioSaveCurrentBtn: document.getElementById("cover-studio-save-current-btn"),
   coverStudioSaveAsBtn: document.getElementById("cover-studio-save-as-btn"),
+  coverStudioModeTabs: document.getElementById("cover-studio-mode-tabs"),
+  coverStudioManualPanel: document.getElementById("cover-studio-manual-panel"),
+  coverStudioAutoPanel: document.getElementById("cover-studio-auto-panel"),
+  coverStudioScheduleViewSelect: document.getElementById("cover-studio-schedule-view-select"),
+  coverStudioScheduleCron: document.getElementById("cover-studio-schedule-cron"),
+  coverStudioScheduleTemplateKey: document.getElementById("cover-studio-schedule-template-key"),
+  coverStudioSchedulePickMode: document.getElementById("cover-studio-schedule-pick-mode"),
+  coverStudioScheduleTitleText: document.getElementById("cover-studio-schedule-title-text"),
+  coverStudioScheduleSubtitleText: document.getElementById("cover-studio-schedule-subtitle-text"),
+  coverStudioScheduleFontKey: document.getElementById("cover-studio-schedule-font-key"),
+  coverStudioScheduleTitleAlign: document.getElementById("cover-studio-schedule-title-align"),
+  coverStudioScheduleTitleSize: document.getElementById("cover-studio-schedule-title-size"),
+  coverStudioScheduleSubtitleSize: document.getElementById("cover-studio-schedule-subtitle-size"),
+  coverStudioSchedulePosterCount: document.getElementById("cover-studio-schedule-poster-count"),
+  coverStudioScheduleAccentTone: document.getElementById("cover-studio-schedule-accent-tone"),
+  coverStudioSchedulePosterRotation: document.getElementById("cover-studio-schedule-poster-rotation"),
+  coverStudioScheduleTitleYOffset: document.getElementById("cover-studio-schedule-title-y-offset"),
+  coverStudioSchedulePreviewStage: document.getElementById("cover-studio-schedule-preview-stage"),
+  coverStudioSchedulePreviewBtn: document.getElementById("cover-studio-schedule-preview-btn"),
+  coverStudioScheduleAddBtn: document.getElementById("cover-studio-schedule-add-btn"),
+  coverStudioScheduleList: document.getElementById("cover-studio-schedule-list"),
   coverStudioTitleText: document.getElementById("cover-studio-title-text"),
   coverStudioSubtitleText: document.getElementById("cover-studio-subtitle-text"),
   coverStudioFontKey: document.getElementById("cover-studio-font-key"),
@@ -1477,12 +1562,14 @@ const elements = {
   notifyChannelModalTitle: document.getElementById("notify-channel-modal-title"),
   notifyChannelModalSubtitle: document.getElementById("notify-channel-modal-subtitle"),
   notifyChannelModalIcon: document.getElementById("notify-channel-modal-icon"),
+  notifyChannelModalContent: document.getElementById("notify-channel-modal-content"),
   notifyChannelPlatformPanel: document.getElementById("notify-channel-platform-panel"),
   notifyChannelPlatformSummary: document.getElementById("notify-channel-platform-summary"),
   notifyChannelModalTest: document.getElementById("notify-channel-modal-test"),
   notifyChannelModalSave: document.getElementById("notify-channel-modal-save"),
   notifyPlaybackUserScopeAll: document.getElementById("notify-playback-user-scope-all"),
   notifyPlaybackUserScopeSelected: document.getElementById("notify-playback-user-scope-selected"),
+  notifyPlaybackScopeCard: document.getElementById("notify-playback-scope-card"),
   notifyPlaybackUsersRefresh: document.getElementById("notify-playback-users-refresh"),
   notifyPlaybackUsersStatus: document.getElementById("notify-playback-users-status"),
   notifyPlaybackUsersList: document.getElementById("notify-playback-users-list"),
@@ -1511,7 +1598,11 @@ const elements = {
   notifyTemplatesSave: document.getElementById("notify-templates-save"),
   botTemplateReset: document.getElementById("bot-template-reset"),
   notifyRoutesEmpty: document.getElementById("notify-routes-empty"),
+  notifyRouteChannelTabs: document.getElementById("notify-route-channel-tabs"),
   notifyTemplatesEmpty: document.getElementById("notify-templates-empty"),
+  notifyTemplateChannelTabs: document.getElementById("notify-template-channel-tabs"),
+  notifyTemplateEventList: document.getElementById("notify-template-event-list"),
+  notifyTemplateWorkspaceEditor: document.getElementById("notify-template-workspace-editor"),
   notifyRouteGridTelegram: document.getElementById("notify-route-grid-telegram"),
   notifyRouteGridWecom: document.getElementById("notify-route-grid-wecom"),
   notifyUpcomingEvents: document.getElementById("notify-upcoming-events"),
@@ -6185,94 +6276,55 @@ function renderClientTopDevicesChart(items) {
   }
 
   const maxCount = Math.max(...items.map((item) => item.count), 1);
-  const stepCount = 5;
-  const axisMax = Math.max(50, Math.ceil(maxCount / 50) * 50);
-  const stepValue = axisMax / stepCount;
-  const yTicks = Array.from({ length: stepCount + 1 }, (_, index) =>
-    String(Math.round(axisMax - stepValue * index))
-  );
-  const bars = items
+  const totalCount = items.reduce((sum, item) => sum + Number(item.count || 0), 0);
+  const activeFilter = String(appState.clientDeviceFilter || "").trim();
+  const rows = items
     .map((item, index) => {
-      const ratio = Math.max(8, Math.round((item.count / axisMax) * 100));
-      const shortLabel = truncateLabel(item.label, 14);
+      const ratio = Math.max(6, Math.round((item.count / maxCount) * 100));
+      const share = totalCount > 0 ? Math.round((item.count / totalCount) * 100) : 0;
+      const isSelected = activeFilter === item.label;
       return `
-        <div class="client-bar-col" data-index="${index}" data-label="${escapeHtml(item.label)}" data-count="${item.count}">
-          <span class="client-bar-value">${item.count}</span>
-          <div class="client-bar-track">
-            <span class="client-bar-fill" style="height:${ratio}%"></span>
-          </div>
-          <span class="client-bar-label" title="${escapeHtml(item.label)}">${escapeHtml(shortLabel)}</span>
-        </div>
+        <button
+          class="client-device-rank-row${isSelected ? " is-selected" : ""}"
+          type="button"
+          data-index="${index}"
+          data-label="${escapeHtml(item.label)}"
+          data-count="${item.count}"
+          aria-pressed="${isSelected ? "true" : "false"}"
+          title="点击${isSelected ? "取消" : "按"}${escapeHtml(item.label)}筛选"
+        >
+          <span class="client-device-rank-number">${String(index + 1).padStart(2, "0")}</span>
+          <span class="client-device-rank-main">
+            <span class="client-device-rank-label">${escapeHtml(item.label)}</span>
+            <span class="client-device-rank-meter" aria-hidden="true"><i style="--device-rank-progress:${ratio}%;"></i></span>
+          </span>
+          <span class="client-device-rank-count"><strong>${item.count}</strong><em>次播放</em></span>
+          <span class="client-device-rank-share">${share}%</span>
+        </button>
       `;
     })
     .join("");
 
-  const yAxis = yTicks.map((tick) => `<span>${tick}</span>`).join("");
   elements.clientTopDevicesChart.innerHTML = `
-    <div class="client-bar-chart-shell">
-      <div class="client-bar-y-axis">${yAxis}</div>
-      <div class="client-bar-plot" style="--bar-count:${Math.max(1, items.length)};">
-        ${bars}
-        <div class="client-bar-tooltip" hidden></div>
+    <div class="client-device-ranking${items.length === 1 ? " is-single" : ""}">
+      <div class="client-device-ranking-summary">
+        <span class="client-device-ranking-kicker">${items.length === 1 ? "唯一活跃设备" : `共 ${items.length} 台设备有播放记录`}</span>
+        <span class="client-device-ranking-total">${totalCount} <em>次历史播放</em></span>
       </div>
+      <div class="client-device-ranking-list">${rows}</div>
     </div>
   `;
 
-  const plot = elements.clientTopDevicesChart.querySelector(".client-bar-plot");
-  const tooltip = elements.clientTopDevicesChart.querySelector(".client-bar-tooltip");
-  const barCols = elements.clientTopDevicesChart.querySelectorAll(".client-bar-col");
-  if (!plot || !tooltip || !barCols.length) {
+  const rankingRows = elements.clientTopDevicesChart.querySelectorAll(".client-device-rank-row");
+  if (!rankingRows.length) {
     elements.clientTopDevicesChart.hidden = false;
     elements.clientTopDevicesEmpty.hidden = true;
     return;
   }
 
-  function hideTooltip() {
-    tooltip.hidden = true;
-    barCols.forEach((col) => col.classList.remove("is-active"));
-  }
-
-  function showTooltip(col) {
-    const label = String(col.getAttribute("data-label") || "").trim() || "未知设备";
-    const count = Number(col.getAttribute("data-count") || 0);
-    tooltip.innerHTML = `
-      <strong>${escapeHtml(label)}</strong>
-      <span>历史播放次数：${count}</span>
-    `;
-    tooltip.hidden = false;
-
-    const fill = col.querySelector(".client-bar-fill");
-    const colRect = col.getBoundingClientRect();
-    const fillRect = fill ? fill.getBoundingClientRect() : colRect;
-    const plotRect = plot.getBoundingClientRect();
-    const tipRect = tooltip.getBoundingClientRect();
-    const anchorX = fillRect.left - plotRect.left + fillRect.width / 2;
-    const anchorY = fillRect.top - plotRect.top + Math.min(14, fillRect.height * 0.25);
-    const padding = 8;
-    const left = Math.min(
-      Math.max(padding, anchorX - tipRect.width / 2),
-      Math.max(padding, plotRect.width - tipRect.width - padding)
-    );
-    const top = Math.min(
-      Math.max(padding, anchorY - tipRect.height - 6),
-      Math.max(padding, plotRect.height - tipRect.height - padding)
-    );
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-  }
-
-  barCols.forEach((col) => {
-    col.onpointerenter = () => {
-      barCols.forEach((item) => item.classList.remove("is-active"));
-      col.classList.add("is-active");
-      showTooltip(col);
-    };
-    col.onpointermove = null;
-    col.onpointerleave = () => {
-      hideTooltip();
-    };
-    col.onclick = () => {
-      const label = String(col.getAttribute("data-label") || "").trim();
+  rankingRows.forEach((row) => {
+    row.onclick = () => {
+      const label = String(row.getAttribute("data-label") || "").trim();
       if (!label) {
         return;
       }
@@ -6283,10 +6335,6 @@ function renderClientTopDevicesChart(items) {
       renderClientControl();
     };
   });
-
-  plot.onpointerleave = () => {
-    hideTooltip();
-  };
 
   elements.clientTopDevicesChart.hidden = false;
   elements.clientTopDevicesEmpty.hidden = true;
@@ -7237,11 +7285,13 @@ function updateLibraryDirectoryFeedback(options = {}) {
 }
 
 function readCoverStudioDraftFromInputs() {
+  const viewIds = getSelectedCoverStudioViewIds();
   return normalizeCoverStudioConfig({
     ...appState.coverStudioConfig,
     draft: {
       ...(appState.coverStudioConfig?.draft || {}),
-      viewId: String(elements.coverStudioViewSelect?.value || "").trim(),
+      viewId: viewIds[0] || "",
+      viewIds,
       templateKey: String(elements.coverStudioTemplateKey?.value || "fan_spread").trim() || "fan_spread",
       pickMode: String(elements.coverStudioPickMode?.value || "random").trim(),
       titleText: String(elements.coverStudioTitleText?.value || "").trim(),
@@ -7260,6 +7310,23 @@ function readCoverStudioDraftFromInputs() {
   }).draft;
 }
 
+function getSelectedCoverStudioViewIds() {
+  const checked = elements.coverStudioViewPicker
+    ? [...elements.coverStudioViewPicker.querySelectorAll('input[type="checkbox"]:checked')]
+        .map((input) => String(input.value || "").trim())
+        .filter(Boolean)
+    : [];
+  if (elements.coverStudioViewPicker) {
+    return [...new Set(checked)].slice(0, 30);
+  }
+  const draftIds = appState.coverStudioConfig?.draft?.viewIds;
+  if (Array.isArray(draftIds) && draftIds.length) {
+    return [...new Set(draftIds.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 30);
+  }
+  const legacy = String(elements.coverStudioViewSelect?.value || appState.coverStudioConfig?.draft?.viewId || "").trim();
+  return legacy ? [legacy] : [];
+}
+
 function getCoverStudioModeMeta(templateKey) {
   const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
     ? appState.coverStudioModes
@@ -7270,6 +7337,7 @@ function getCoverStudioModeMeta(templateKey) {
 function clearCoverStudioPreview({ keepFeedback = false } = {}) {
   appState.coverStudioPreviewToken = "";
   appState.coverStudioPreviewDataUrl = "";
+  appState.coverStudioPreviews = [];
   appState.coverStudioSelectedItems = [];
   if (!keepFeedback && elements.coverStudioFeedback) {
     elements.coverStudioFeedback.textContent = "参数已更新，请重新生成预览。";
@@ -7358,7 +7426,11 @@ function renderCoverStudioViews() {
   if (!elements.coverStudioViewSelect) {
     return;
   }
-  const current = String(appState.coverStudioConfig?.draft?.viewId || appState.coverStudioConfig?.lastViewId || "").trim();
+  const draftViewIds = Array.isArray(appState.coverStudioConfig?.draft?.viewIds)
+    ? appState.coverStudioConfig.draft.viewIds
+    : [appState.coverStudioConfig?.draft?.viewId || appState.coverStudioConfig?.lastViewId || ""];
+  const selectedIds = new Set(draftViewIds.map((item) => String(item || "").trim()).filter(Boolean));
+  const current = [...selectedIds][0] || "";
   const options = ['<option value="">请选择 Emby 视图</option>'];
   (appState.coverStudioViews || []).forEach((view) => {
     options.push(buildCoverStudioViewOption(view));
@@ -7366,6 +7438,19 @@ function renderCoverStudioViews() {
   elements.coverStudioViewSelect.innerHTML = options.join("");
   if ((appState.coverStudioViews || []).some((view) => String(view.id) === current)) {
     elements.coverStudioViewSelect.value = current;
+  }
+  if (elements.coverStudioViewPicker) {
+    const views = appState.coverStudioViews || [];
+    elements.coverStudioViewPicker.innerHTML = views.length
+      ? views
+          .map((view) => {
+            const id = String(view?.id || "").trim();
+            const count = Number(view?.recursiveItemCount || view?.childCount || 0);
+            const suffix = count > 0 ? `${count} 项` : "媒体库视图";
+            return `<label class="cover-studio-view-option"><input type="checkbox" value="${escapeHtml(id)}"${selectedIds.has(id) ? " checked" : ""}><span>${escapeHtml(view?.name || "未命名视图")}</span><small>${escapeHtml(suffix)}</small></label>`;
+          })
+          .join("")
+      : '<div class="cover-studio-view-empty">暂无可选 Emby 媒体库视图。</div>';
   }
 }
 
@@ -7383,7 +7468,10 @@ function renderCoverStudioPreview() {
     elements.coverStudioPreviewState.textContent = appState.coverStudioPreviewDataUrl ? "已有预览" : "未生成";
   }
   if (elements.coverStudioSelectedItems) {
-    elements.coverStudioSelectedItems.textContent = items.length
+    const previewCount = Array.isArray(appState.coverStudioPreviews) ? appState.coverStudioPreviews.length : 0;
+    elements.coverStudioSelectedItems.textContent = previewCount > 1
+      ? `已为 ${previewCount} 个媒体库分别生成预览；当前展示第一份。`
+      : items.length
       ? `已选海报：${items.map((item) => String(item?.name || item?.id || "")).filter(Boolean).join(" / ")}`
       : "当前还没有取图结果。";
   }
@@ -7438,9 +7526,10 @@ function renderCoverStudioModeControls() {
 
 function renderCoverStudioStatus() {
   const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
-  const selectedView = (appState.coverStudioViews || []).find((view) => String(view.id) === String(draft.viewId || ""));
+  const selectedViewIds = Array.isArray(draft.viewIds) && draft.viewIds.length ? draft.viewIds : [draft.viewId];
+  const selectedViews = (appState.coverStudioViews || []).filter((view) => selectedViewIds.includes(String(view.id)));
   if (elements.coverStudioSelectionChip) {
-    elements.coverStudioSelectionChip.textContent = selectedView ? "已选择" : "未选择";
+    elements.coverStudioSelectionChip.textContent = selectedViews.length ? `已选 ${selectedViews.length} 个` : "未选择";
   }
   if (elements.coverStudioStatusBadge) {
     const ready = Boolean(appState.coverStudioViews?.length);
@@ -7450,12 +7539,246 @@ function renderCoverStudioStatus() {
   }
   if (elements.coverStudioRestoreBtn) {
     const backups = appState.coverStudioConfig?.backups || {};
-    const status = backups[String(draft.viewId || "").trim()] || {};
-    const hasBackup = Boolean(status?.primary?.path);
+    const hasBackup = selectedViews.some((view) => Boolean((backups[String(view.id || "").trim()] || {})?.primary?.path));
     elements.coverStudioRestoreBtn.disabled = !hasBackup;
   }
   if (elements.coverStudioApplyBtn) {
-    elements.coverStudioApplyBtn.disabled = !selectedView || !appState.coverStudioPreviewToken;
+    elements.coverStudioApplyBtn.disabled = !selectedViews.length || !(appState.coverStudioPreviews?.length || appState.coverStudioPreviewToken);
+  }
+}
+
+function buildCoverStudioScheduleTemplate(draft) {
+  return {
+    templateKey: String(draft.templateKey || "fan_spread"),
+    pickMode: String(draft.pickMode || "random"),
+    titleText: String(draft.titleText || ""),
+    subtitleText: String(draft.subtitleText || ""),
+    fontKey: String(draft.fontKey || "hiragino"),
+    titleFontSize: Number(draft.titleFontSize || 108),
+    subtitleFontSize: Number(draft.subtitleFontSize || 44),
+    titleAlign: String(draft.titleAlign || "left"),
+    posterCount: Number(draft.posterCount || 5),
+    accentTone: String(draft.accentTone || "blue"),
+    posterRotation: Number(draft.posterRotation || 42),
+    titleYOffset: Number(draft.titleYOffset || 0)
+  };
+}
+
+function getCoverStudioScheduleTemplateDraft() {
+  if (appState.coverStudioScheduleDraft) {
+    return appState.coverStudioScheduleDraft;
+  }
+  return buildCoverStudioScheduleTemplate(readCoverStudioDraftFromInputs());
+}
+
+function setCoverStudioScheduleSelectOptions(element, options, selected) {
+  if (!element) {
+    return;
+  }
+  element.innerHTML = options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`).join("");
+  const fallback = options[0]?.key || "";
+  element.value = options.some((option) => option.key === selected) ? selected : fallback;
+}
+
+function renderCoverStudioScheduleTemplateInputs() {
+  const draft = getCoverStudioScheduleTemplateDraft();
+  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
+    ? appState.coverStudioModes
+    : DEFAULT_COVER_STUDIO_MODES;
+  const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
+    ? appState.coverStudioFonts
+    : [{ key: "hiragino", label: "苹方黑体" }];
+  const tones = Array.isArray(appState.coverStudioAccentTones) && appState.coverStudioAccentTones.length
+    ? appState.coverStudioAccentTones
+    : DEFAULT_COVER_STUDIO_ACCENT_TONES;
+  const alignments = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
+    ? appState.coverStudioTitleAlignOptions
+    : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
+  setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleTemplateKey, modes, draft.templateKey);
+  setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleFontKey, fonts, draft.fontKey);
+  setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleAccentTone, tones, draft.accentTone);
+  setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleTitleAlign, alignments, draft.titleAlign);
+  if (elements.coverStudioSchedulePickMode) {
+    elements.coverStudioSchedulePickMode.value = draft.pickMode === "recent" ? "recent" : "random";
+  }
+  if (elements.coverStudioScheduleTitleText) elements.coverStudioScheduleTitleText.value = draft.titleText || "";
+  if (elements.coverStudioScheduleSubtitleText) elements.coverStudioScheduleSubtitleText.value = draft.subtitleText || "";
+  if (elements.coverStudioScheduleTitleSize) elements.coverStudioScheduleTitleSize.value = String(draft.titleFontSize || 108);
+  if (elements.coverStudioScheduleSubtitleSize) elements.coverStudioScheduleSubtitleSize.value = String(draft.subtitleFontSize || 44);
+  if (elements.coverStudioSchedulePosterCount) elements.coverStudioSchedulePosterCount.value = String(draft.posterCount || 5);
+  if (elements.coverStudioSchedulePosterRotation) elements.coverStudioSchedulePosterRotation.value = String(draft.posterRotation || 42);
+  if (elements.coverStudioScheduleTitleYOffset) elements.coverStudioScheduleTitleYOffset.value = String(Number(draft.titleYOffset || 0));
+}
+
+function readCoverStudioScheduleTemplateFromInputs() {
+  const fallback = getCoverStudioScheduleTemplateDraft();
+  const value = (element, defaultValue = "") => String(element?.value ?? defaultValue).trim();
+  const numberValue = (element, defaultValue) => {
+    const parsed = Number(element?.value);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
+  };
+  return {
+    templateKey: value(elements.coverStudioScheduleTemplateKey, fallback.templateKey) || fallback.templateKey,
+    pickMode: value(elements.coverStudioSchedulePickMode, fallback.pickMode) === "recent" ? "recent" : "random",
+    titleText: value(elements.coverStudioScheduleTitleText, fallback.titleText),
+    subtitleText: value(elements.coverStudioScheduleSubtitleText, fallback.subtitleText),
+    fontKey: value(elements.coverStudioScheduleFontKey, fallback.fontKey) || fallback.fontKey,
+    titleFontSize: numberValue(elements.coverStudioScheduleTitleSize, fallback.titleFontSize),
+    subtitleFontSize: numberValue(elements.coverStudioScheduleSubtitleSize, fallback.subtitleFontSize),
+    titleAlign: value(elements.coverStudioScheduleTitleAlign, fallback.titleAlign) || fallback.titleAlign,
+    posterCount: numberValue(elements.coverStudioSchedulePosterCount, fallback.posterCount),
+    accentTone: value(elements.coverStudioScheduleAccentTone, fallback.accentTone) || fallback.accentTone,
+    posterRotation: numberValue(elements.coverStudioSchedulePosterRotation, fallback.posterRotation),
+    titleYOffset: numberValue(elements.coverStudioScheduleTitleYOffset, fallback.titleYOffset)
+  };
+}
+
+function readCoverStudioSchedulePreviewDraft() {
+  const viewId = String(elements.coverStudioScheduleViewSelect?.value || "").trim();
+  return {
+    ...readCoverStudioScheduleTemplateFromInputs(),
+    viewId,
+    viewIds: viewId ? [viewId] : [],
+    overlayStrength: 0,
+    lockedItemIds: [],
+    previewOnly: true
+  };
+}
+
+function renderCoverStudioSchedulePreview() {
+  if (!elements.coverStudioSchedulePreviewStage) {
+    return;
+  }
+  elements.coverStudioSchedulePreviewStage.innerHTML = appState.coverStudioSchedulePreviewDataUrl
+    ? `<img src="${appState.coverStudioSchedulePreviewDataUrl}" alt="自动封面预览">`
+    : '<div class="empty-state">选择媒体库并生成预览后，会在这里显示自动封面。</div>';
+}
+
+function clearCoverStudioSchedulePreview() {
+  appState.coverStudioSchedulePreviewDataUrl = "";
+  renderCoverStudioSchedulePreview();
+}
+
+function setCoverStudioMode(mode) {
+  const nextMode = mode === "auto" ? "auto" : "manual";
+  appState.coverStudioMode = nextMode;
+  elements.coverStudioManualPanel?.toggleAttribute("hidden", nextMode !== "manual");
+  elements.coverStudioAutoPanel?.toggleAttribute("hidden", nextMode !== "auto");
+  elements.coverStudioModeTabs?.querySelectorAll("[data-cover-studio-mode]").forEach((button) => {
+    const isActive = button.dataset.coverStudioMode === nextMode;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+}
+
+function renderCoverStudioScheduleViewOptions() {
+  const select = elements.coverStudioScheduleViewSelect;
+  if (!select) {
+    return;
+  }
+  const selected = String(select.value || "").trim();
+  const scheduledIds = new Set((appState.coverStudioConfig?.schedules || []).map((plan) => String(plan?.viewId || "").trim()));
+  const availableViews = (appState.coverStudioViews || []).filter((view) => !scheduledIds.has(String(view?.id || "").trim()));
+  select.innerHTML = ['<option value="">请选择 Emby 媒体库</option>']
+    .concat(availableViews.map((view) => `<option value="${escapeHtml(view.id)}">${escapeHtml(view.name || view.id)}</option>`))
+    .join("");
+  if (availableViews.some((view) => String(view?.id || "") === selected)) {
+    select.value = selected;
+  }
+  if (elements.coverStudioScheduleAddBtn) {
+    elements.coverStudioScheduleAddBtn.disabled = !availableViews.length;
+    elements.coverStudioScheduleAddBtn.textContent = availableViews.length ? "添加自动计划" : "已全部添加";
+  }
+}
+
+function renderCoverStudioSchedules() {
+  renderCoverStudioScheduleTemplateInputs();
+  renderCoverStudioScheduleViewOptions();
+  renderCoverStudioSchedulePreview();
+  if (!elements.coverStudioScheduleList) {
+    return;
+  }
+  const schedules = Array.isArray(appState.coverStudioConfig?.schedules) ? appState.coverStudioConfig.schedules : [];
+  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
+    ? appState.coverStudioModes
+    : DEFAULT_COVER_STUDIO_MODES;
+  if (!schedules.length) {
+    elements.coverStudioScheduleList.innerHTML = '<div class="empty-state">暂无自动封面计划。选择一个媒体库后即可创建。</div>';
+    return;
+  }
+  elements.coverStudioScheduleList.innerHTML = schedules.map((plan) => {
+    const template = plan.template && typeof plan.template === "object" ? plan.template : {};
+    const selectedTemplate = String(template.templateKey || "fan_spread");
+    const selectedPickMode = String(template.pickMode || "random");
+    const modeOptions = modes.map((mode) => `<option value="${escapeHtml(mode.key)}"${mode.key === selectedTemplate ? " selected" : ""}>${escapeHtml(mode.label)}</option>`).join("");
+    const lastText = plan.lastCheckedAt ? `最近检查：${escapeHtml(plan.lastCheckedAt)}` : "尚未检查";
+    const updateText = plan.lastUpdatedAt ? `最近更新：${escapeHtml(plan.lastUpdatedAt)}` : "尚未更新";
+    return `<article class="cover-studio-schedule-plan" data-schedule-id="${escapeHtml(plan.id)}">
+      <div class="cover-studio-schedule-plan-head">
+        <div><strong>${escapeHtml(plan.viewName || plan.viewId)}</strong><small>${lastText} · ${updateText}</small><small>${escapeHtml(plan.lastMessage || "尚未检查。")}</small></div>
+        <label class="switch-row" aria-label="启用 ${escapeHtml(plan.viewName || plan.viewId)} 自动封面"><input data-schedule-field="enabled" type="checkbox"${plan.enabled ? " checked" : ""}><span class="switch-track"></span></label>
+      </div>
+      <div class="cover-studio-schedule-plan-fields">
+        <label><span>Cron</span><input data-schedule-field="cron" type="text" value="${escapeHtml(plan.cron || "0 */6 * * *")}"></label>
+        <label><span>模板</span><select data-schedule-field="templateKey">${modeOptions}</select></label>
+        <label><span>取图</span><select data-schedule-field="pickMode"><option value="recent"${selectedPickMode === "recent" ? " selected" : ""}>最近入库</option><option value="random"${selectedPickMode === "random" ? " selected" : ""}>随机</option></select></label>
+      </div>
+      <div class="cover-studio-schedule-plan-actions">
+        <button class="ghost-btn" type="button" data-schedule-action="save">保存</button>
+        <button class="ghost-btn" type="button" data-schedule-action="check">立即检查</button>
+        <button class="ghost-btn" type="button" data-schedule-action="force">立即更新</button>
+        <button class="text-btn danger" type="button" data-schedule-action="remove">删除</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+async function saveCoverStudioSchedules({ feedback = "封面计划已保存。" } = {}) {
+  const next = normalizeCoverStudioConfig(appState.coverStudioConfig);
+  try {
+    const result = await inviteApiFetch("/api/cover-studio/config", {
+      method: "POST",
+      body: JSON.stringify({ config: next })
+    });
+    appState.coverStudioConfig = normalizeCoverStudioConfig(result?.config || next);
+    persistLocalState();
+    renderCoverStudioSchedules();
+    if (feedback) {
+      showToast(feedback, 1200);
+    }
+    return true;
+  } catch (error) {
+    showToast(`保存失败：${error.message || "未知错误"}`, 1600);
+    return false;
+  }
+}
+
+function updateCoverStudioSchedulePlan(planId, patch) {
+  appState.coverStudioConfig = normalizeCoverStudioConfig({
+    ...appState.coverStudioConfig,
+    schedules: (appState.coverStudioConfig?.schedules || []).map((plan) =>
+      plan.id === planId ? { ...plan, ...patch, template: { ...(plan.template || {}), ...(patch.template || {}) } } : plan
+    )
+  });
+}
+
+function updateCoverStudioTitleMode() {
+  if (!elements.coverStudioTitleText) {
+    return;
+  }
+  const isBatch = getSelectedCoverStudioViewIds().length > 1;
+  elements.coverStudioTitleText.disabled = isBatch;
+  elements.coverStudioTitleText.placeholder = isBatch
+    ? "批量模式自动使用每个媒体库名称"
+    : "例如：国产动漫";
+  elements.coverStudioTitleText.title = isBatch
+    ? "批量生成时，每个媒体库封面会自动使用自己的媒体库名称。"
+    : "可自定义当前媒体库的主标题。";
+  const hint = document.getElementById("cover-studio-title-mode-hint");
+  if (hint) {
+    hint.textContent = isBatch
+      ? "已选择多个媒体库：会分别使用各自的媒体库名称作为主标题。"
+      : "可自定义当前媒体库的主标题；多选时会自动按媒体库名称生成。";
   }
 }
 
@@ -7487,6 +7810,9 @@ function renderCoverStudioSettings() {
     elements.coverStudioSubtitleSize.value = String(draft.subtitleFontSize || 44);
   }
   renderCoverStudioModeControls();
+  updateCoverStudioTitleMode();
+  renderCoverStudioSchedules();
+  setCoverStudioMode(appState.coverStudioMode);
   renderCoverStudioPreview();
   renderCoverStudioStatus();
 }
@@ -7608,7 +7934,7 @@ async function generateCoverStudioPreview() {
     return;
   }
   const draft = readCoverStudioDraftFromInputs();
-  if (!draft.viewId) {
+  if (!draft.viewIds?.length) {
     if (elements.coverStudioFeedback) {
       elements.coverStudioFeedback.textContent = "请先选择目标媒体库视图。";
     }
@@ -7628,9 +7954,18 @@ async function generateCoverStudioPreview() {
       method: "POST",
       body: JSON.stringify(draft)
     });
-    appState.coverStudioPreviewToken = String(result?.previewToken || "").trim();
-    appState.coverStudioPreviewDataUrl = String(result?.previewDataUrl || "").trim();
-    appState.coverStudioSelectedItems = Array.isArray(result?.selectedItems) ? result.selectedItems : [];
+    appState.coverStudioPreviews = Array.isArray(result?.previews) && result.previews.length
+      ? result.previews
+      : [{
+          viewId: draft.viewId,
+          previewToken: String(result?.previewToken || "").trim(),
+          previewDataUrl: String(result?.previewDataUrl || "").trim(),
+          selectedItems: Array.isArray(result?.selectedItems) ? result.selectedItems : []
+        }].filter((item) => item.previewToken);
+    const primaryPreview = appState.coverStudioPreviews[0] || {};
+    appState.coverStudioPreviewToken = String(primaryPreview.previewToken || "").trim();
+    appState.coverStudioPreviewDataUrl = String(primaryPreview.previewDataUrl || "").trim();
+    appState.coverStudioSelectedItems = Array.isArray(primaryPreview.selectedItems) ? primaryPreview.selectedItems : [];
     appState.coverStudioConfig = normalizeCoverStudioConfig({
       ...appState.coverStudioConfig,
       draft: { ...(appState.coverStudioConfig?.draft || {}), ...draft }
@@ -7639,7 +7974,10 @@ async function generateCoverStudioPreview() {
     renderCoverStudioPreview();
     renderCoverStudioStatus();
     if (elements.coverStudioFeedback) {
-      elements.coverStudioFeedback.textContent = "预览已生成，可以直接应用到 Emby。";
+      const failures = Array.isArray(result?.failures) ? result.failures : [];
+      elements.coverStudioFeedback.textContent = failures.length
+        ? `已生成 ${appState.coverStudioPreviews.length} 份预览，${failures.length} 个媒体库未成功生成。`
+        : `已生成 ${appState.coverStudioPreviews.length} 份预览，可以批量应用到 Emby。`;
     }
   } catch (error) {
     if (elements.coverStudioFeedback) {
@@ -7654,13 +7992,52 @@ async function generateCoverStudioPreview() {
   }
 }
 
+async function generateCoverStudioSchedulePreview() {
+  if (appState.coverStudioSchedulePreviewLoading) {
+    return;
+  }
+  const draft = readCoverStudioSchedulePreviewDraft();
+  if (!draft.viewId) {
+    showToast("请先选择媒体库", 1000);
+    return;
+  }
+  appState.coverStudioSchedulePreviewLoading = true;
+  if (elements.coverStudioSchedulePreviewBtn) {
+    elements.coverStudioSchedulePreviewBtn.disabled = true;
+    elements.coverStudioSchedulePreviewBtn.textContent = "生成中...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/cover-studio/preview", {
+      method: "POST",
+      body: JSON.stringify(draft)
+    });
+    const preview = Array.isArray(result?.previews) ? result.previews[0] : result;
+    appState.coverStudioSchedulePreviewDataUrl = String(preview?.previewDataUrl || result?.previewDataUrl || "").trim();
+    renderCoverStudioSchedulePreview();
+    showToast("自动封面预览已生成", 1200);
+  } catch (error) {
+    showToast(`生成预览失败：${error.message || "未知错误"}`, 1600);
+  } finally {
+    appState.coverStudioSchedulePreviewLoading = false;
+    if (elements.coverStudioSchedulePreviewBtn) {
+      elements.coverStudioSchedulePreviewBtn.disabled = false;
+      elements.coverStudioSchedulePreviewBtn.textContent = "生成预览";
+    }
+  }
+}
+
 async function applyCoverStudioPreview() {
-  if (!appState.coverStudioPreviewToken) {
+  const previews = Array.isArray(appState.coverStudioPreviews) && appState.coverStudioPreviews.length
+    ? appState.coverStudioPreviews
+    : appState.coverStudioPreviewToken
+      ? [{ viewId: readCoverStudioDraftFromInputs().viewId, previewToken: appState.coverStudioPreviewToken }]
+      : [];
+  if (!previews.length) {
     showToast("请先生成预览", 1000);
     return;
   }
   const draft = readCoverStudioDraftFromInputs();
-  if (!draft.viewId) {
+  if (!draft.viewIds?.length) {
     showToast("请先选择媒体库", 1000);
     return;
   }
@@ -7669,15 +8046,24 @@ async function applyCoverStudioPreview() {
     elements.coverStudioApplyBtn.textContent = "应用中...";
   }
   try {
-    await inviteApiFetch("/api/cover-studio/apply", {
+    const result = await inviteApiFetch("/api/cover-studio/apply", {
       method: "POST",
-      body: JSON.stringify({ viewId: draft.viewId, previewToken: appState.coverStudioPreviewToken })
+      body: JSON.stringify({
+        items: previews.map((preview) => ({
+          viewId: String(preview?.viewId || "").trim(),
+          previewToken: String(preview?.previewToken || "").trim()
+        })).filter((item) => item.viewId && item.previewToken)
+      })
     });
     await loadCoverStudioConfigFromServer({ silent: true });
     if (elements.coverStudioFeedback) {
-      elements.coverStudioFeedback.textContent = "封面已写回 Emby 的 Primary，旧 Thumb 已尝试移除。";
+      const results = Array.isArray(result?.results) ? result.results : [];
+      const failures = Array.isArray(result?.failures) ? result.failures : [];
+      elements.coverStudioFeedback.textContent = failures.length
+        ? `已更新 ${results.length} 个媒体库封面，${failures.length} 个未成功。`
+        : `已批量更新 ${results.length || previews.length} 个媒体库的 Primary 封面。`;
     }
-    showToast("Emby 媒体库封面已更新", 1200);
+    showToast(`已更新 ${Array.isArray(result?.results) ? result.results.length : previews.length} 个媒体库封面`, 1200);
     await loadCoverStudioViews({ silent: true });
   } catch (error) {
     if (elements.coverStudioFeedback) {
@@ -7693,7 +8079,7 @@ async function applyCoverStudioPreview() {
 
 async function restoreCoverStudioBackup() {
   const draft = readCoverStudioDraftFromInputs();
-  if (!draft.viewId) {
+  if (!draft.viewIds?.length) {
     showToast("请先选择媒体库", 1000);
     return;
   }
@@ -7702,13 +8088,17 @@ async function restoreCoverStudioBackup() {
     elements.coverStudioRestoreBtn.textContent = "恢复中...";
   }
   try {
-    await inviteApiFetch("/api/cover-studio/restore", {
+    const result = await inviteApiFetch("/api/cover-studio/restore", {
       method: "POST",
-      body: JSON.stringify({ viewId: draft.viewId })
+      body: JSON.stringify({ viewIds: draft.viewIds })
     });
     await loadCoverStudioConfigFromServer({ silent: true });
     if (elements.coverStudioFeedback) {
-      elements.coverStudioFeedback.textContent = "已恢复 Emby 原始封面备份。";
+      const restored = Array.isArray(result?.results) ? result.results.length : 1;
+      const failures = Array.isArray(result?.failures) ? result.failures.length : 0;
+      elements.coverStudioFeedback.textContent = failures
+        ? `已恢复 ${restored} 个媒体库原始封面，${failures} 个未成功。`
+        : `已恢复 ${restored} 个媒体库原始封面。`;
     }
     showToast("原封面已恢复", 1200);
     await loadCoverStudioViews({ silent: true });
@@ -9331,8 +9721,19 @@ function readNotificationDisplayValues(channel, defaults = {}) {
 function renderNotificationRouteList(channel, container, config) {
   if (!container) return;
   const events = getNotificationEventDefinitions();
-  container.innerHTML = events
-    .map((eventDef) => {
+  const groups = [
+    { key: "playback", label: "播放通知", description: "开始、暂停、恢复和停止播放" },
+    { key: "library", label: "媒体库通知", description: "单集、电影与剧集入库" }
+  ];
+  container.innerHTML = groups
+    .map((group) => {
+      const groupEvents = events.filter((eventDef) => String(eventDef.key || "").startsWith(`${group.key}.`));
+      if (!groupEvents.length) return "";
+      return `
+        <section class="notify-route-category">
+          <div class="notify-route-category-head"><strong>${escapeHtml(group.label)}</strong><span>${escapeHtml(group.description)}</span></div>
+          ${groupEvents
+            .map((eventDef) => {
       const checked = Boolean(config.routes?.[channel]?.[eventDef.key]);
       const presentation = getNotificationEventPresentation(channel, eventDef, config);
       return `
@@ -9343,6 +9744,10 @@ function renderNotificationRouteList(channel, container, config) {
           </div>
           <input type="checkbox" data-notify-route-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" ${checked ? "checked" : ""}>
         </label>
+      `;
+            })
+            .join("")}
+        </section>
       `;
     })
     .join("");
@@ -9397,7 +9802,7 @@ function buildNotificationTemplatePanel(channel, eventDef, config) {
   const initialSampleKey = sampleKeys[0] || "default";
   const initialSamplePayload = getNotificationRuntimeAdjustedPayload(eventDef.key, initialSampleKey);
   return `
-    <details class="notify-template-panel">
+    <details class="notify-template-panel" data-notify-template-panel="${escapeHtml(channel)}:${escapeHtml(eventDef.key)}">
       <summary>
         <span class="notify-template-summary-copy">
           <strong data-notify-display-render="label" data-notify-display-channel="${escapeHtml(channel)}" data-event-key="${escapeHtml(eventDef.key)}" data-notify-display-fallback="${escapeHtml(eventDef.label || eventDef.key)}">${escapeHtml(presentation.label)}</strong>
@@ -9741,13 +10146,14 @@ function renderNotificationChannelCards(config) {
         const configured = isNotificationChannelConfigured(channel, config);
         const enabled = Boolean(config?.channels?.[channel]?.enabled);
         const statusText = getNotificationChannelStatusText(channel, config);
+        const routeCount = Object.values(config?.routes?.[channel] || {}).filter(Boolean).length;
         return `
           <article class="notify-channel-card ${configured ? "is-configured" : "is-draft"}" data-notify-channel-card-wrap="${escapeHtml(channel)}">
             <button class="notify-channel-card-main" type="button" data-notify-channel-open="${escapeHtml(channel)}">
               <span class="notify-channel-card-status ${enabled ? "is-online" : configured ? "is-idle" : "is-pending"}" aria-hidden="true"></span>
               <span class="notify-channel-card-copy">
                 <strong>${escapeHtml(meta.label)}</strong>
-                <small>${escapeHtml(statusText)}</small>
+                <small>${escapeHtml(statusText)} · 已开启 ${routeCount} 项事件</small>
               </span>
               <span class="bot-channel-icon ${escapeHtml(meta.iconClass)}" aria-hidden="true"></span>
             </button>
@@ -9772,13 +10178,13 @@ function renderNotificationChannelCards(config) {
 
 function renderNotificationConfiguredSections(config) {
   const configuredChannels = getConfiguredNotificationChannels(config);
+  const activeChannel = configuredChannels.includes(appState.notificationWorkspaceChannel)
+    ? appState.notificationWorkspaceChannel
+    : configuredChannels[0] || "telegram";
+  appState.notificationWorkspaceChannel = activeChannel;
   document.querySelectorAll("[data-notify-route-pane]").forEach((node) => {
     const channel = String(node.getAttribute("data-notify-route-pane") || "");
-    node.hidden = !configuredChannels.includes(channel);
-  });
-  document.querySelectorAll("[data-notify-template-pane]").forEach((node) => {
-    const channel = String(node.getAttribute("data-notify-template-pane") || "");
-    node.hidden = !configuredChannels.includes(channel);
+    node.hidden = channel !== activeChannel || !configuredChannels.includes(channel);
   });
   const routeGrid = document.querySelector("#view-bot-assistant .notify-matrix-grid");
   const templateGrid = document.querySelector("#view-bot-assistant .notify-template-center-grid");
@@ -9796,10 +10202,61 @@ function renderNotificationConfiguredSections(config) {
     templateGrid.hidden = configuredChannels.length === 0;
     templateGrid.dataset.configuredCount = String(Math.min(Math.max(configuredChannels.length, 0), 2));
   }
-  const routeGroups = document.querySelector("#view-bot-assistant .notify-route-groups");
-  if (routeGroups instanceof HTMLElement) {
-    routeGroups.dataset.configuredCount = String(Math.min(Math.max(configuredChannels.length, 0), 2));
+}
+
+function renderNotificationWorkspaceControls(config) {
+  const configuredChannels = getConfiguredNotificationChannels(config);
+  const events = getNotificationEventDefinitions();
+  if (!configuredChannels.includes(appState.notificationWorkspaceChannel)) {
+    appState.notificationWorkspaceChannel = configuredChannels[0] || "telegram";
   }
+  if (!events.some((eventDef) => eventDef.key === appState.notificationWorkspaceEvent)) {
+    appState.notificationWorkspaceEvent = events[0]?.key || "";
+  }
+  const activeChannel = appState.notificationWorkspaceChannel;
+  const activeEvent = appState.notificationWorkspaceEvent;
+  const buildChannelTabs = (target) => {
+    if (!(target instanceof HTMLElement)) return;
+    target.innerHTML = configuredChannels
+      .map((channel) => {
+        const meta = getNotificationChannelMeta(channel);
+        const active = channel === activeChannel;
+        return `<button class="notify-workspace-tab ${active ? "is-active" : ""}" type="button" data-notify-workspace-channel="${escapeHtml(channel)}"><span class="bot-channel-icon ${escapeHtml(meta.iconClass)}"></span>${escapeHtml(meta.label)}</button>`;
+      })
+      .join("");
+  };
+  buildChannelTabs(elements.notifyRouteChannelTabs);
+  buildChannelTabs(elements.notifyTemplateChannelTabs);
+  if (elements.notifyTemplateEventList) {
+    elements.notifyTemplateEventList.innerHTML = events
+      .map((eventDef) => {
+        const presentation = getNotificationEventPresentation(activeChannel, eventDef, config);
+        const active = eventDef.key === activeEvent;
+        return `<button class="notify-template-event-button ${active ? "is-active" : ""}" type="button" data-notify-workspace-event="${escapeHtml(eventDef.key)}"><strong>${escapeHtml(presentation.label)}</strong><small>${escapeHtml(presentation.description)}</small></button>`;
+      })
+      .join("");
+  }
+  ["telegram", "wecom"].forEach((channel) => {
+    const list = channel === "telegram" ? elements.notifyTemplateListTelegram : elements.notifyTemplateListWecom;
+    if (list instanceof HTMLElement) list.hidden = channel !== activeChannel || !configuredChannels.includes(channel);
+  });
+  document.querySelectorAll("[data-notify-template-panel]").forEach((panel) => {
+    const key = String(panel.getAttribute("data-notify-template-panel") || "");
+    const active = key === `${activeChannel}:${activeEvent}`;
+    if (panel instanceof HTMLDetailsElement) panel.open = active;
+    if (panel instanceof HTMLElement) panel.hidden = !active;
+  });
+}
+
+function setNotificationWorkspaceChannel(channel) {
+  appState.notificationWorkspaceChannel = channel === "wecom" ? "wecom" : "telegram";
+  renderNotificationConfiguredSections(readBotConfigFromInputs());
+  renderNotificationWorkspaceControls(readBotConfigFromInputs());
+}
+
+function setNotificationWorkspaceEvent(eventKey) {
+  appState.notificationWorkspaceEvent = String(eventKey || "");
+  renderNotificationWorkspaceControls(readBotConfigFromInputs());
 }
 
 function renderNotificationChannelModal(config) {
@@ -9834,6 +10291,18 @@ function renderNotificationChannelModal(config) {
   if (elements.notifyChannelModalTest) {
     elements.notifyChannelModalTest.disabled = !channel || !isNotificationChannelConfigured(channel, config);
   }
+  const activeSection = ["channel", "platform", "playback"].includes(appState.notificationModalSection)
+    ? appState.notificationModalSection
+    : "channel";
+  document.querySelectorAll("[data-notify-modal-section]").forEach((node) => {
+    const section = String(node.getAttribute("data-notify-modal-section") || "");
+    node.hidden = section !== activeSection;
+  });
+  document.querySelectorAll("[data-notify-modal-section-target]").forEach((button) => {
+    const section = String(button.getAttribute("data-notify-modal-section-target") || "");
+    button.classList.toggle("is-active", section === activeSection);
+    button.setAttribute("aria-selected", section === activeSection ? "true" : "false");
+  });
 }
 
 function mountNotificationChannelModalToBody() {
@@ -9849,19 +10318,17 @@ function mountNotificationChannelModalToBody() {
 function openNotificationChannelModal(channel) {
   const safeChannel = channel === "wecom" ? "wecom" : "telegram";
   appState.notificationChannelModalChannel = safeChannel;
+  appState.notificationModalSection = "channel";
   appState.notificationChannelMenuOpen = false;
   mountNotificationChannelModalToBody();
-  renderBotAssistant();
-  // The playback user scope is intentionally inside the shared platform
-  // settings block. Open it when entering a channel so the existing feature
-  // remains discoverable after the channel-card redesign.
-  if (elements.notifyChannelPlatformPanel) {
-    elements.notifyChannelPlatformPanel.open = true;
-  }
-  loadNotificationPlaybackUsers({ silent: true });
   if (elements.notifyChannelModal) {
     elements.notifyChannelModal.hidden = false;
   }
+  renderBotAssistant();
+  if (elements.notifyChannelModalContent instanceof HTMLElement) {
+    elements.notifyChannelModalContent.scrollTop = 0;
+  }
+  loadNotificationPlaybackUsers({ silent: true });
 }
 
 function closeNotificationChannelModal() {
@@ -9966,7 +10433,10 @@ function renderNotificationTemplateCenter(config) {
       .join("");
   }
   bindNotificationTemplateEditors();
-  refreshAllNotificationTemplatePreviews();
+  renderNotificationWorkspaceControls(config);
+  const channel = appState.notificationWorkspaceChannel;
+  const eventKey = appState.notificationWorkspaceEvent;
+  if (eventKey) refreshNotificationTemplatePreview(channel, eventKey);
 }
 
 function renderBotAssistant() {
@@ -10017,6 +10487,7 @@ function renderBotAssistant() {
   renderNotificationTemplateCenter(config);
   renderNotificationChannelCards(config);
   renderNotificationConfiguredSections(config);
+  renderNotificationWorkspaceControls(config);
   renderNotificationChannelModal(config);
   if (shouldUseLocalProxy() && isAdminReady()) {
     refreshBotWebhookInfo({ silent: true });
@@ -12357,6 +12828,30 @@ function initEvents() {
       renderCoverStudioPreview();
     });
   });
+  elements.coverStudioViewPicker?.addEventListener("change", () => {
+    syncCoverStudioDraftFromInputs();
+    updateCoverStudioTitleMode();
+    renderCoverStudioStatus();
+    renderCoverStudioPreview();
+  });
+  elements.coverStudioSelectAllBtn?.addEventListener("click", () => {
+    elements.coverStudioViewPicker?.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+      input.checked = true;
+    });
+    syncCoverStudioDraftFromInputs();
+    updateCoverStudioTitleMode();
+    renderCoverStudioStatus();
+    renderCoverStudioPreview();
+  });
+  elements.coverStudioClearSelectionBtn?.addEventListener("click", () => {
+    elements.coverStudioViewPicker?.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+      input.checked = false;
+    });
+    syncCoverStudioDraftFromInputs();
+    updateCoverStudioTitleMode();
+    renderCoverStudioStatus();
+    renderCoverStudioPreview();
+  });
   elements.coverStudioTemplateKey?.addEventListener("change", () => {
     const selectedMode = getCoverStudioModeMeta(elements.coverStudioTemplateKey?.value || "fan_spread");
     const defaults = selectedMode?.defaults || {};
@@ -12385,6 +12880,150 @@ function initEvents() {
   elements.coverStudioPreviewBtn?.addEventListener("click", generateCoverStudioPreview);
   elements.coverStudioApplyBtn?.addEventListener("click", applyCoverStudioPreview);
   elements.coverStudioRestoreBtn?.addEventListener("click", restoreCoverStudioBackup);
+  elements.coverStudioModeTabs?.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-cover-studio-mode]");
+    if (!button) {
+      return;
+    }
+    setCoverStudioMode(button.dataset.coverStudioMode);
+  });
+  elements.coverStudioScheduleViewSelect?.addEventListener("change", clearCoverStudioSchedulePreview);
+  elements.coverStudioSchedulePreviewBtn?.addEventListener("click", generateCoverStudioSchedulePreview);
+  [
+    elements.coverStudioScheduleTemplateKey,
+    elements.coverStudioSchedulePickMode,
+    elements.coverStudioScheduleTitleText,
+    elements.coverStudioScheduleSubtitleText,
+    elements.coverStudioScheduleFontKey,
+    elements.coverStudioScheduleTitleAlign,
+    elements.coverStudioScheduleTitleSize,
+    elements.coverStudioScheduleSubtitleSize,
+    elements.coverStudioSchedulePosterCount,
+    elements.coverStudioScheduleAccentTone,
+    elements.coverStudioSchedulePosterRotation,
+    elements.coverStudioScheduleTitleYOffset
+  ].forEach((input) => {
+    input?.addEventListener("input", () => {
+      appState.coverStudioScheduleDraft = readCoverStudioScheduleTemplateFromInputs();
+      clearCoverStudioSchedulePreview();
+    });
+    input?.addEventListener("change", () => {
+      appState.coverStudioScheduleDraft = readCoverStudioScheduleTemplateFromInputs();
+      clearCoverStudioSchedulePreview();
+    });
+  });
+  elements.coverStudioScheduleTemplateKey?.addEventListener("change", () => {
+    const current = readCoverStudioScheduleTemplateFromInputs();
+    const defaults = getCoverStudioModeMeta(current.templateKey)?.defaults || {};
+    appState.coverStudioScheduleDraft = {
+      ...current,
+      titleAlign: defaults.titleAlign || current.titleAlign,
+      posterCount: Number(defaults.posterCount || current.posterCount),
+      accentTone: defaults.accentTone || current.accentTone,
+      posterRotation: Number(defaults.posterRotation || current.posterRotation),
+      titleYOffset: Number(defaults.titleYOffset || 0)
+    };
+    renderCoverStudioScheduleTemplateInputs();
+    clearCoverStudioSchedulePreview();
+  });
+  elements.coverStudioScheduleAddBtn?.addEventListener("click", async () => {
+    const viewId = String(elements.coverStudioScheduleViewSelect?.value || "").trim();
+    if (!viewId) {
+      showToast("请选择要自动更新封面的媒体库", 1500);
+      return;
+    }
+    const cron = String(elements.coverStudioScheduleCron?.value || "").trim();
+    if (!cron) {
+      showToast("请填写计划时间 Cron 表达式", 1400);
+      return;
+    }
+    const existing = (appState.coverStudioConfig?.schedules || []).some((plan) => plan.viewId === viewId);
+    if (existing) {
+      showToast("这个媒体库已有自动封面计划", 1400);
+      return;
+    }
+    const view = (appState.coverStudioViews || []).find((item) => String(item?.id || "") === viewId) || {};
+    const template = readCoverStudioScheduleTemplateFromInputs();
+    const previousConfig = appState.coverStudioConfig;
+    appState.coverStudioConfig = normalizeCoverStudioConfig({
+      ...appState.coverStudioConfig,
+      schedules: [
+        ...(appState.coverStudioConfig?.schedules || []),
+        {
+          id: `schedule-${Date.now()}`,
+          viewId,
+          viewName: String(view.name || viewId),
+          enabled: true,
+          cron,
+          template,
+          fingerprint: {},
+          initializedAt: "",
+          lastCheckedAt: "",
+          lastUpdatedAt: "",
+          lastStatus: "idle",
+          lastMessage: "尚未检查。"
+        }
+      ]
+    });
+    if (await saveCoverStudioSchedules({ feedback: "已添加独立自动封面计划" })) {
+      appState.coverStudioScheduleDraft = null;
+      renderCoverStudioSchedules();
+    } else {
+      appState.coverStudioConfig = previousConfig;
+      renderCoverStudioSchedules();
+    }
+  });
+  elements.coverStudioScheduleList?.addEventListener("click", async (event) => {
+    const button = event.target?.closest?.("[data-schedule-action]");
+    if (!button) {
+      return;
+    }
+    const card = button.closest("[data-schedule-id]");
+    const planId = String(card?.dataset.scheduleId || "");
+    const plan = (appState.coverStudioConfig?.schedules || []).find((item) => item.id === planId);
+    if (!plan || !card) {
+      return;
+    }
+    const action = button.dataset.scheduleAction || "";
+    if (action === "remove") {
+      appState.coverStudioConfig = normalizeCoverStudioConfig({
+        ...appState.coverStudioConfig,
+        schedules: (appState.coverStudioConfig?.schedules || []).filter((item) => item.id !== planId)
+      });
+      await saveCoverStudioSchedules({ feedback: "已删除封面计划" });
+      return;
+    }
+    const nextTemplate = {
+      ...(plan.template || {}),
+      templateKey: String(card.querySelector('[data-schedule-field="templateKey"]')?.value || plan.template?.templateKey || "fan_spread"),
+      pickMode: String(card.querySelector('[data-schedule-field="pickMode"]')?.value || plan.template?.pickMode || "random")
+    };
+    updateCoverStudioSchedulePlan(planId, {
+      enabled: Boolean(card.querySelector('[data-schedule-field="enabled"]')?.checked),
+      cron: String(card.querySelector('[data-schedule-field="cron"]')?.value || "").trim(),
+      template: nextTemplate
+    });
+    if (action === "save") {
+      await saveCoverStudioSchedules();
+      return;
+    }
+    if (!(await saveCoverStudioSchedules({ feedback: "" }))) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      const result = await inviteApiFetch("/api/cover-studio/schedule/run", {
+        method: "POST",
+        body: JSON.stringify({ planId, force: action === "force" })
+      });
+      await loadCoverStudioConfigFromServer({ silent: true });
+      showToast(result?.message || "计划检查完成", 1600);
+    } catch (error) {
+      showToast(`执行失败：${error.message || "未知错误"}`, 1600);
+    } finally {
+      button.disabled = false;
+    }
+  });
   elements.aiTestBtn?.addEventListener("click", testAiConfig);
   [
     elements.drive115Enabled,
@@ -12644,6 +13283,14 @@ function initEvents() {
     closeNotificationChannelModal();
   });
   elements.notifyChannelModal?.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const sectionTrigger = target?.closest("[data-notify-modal-section-target]");
+    if (sectionTrigger instanceof HTMLElement) {
+      event.preventDefault();
+      appState.notificationModalSection = String(sectionTrigger.dataset.notifyModalSectionTarget || "channel");
+      renderNotificationChannelModal(readBotConfigFromInputs());
+      return;
+    }
     if (event.target === elements.notifyChannelModal) {
       closeNotificationChannelModal();
     }
@@ -12673,6 +13320,16 @@ function initEvents() {
   });
   elements.notifyPlaybackUsersRefresh?.addEventListener("click", () => {
     loadNotificationPlaybackUsers({ silent: false });
+  });
+  [elements.notifyRouteChannelTabs, elements.notifyTemplateChannelTabs].forEach((tabs) => {
+    tabs?.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-notify-workspace-channel]") : null;
+      if (target instanceof HTMLElement) setNotificationWorkspaceChannel(String(target.dataset.notifyWorkspaceChannel || ""));
+    });
+  });
+  elements.notifyTemplateEventList?.addEventListener("click", (event) => {
+    const target = event.target instanceof HTMLElement ? event.target.closest("[data-notify-workspace-event]") : null;
+    if (target instanceof HTMLElement) setNotificationWorkspaceEvent(String(target.dataset.notifyWorkspaceEvent || ""));
   });
   elements.botTemplateReset?.addEventListener("click", () => {
     const events = getNotificationEventDefinitions();

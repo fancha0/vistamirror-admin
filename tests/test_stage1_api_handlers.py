@@ -4,6 +4,7 @@ import pathlib
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import dev_server
@@ -317,6 +318,167 @@ class Stage1ApiHandlerTests(unittest.TestCase):
         self.assertEqual(handler.responses[0][0], 200)
         self.assertEqual(stub_cover_service.called["view_id"], "uv-1")
         self.assertEqual(stub_cover_service.called["upload_view_id"], "vf-1")
+
+    def test_cover_studio_apply_supports_multiple_media_library_previews(self) -> None:
+        handler = _DummyHandler(
+            {
+                "items": [
+                    {"viewId": "uv-1", "previewToken": "preview-1"},
+                    {"viewId": "uv-2", "previewToken": "preview-2"},
+                ]
+            }
+        )
+
+        def read_store():
+            return {
+                "embyConfig": {"serverUrl": "https://emby.example", "apiKey": "test-key"},
+                "coverStudioConfig": dev_server._default_cover_studio_config(),
+            }
+
+        class _StubEmbyService:
+            def fetch_user_views(self):
+                return [
+                    {"id": "uv-1", "name": "国产动漫", "uploadTargetId": "vf-1"},
+                    {"id": "uv-2", "name": "华语剧集", "uploadTargetId": "vf-2"},
+                ]
+
+        class _StubCoverStudioService:
+            def __init__(self):
+                self.calls = []
+
+            def backup_and_apply(self, *, config, view_id, upload_view_id=None, preview_token, emby_service):
+                self.calls.append((view_id, upload_view_id, preview_token))
+                return {"applied": view_id}
+
+            def build_view_status(self, *, view_id, config):
+                return {"viewId": view_id}
+
+        stub_cover_service = _StubCoverStudioService()
+        cover_studio_handlers.handle_cover_studio_apply(
+            handler,
+            store_lock=threading.Lock(),
+            read_store=read_store,
+            write_store=lambda store: None,
+            apply_emby_env_overrides=lambda config: config or {},
+            normalize_cover_studio_config=dev_server._normalize_cover_studio_config,
+            build_emby_service=lambda config: _StubEmbyService(),
+            cover_studio_service=stub_cover_service,
+        )
+
+        self.assertEqual(handler.responses[0][0], 200)
+        self.assertEqual(stub_cover_service.calls, [("uv-1", "vf-1", "preview-1"), ("uv-2", "vf-2", "preview-2")])
+        self.assertEqual(len(handler.responses[0][1]["results"]), 2)
+
+    def test_cover_studio_preview_uses_each_view_name_for_batch_titles(self) -> None:
+        handler = _DummyHandler(
+            {
+                "viewIds": ["uv-1", "uv-2"],
+                "titleText": "国产动漫",
+                "templateKey": "fan_spread",
+            }
+        )
+
+        def read_store():
+            return {
+                "embyConfig": {"serverUrl": "https://emby.example", "apiKey": "test-key"},
+                "coverStudioConfig": dev_server._default_cover_studio_config(),
+            }
+
+        class _StubEmbyService:
+            def fetch_user_views(self):
+                return [
+                    {"id": "uv-1", "name": "国产动漫"},
+                    {"id": "uv-2", "name": "华语剧集"},
+                ]
+
+            def fetch_view_items(self, *, view_id, pick_mode):
+                return [{"id": view_id}]
+
+        class _StubCoverStudioService:
+            def __init__(self):
+                self.title_calls = []
+
+            def generate_preview(self, **kwargs):
+                self.title_calls.append((kwargs["view"]["id"], kwargs["title_text"]))
+                token = f"preview-{kwargs['view']['id']}"
+                return SimpleNamespace(
+                    token=token,
+                    primary_image_data_url=f"data:image/png;base64,{token}",
+                    primary_width=1600,
+                    primary_height=900,
+                    selected_items=[],
+                )
+
+        stub_cover_service = _StubCoverStudioService()
+        cover_studio_handlers.handle_cover_studio_preview(
+            handler,
+            store_lock=threading.Lock(),
+            read_store=read_store,
+            write_store=lambda store: None,
+            apply_emby_env_overrides=lambda config: config or {},
+            normalize_cover_studio_config=dev_server._normalize_cover_studio_config,
+            build_emby_service=lambda config: _StubEmbyService(),
+            cover_studio_service=stub_cover_service,
+        )
+
+        self.assertEqual(handler.responses[0][0], 200)
+        self.assertEqual(stub_cover_service.title_calls, [("uv-1", "国产动漫"), ("uv-2", "华语剧集")])
+
+    def test_cover_studio_preview_only_does_not_overwrite_manual_draft(self) -> None:
+        handler = _DummyHandler({"viewId": "uv-1", "previewOnly": True, "templateKey": "fan_spread"})
+        stored_config = dev_server._default_cover_studio_config()
+        stored_config["draft"]["titleText"] = "手动封面标题"
+        writes = []
+
+        class _StubEmbyService:
+            def fetch_user_views(self):
+                return [{"id": "uv-1", "name": "国产动漫"}]
+
+            def fetch_view_items(self, *, view_id, pick_mode):
+                return [{"id": view_id}]
+
+        class _StubCoverStudioService:
+            def generate_preview(self, **kwargs):
+                return SimpleNamespace(
+                    token="preview-uv-1",
+                    primary_image_data_url="data:image/png;base64,preview",
+                    primary_width=1600,
+                    primary_height=900,
+                    selected_items=[],
+                )
+
+        cover_studio_handlers.handle_cover_studio_preview(
+            handler,
+            store_lock=threading.Lock(),
+            read_store=lambda: {
+                "embyConfig": {"serverUrl": "https://emby.example", "apiKey": "test-key"},
+                "coverStudioConfig": stored_config,
+            },
+            write_store=lambda store: writes.append(store),
+            apply_emby_env_overrides=lambda config: config or {},
+            normalize_cover_studio_config=dev_server._normalize_cover_studio_config,
+            build_emby_service=lambda config: _StubEmbyService(),
+            cover_studio_service=_StubCoverStudioService(),
+        )
+
+        self.assertEqual(handler.responses[0][0], 200)
+        self.assertEqual(writes, [])
+        self.assertEqual(stored_config["draft"]["titleText"], "手动封面标题")
+
+    def test_cover_studio_config_rejects_invalid_enabled_schedule(self) -> None:
+        handler = _DummyHandler({"config": {"schedule": {"enabled": True, "cron": "five minutes"}}})
+        stored = {}
+
+        cover_studio_handlers.handle_cover_studio_config_save(
+            handler,
+            store_lock=threading.Lock(),
+            read_store=lambda: stored,
+            write_store=lambda store: stored.update(store),
+            normalize_cover_studio_config=dev_server._normalize_cover_studio_config,
+        )
+
+        self.assertEqual(handler.responses[0][0], 400)
+        self.assertIn("Cron", handler.responses[0][1]["error"])
 
     def test_ai_config_save_and_get_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, patch.dict(os.environ, {}, clear=True):

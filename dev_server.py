@@ -103,6 +103,7 @@ from backend_modules.cover_studio_service import (
     default_cover_studio_config as module_default_cover_studio_config,
     normalize_cover_studio_config as module_normalize_cover_studio_config,
 )
+from backend_modules.cover_studio_scheduler import CoverStudioScheduler
 from backend_modules.telegram_commands import TelegramCommandService
 from backend_modules.telegram_sender import TelegramSender
 from backend_modules.webhook_receiver import build_dedupe_key, detect_playback_action, maybe_extract_media_name
@@ -182,7 +183,9 @@ DRIVE115_QRCODE_SESSIONS: dict[str, dict[str, Any]] = {}
 HDHIVE_OAUTH_LOCK = threading.Lock()
 HDHIVE_OAUTH_STATES: dict[str, dict[str, Any]] = {}
 HDHIVE_CHECKIN_STOP = threading.Event()
+COVER_STUDIO_SCHEDULE_STOP = threading.Event()
 _COVER_STUDIO_SERVICE: CoverStudioService | None = None
+COVER_STUDIO_SCHEDULER: CoverStudioScheduler | None = None
 
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
     "serverUrl": "APP_EMBY_SERVER_URL",
@@ -278,6 +281,14 @@ def _cover_studio_service() -> CoverStudioService:
     if _COVER_STUDIO_SERVICE is None:
         _COVER_STUDIO_SERVICE = CoverStudioService(data_dir=DATA_DIR)
     return _COVER_STUDIO_SERVICE
+
+
+def _build_cover_emby_service(config: dict[str, Any]) -> EmbyCoverService:
+    return EmbyCoverService(
+        base_url=str(config.get("serverUrl") or "").strip(),
+        api_key=str(config.get("apiKey") or "").strip(),
+        client_name=str(config.get("clientName") or DEFAULT_EMBY_CLIENT_NAME).strip() or DEFAULT_EMBY_CLIENT_NAME,
+    )
 
 
 def _record_service_start(host: str, port: int) -> None:
@@ -1344,6 +1355,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/cover-studio/restore":
             self._handle_cover_studio_restore()
+            return
+        if path == "/api/cover-studio/schedule/run":
+            self._handle_cover_studio_schedule_run()
             return
         if path == "/api/ai/test":
             self._handle_ai_config_test()
@@ -2590,11 +2604,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         )
 
     def _build_emby_cover_service(self, config: dict[str, Any]) -> EmbyCoverService:
-        return EmbyCoverService(
-            base_url=str(config.get("serverUrl") or "").strip(),
-            api_key=str(config.get("apiKey") or "").strip(),
-            client_name=str(config.get("clientName") or DEFAULT_EMBY_CLIENT_NAME).strip() or DEFAULT_EMBY_CLIENT_NAME,
-        )
+        return _build_cover_emby_service(config)
 
     def _handle_cover_studio_config_get(self) -> None:
         handle_cover_studio_config_get(
@@ -2671,6 +2681,20 @@ class AppHandler(SimpleHTTPRequestHandler):
             build_emby_service=self._build_emby_cover_service,
             cover_studio_service=_cover_studio_service(),
         )
+
+    def _handle_cover_studio_schedule_run(self) -> None:
+        if COVER_STUDIO_SCHEDULER is None:
+            self._send_json(503, {"error": "封面计划任务尚未启动。"})
+            return
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        result = COVER_STUDIO_SCHEDULER.run_once(
+            trigger="manual",
+            plan_id=str(payload.get("planId") or "").strip(),
+            force=bool(payload.get("force")),
+        )
+        self._send_json(200 if result.get("ok") else 422, result)
 
     def _handle_tmdb_test(self) -> None:
         payload = self._read_json_body()
@@ -6538,7 +6562,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    global TELEGRAM_COMMAND_SERVICE, ADMIN_AUTH_SERVICE
+    global TELEGRAM_COMMAND_SERVICE, ADMIN_AUTH_SERVICE, COVER_STUDIO_SCHEDULER
     parser = argparse.ArgumentParser(description="Run Emby Pulse local proxy server")
     env_host = str(os.environ.get("APP_HOST") or "").strip() or "127.0.0.1"
     env_port_raw = str(os.environ.get("APP_PORT") or "").strip()
@@ -6576,6 +6600,19 @@ def main() -> None:
     HDHIVE_CHECKIN_STOP.clear()
     hdhive_checkin_thread = threading.Thread(target=_hdhive_direct_checkin_loop, name="hdhive-checkin", daemon=True)
     hdhive_checkin_thread.start()
+    COVER_STUDIO_SCHEDULE_STOP.clear()
+    COVER_STUDIO_SCHEDULER = CoverStudioScheduler(
+        stop_event=COVER_STUDIO_SCHEDULE_STOP,
+        store_lock=STORE_LOCK,
+        read_store=_read_store_unlocked,
+        write_store=_write_store_unlocked,
+        normalize_config=_normalize_cover_studio_config,
+        apply_emby_config=_apply_emby_env_overrides,
+        build_emby_service=_build_cover_emby_service,
+        cover_service=_cover_studio_service(),
+        event_logger=_write_project_event,
+    )
+    COVER_STUDIO_SCHEDULER.start()
     handler_cls = AppHandler
     server = ThreadingHTTPServer((args.host, args.port), handler_cls)
     _record_service_start(str(args.host), int(args.port))
@@ -6588,6 +6625,7 @@ def main() -> None:
         pass
     finally:
         HDHIVE_CHECKIN_STOP.set()
+        COVER_STUDIO_SCHEDULE_STOP.set()
         server.server_close()
         if TELEGRAM_COMMAND_SERVICE is not None:
             TELEGRAM_COMMAND_SERVICE.stop()
