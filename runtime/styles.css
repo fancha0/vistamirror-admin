@@ -14601,16 +14601,11 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
   font-size: 16px;
 }
 
-#view-workshop .cover-studio-auto-head p,
-#view-workshop .cover-studio-auto-note {
+#view-workshop .cover-studio-auto-head p {
   margin: 5px 0 0;
   color: #7d8ca5;
   font-size: 12px;
   line-height: 1.6;
-}
-
-#view-workshop .cover-studio-auto-note {
-  margin: -8px 0 0;
 }
 
 #view-workshop .cover-studio-auto-create {
@@ -14627,12 +14622,6 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 #view-workshop .cover-studio-auto-create .field {
   gap: 6px;
   margin: 0;
-}
-
-#view-workshop .cover-studio-auto-create .field small {
-  color: #8492a8;
-  font-size: 10px;
-  line-height: 1.35;
 }
 
 #view-workshop .cover-studio-auto-create .field > span {
@@ -14677,6 +14666,24 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
   border-radius: 9px;
 }
 
+#view-workshop .cover-studio-auto-schedules {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid #e8edf5;
+}
+
+#view-workshop .cover-studio-auto-schedules-head strong {
+  color: #263752;
+  font-size: 14px;
+}
+
+#view-workshop .cover-studio-auto-schedules-head p {
+  margin: 4px 0 0;
+  color: #7d8ca5;
+  font-size: 12px;
+}
+
 #view-workshop .cover-studio-auto-create select {
   border: 1px solid #dfe7f2;
   border-radius: 9px;
@@ -14696,7 +14703,7 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 }
 
 #view-workshop .cover-studio-auto-template .cover-studio-target-head {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 #view-workshop .cover-studio-auto-template-grid {
@@ -14807,6 +14814,52 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 
 #view-workshop .cover-studio-schedule-plan-actions .danger {
   color: #c45b68;
+}
+
+#view-workshop .cover-studio-schedule-advanced {
+  margin: 0 0 12px;
+  border-top: 1px solid #e7edf5;
+}
+
+#view-workshop .cover-studio-schedule-advanced summary {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  color: #56709a;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+#view-workshop .cover-studio-schedule-advanced summary::marker {
+  color: #4a78ca;
+}
+
+#view-workshop .cover-studio-schedule-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 4px 0 2px;
+}
+
+#view-workshop .cover-studio-schedule-advanced-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #6c7c95;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+#view-workshop .cover-studio-schedule-advanced-grid input,
+#view-workshop .cover-studio-schedule-advanced-grid select {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid #dce5f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #34445f;
 }
 
 #view-workshop .cover-studio-target-head {
@@ -14945,6 +14998,7 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
   #view-workshop .cover-studio-auto-create { grid-template-columns: 1fr; }
   #view-workshop .cover-studio-auto-create .primary-btn { width: 100%; }
   #view-workshop .cover-studio-auto-preview-card .primary-btn { width: 100%; }
+  #view-workshop .cover-studio-schedule-advanced-grid { grid-template-columns: 1fr; }
   #view-workshop .cover-studio-preview-actions > button { flex: 1 1 100%; }
   #view-workshop .cover-studio-schedule-plan-fields { grid-template-columns: 1fr; }
 }
@@ -15088,5 +15142,57 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 
   #view-workshop .cover-studio-schedule-footer {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Keep automatic-cover form fields inside their grid track at every width. */
+#view-workshop .cover-studio-auto-workspace,
+#view-workshop .cover-studio-auto-editor,
+#view-workshop .cover-studio-auto-create,
+#view-workshop .cover-studio-auto-template,
+#view-workshop .cover-studio-auto-preview-card {
+  min-width: 0;
+}
+
+#view-workshop .cover-studio-auto-workspace {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+}
+
+#view-workshop .cover-studio-auto-create {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr) minmax(132px, max-content);
+}
+
+#view-workshop .cover-studio-auto-create .field,
+#view-workshop .cover-studio-auto-create .field select,
+#view-workshop .cover-studio-auto-create .primary-btn,
+#view-workshop .cover-studio-auto-template-grid .field {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#view-workshop .cover-studio-auto-create .primary-btn {
+  width: 100%;
+  white-space: nowrap;
+}
+
+@media (max-width: 1320px) {
+  #view-workshop .cover-studio-auto-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  #view-workshop .cover-studio-auto-preview-card {
+    position: static;
+  }
+}
+
+@media (max-width: 760px) {
+  #view-workshop .cover-studio-auto-create,
+  #view-workshop .cover-studio-auto-template-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #view-workshop .cover-studio-auto-create .primary-btn,
+  #view-workshop .cover-studio-auto-preview-card .primary-btn {
+    width: 100%;
   }
 }

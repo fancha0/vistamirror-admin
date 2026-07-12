@@ -27,6 +27,16 @@ DEFAULT_THUMB_SIZE = (1280, 720)
 PREVIEW_TTL_SECONDS = 60 * 60 * 6
 DEFAULT_TEMPLATE_KEY = "fan_spread"
 DEFAULT_COVER_STUDIO_CRON = "0 */6 * * *"
+DEFAULT_COVER_FONT_KEY = "heiti"
+REMOVED_COVER_FONT_KEYS = frozenset(
+    {
+        "hiragino",
+        "noteworthy",
+        "avenir",
+        "fu_lu_da_mao_bi_ti",
+        "the_mordeus",
+    }
+)
 ALL_TEMPLATE_SUPPORTS = [
     "titleAlign",
     "posterCount",
@@ -46,6 +56,7 @@ def cover_studio_modes() -> list[dict[str, Any]]:
             "label": "扇形展开",
             "description": "多张海报像扇面一样展开，适合动画和剧集类视图。",
             "supports": list(ALL_TEMPLATE_SUPPORTS),
+            "maxPosterCount": 8,
             "defaults": {
                 "titleAlign": "left",
                 "overlayStrength": 0,
@@ -59,7 +70,10 @@ def cover_studio_modes() -> list[dict[str, Any]]:
             "key": "banner_showcase",
             "label": "横幅橱窗",
             "description": "大背景主视觉加底部海报陈列，适合做流媒体风格分类封面。",
-            "supports": list(ALL_TEMPLATE_SUPPORTS),
+            # This variant intentionally keeps a precise five-card row. Rotation
+            # would break the aligned streaming-cover composition.
+            "supports": ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+            "maxPosterCount": 5,
             "family": "cinematic_showcase",
             "variant": "banner",
             "defaults": {
@@ -67,7 +81,7 @@ def cover_studio_modes() -> list[dict[str, Any]]:
                 "overlayStrength": 0,
                 "posterCount": 5,
                 "accentTone": "gold",
-                "posterRotation": 18,
+                "posterRotation": 0,
                 "titleYOffset": 0,
             },
         },
@@ -76,6 +90,7 @@ def cover_studio_modes() -> list[dict[str, Any]]:
             "label": "主视觉橱窗",
             "description": "强化主视觉人物与灯光层次，适合剧集与国漫的首页封面。",
             "supports": list(ALL_TEMPLATE_SUPPORTS),
+            "maxPosterCount": 5,
             "family": "cinematic_showcase",
             "variant": "hero",
             "defaults": {
@@ -92,6 +107,7 @@ def cover_studio_modes() -> list[dict[str, Any]]:
             "label": "海报陈列墙",
             "description": "用更规整的海报橱窗形成分类感，适合电影库与动漫库封面。",
             "supports": list(ALL_TEMPLATE_SUPPORTS),
+            "maxPosterCount": 6,
             "family": "cinematic_showcase",
             "variant": "gallery",
             "defaults": {
@@ -108,6 +124,7 @@ def cover_studio_modes() -> list[dict[str, Any]]:
             "label": "沉浸展映台",
             "description": "深色影院舞台感与倒影灯光更强，适合突出沉浸式流媒体封面。",
             "supports": list(ALL_TEMPLATE_SUPPORTS),
+            "maxPosterCount": 5,
             "family": "cinematic_showcase",
             "variant": "immersive",
             "defaults": {
@@ -152,7 +169,7 @@ def default_cover_studio_config() -> dict[str, Any]:
             "pickMode": "random",
             "titleText": "",
             "subtitleText": "",
-            "fontKey": "hiragino",
+            "fontKey": DEFAULT_COVER_FONT_KEY,
             "titleFontSize": 108,
             "subtitleFontSize": 44,
             "presetName": "默认封面",
@@ -164,6 +181,20 @@ def default_cover_studio_config() -> dict[str, Any]:
             "titleYOffset": mode_defaults["titleYOffset"],
             "lockedItemIds": [],
         },
+        "scheduleDraft": {
+            "templateKey": DEFAULT_TEMPLATE_KEY,
+            "pickMode": "random",
+            "titleText": "",
+            "subtitleText": "",
+            "fontKey": DEFAULT_COVER_FONT_KEY,
+            "titleFontSize": 108,
+            "subtitleFontSize": 44,
+            "titleAlign": mode_defaults["titleAlign"],
+            "posterCount": mode_defaults["posterCount"],
+            "accentTone": mode_defaults["accentTone"],
+            "posterRotation": mode_defaults["posterRotation"],
+            "titleYOffset": mode_defaults["titleYOffset"],
+        },
         "presets": [
             {
                 "id": "default",
@@ -172,7 +203,7 @@ def default_cover_studio_config() -> dict[str, Any]:
                 "pickMode": "random",
                 "titleText": "",
                 "subtitleText": "",
-                "fontKey": "hiragino",
+                "fontKey": DEFAULT_COVER_FONT_KEY,
                 "titleFontSize": 108,
                 "subtitleFontSize": 44,
                 "titleAlign": mode_defaults["titleAlign"],
@@ -215,7 +246,7 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
         "pickMode": "recent" if str(draft_source.get("pickMode") or "").strip().lower() == "recent" else "random",
         "titleText": str(draft_source.get("titleText") or "").strip(),
         "subtitleText": str(draft_source.get("subtitleText") or "").strip(),
-        "fontKey": str(draft_source.get("fontKey") or "hiragino").strip() or "hiragino",
+        "fontKey": normalize_cover_studio_font_key(draft_source.get("fontKey")),
         "titleFontSize": _clamp_int(draft_source.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
         "subtitleFontSize": _clamp_int(draft_source.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
         "presetName": str(draft_source.get("presetName") or "默认封面").strip() or "默认封面",
@@ -223,12 +254,18 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
         # The cover studio no longer applies a global dark overlay. Keep the
         # legacy field for config compatibility, but normalize it to disabled.
         "overlayStrength": 0,
-        "posterCount": _clamp_int(draft_source.get("posterCount"), fallback=draft_mode_defaults["posterCount"], minimum=2, maximum=8),
+        "posterCount": _clamp_int(
+            draft_source.get("posterCount"),
+            fallback=draft_mode_defaults["posterCount"],
+            minimum=2,
+            maximum=_mode_poster_limit(draft_template_key),
+        ),
         "accentTone": _normalize_accent_tone(draft_source.get("accentTone"), fallback=draft_mode_defaults["accentTone"]),
-        "posterRotation": _clamp_int(draft_source.get("posterRotation"), fallback=draft_mode_defaults["posterRotation"], minimum=0, maximum=100),
+        "posterRotation": _normalize_mode_poster_rotation(draft_source.get("posterRotation"), template_key=draft_template_key),
         "titleYOffset": _clamp_int(draft_source.get("titleYOffset"), fallback=draft_mode_defaults["titleYOffset"], minimum=-160, maximum=160),
         "lockedItemIds": [str(item).strip() for item in (draft_source.get("lockedItemIds") or []) if str(item).strip()],
     }
+    schedule_draft = _normalize_cover_studio_schedule_template(source.get("scheduleDraft"), fallback=draft)
     presets: list[dict[str, Any]] = []
     for index, item in enumerate(presets_source):
         if not isinstance(item, dict):
@@ -246,14 +283,19 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
                 "pickMode": "recent" if str(item.get("pickMode") or "").strip().lower() == "recent" else "random",
                 "titleText": str(item.get("titleText") or "").strip(),
                 "subtitleText": str(item.get("subtitleText") or "").strip(),
-                "fontKey": str(item.get("fontKey") or "hiragino").strip() or "hiragino",
+                "fontKey": normalize_cover_studio_font_key(item.get("fontKey")),
                 "titleFontSize": _clamp_int(item.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
                 "subtitleFontSize": _clamp_int(item.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
                 "titleAlign": _normalize_title_align(item.get("titleAlign"), fallback=preset_mode_defaults["titleAlign"]),
                 "overlayStrength": 0,
-                "posterCount": _clamp_int(item.get("posterCount"), fallback=preset_mode_defaults["posterCount"], minimum=2, maximum=8),
+                "posterCount": _clamp_int(
+                    item.get("posterCount"),
+                    fallback=preset_mode_defaults["posterCount"],
+                    minimum=2,
+                    maximum=_mode_poster_limit(preset_template_key),
+                ),
                 "accentTone": _normalize_accent_tone(item.get("accentTone"), fallback=preset_mode_defaults["accentTone"]),
-                "posterRotation": _clamp_int(item.get("posterRotation"), fallback=preset_mode_defaults["posterRotation"], minimum=0, maximum=100),
+                "posterRotation": _normalize_mode_poster_rotation(item.get("posterRotation"), template_key=preset_template_key),
                 "titleYOffset": _clamp_int(item.get("titleYOffset"), fallback=preset_mode_defaults["titleYOffset"], minimum=-160, maximum=160),
                 "lockedItemIds": [str(value).strip() for value in (item.get("lockedItemIds") or []) if str(value).strip()],
             }
@@ -285,6 +327,7 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
         "currentPresetId": current_preset_id,
         "lastViewId": str(source.get("lastViewId") or draft.get("viewId") or "").strip(),
         "draft": draft,
+        "scheduleDraft": schedule_draft,
         "presets": presets,
         "backups": backups,
         "schedule": schedule,
@@ -367,13 +410,18 @@ def _normalize_cover_studio_schedule_template(raw: Any, *, fallback: dict[str, A
         "pickMode": "recent" if str(source.get("pickMode") or "").strip().lower() == "recent" else "random",
         "titleText": str(source.get("titleText") or "").strip(),
         "subtitleText": str(source.get("subtitleText") or "").strip(),
-        "fontKey": str(source.get("fontKey") or "hiragino").strip() or "hiragino",
+        "fontKey": normalize_cover_studio_font_key(source.get("fontKey")),
         "titleFontSize": _clamp_int(source.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
         "subtitleFontSize": _clamp_int(source.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
         "titleAlign": _normalize_title_align(source.get("titleAlign"), fallback=mode_defaults["titleAlign"]),
-        "posterCount": _clamp_int(source.get("posterCount"), fallback=mode_defaults["posterCount"], minimum=2, maximum=8),
+        "posterCount": _clamp_int(
+            source.get("posterCount"),
+            fallback=mode_defaults["posterCount"],
+            minimum=2,
+            maximum=_mode_poster_limit(template_key),
+        ),
         "accentTone": _normalize_accent_tone(source.get("accentTone"), fallback=mode_defaults["accentTone"]),
-        "posterRotation": _clamp_int(source.get("posterRotation"), fallback=mode_defaults["posterRotation"], minimum=0, maximum=100),
+        "posterRotation": _normalize_mode_poster_rotation(source.get("posterRotation"), template_key=template_key),
         "titleYOffset": _clamp_int(source.get("titleYOffset"), fallback=mode_defaults["titleYOffset"], minimum=-160, maximum=160),
     }
 
@@ -423,10 +471,7 @@ def _is_valid_cron_field(field: str, minimum: int, maximum: int) -> bool:
 
 def available_cover_fonts() -> list[dict[str, str]]:
     candidates = [
-        {"key": "hiragino", "label": "苹方黑体", "path": "/System/Library/Fonts/Hiragino Sans GB.ttc"},
         {"key": "heiti", "label": "华文黑体", "path": "/System/Library/Fonts/STHeiti Medium.ttc"},
-        {"key": "noteworthy", "label": "手写风", "path": "/System/Library/Fonts/Noteworthy.ttc"},
-        {"key": "avenir", "label": "Avenir", "path": "/System/Library/Fonts/Avenir.ttc"},
     ]
     rows: list[dict[str, str]] = []
     seen_keys: set[str] = set()
@@ -437,13 +482,26 @@ def available_cover_fonts() -> list[dict[str, str]]:
     for item in _discover_custom_cover_fonts():
         safe_key = str(item.get("key") or "").strip()
         safe_path = str(item.get("path") or "").strip()
-        if not safe_key or not safe_path or safe_key in seen_keys or not os.path.exists(safe_path):
+        if (
+            not safe_key
+            or safe_key in REMOVED_COVER_FONT_KEYS
+            or not safe_path
+            or safe_key in seen_keys
+            or not os.path.exists(safe_path)
+        ):
             continue
         rows.append(dict(item))
         seen_keys.add(safe_key)
     if not rows:
         rows.append({"key": "default", "label": "默认字体", "path": ""})
     return rows
+
+
+def normalize_cover_studio_font_key(value: Any) -> str:
+    key = str(value or "").strip()
+    if not key or key in REMOVED_COVER_FONT_KEYS:
+        return DEFAULT_COVER_FONT_KEY
+    return key
 
 
 @dataclass
@@ -853,9 +911,17 @@ class CoverStudioService:
         # Older saved drafts may still contain a non-zero value. Ignore it so
         # every generated template follows the same no-global-mask rule.
         safe_overlay_strength = 0
-        safe_poster_count = min(len(prepared), _clamp_int(poster_count, fallback=_mode_defaults(safe_template_key)["posterCount"], minimum=2, maximum=8))
+        safe_poster_count = min(
+            len(prepared),
+            _clamp_int(
+                poster_count,
+                fallback=_mode_defaults(safe_template_key)["posterCount"],
+                minimum=2,
+                maximum=_mode_poster_limit(safe_template_key),
+            ),
+        )
         safe_accent_tone = _normalize_accent_tone(accent_tone, fallback=_mode_defaults(safe_template_key)["accentTone"])
-        safe_poster_rotation = _clamp_int(poster_rotation, fallback=_mode_defaults(safe_template_key)["posterRotation"], minimum=0, maximum=100)
+        safe_poster_rotation = _normalize_mode_poster_rotation(poster_rotation, template_key=safe_template_key)
         safe_title_y_offset = _clamp_int(title_y_offset, fallback=_mode_defaults(safe_template_key)["titleYOffset"], minimum=-160, maximum=160)
         mode = _mode_meta(safe_template_key)
         primary_canvas = self._render_mode_cover(
@@ -1968,7 +2034,7 @@ class CoverStudioService:
 
     def _load_font(self, font_key: str, font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         font_map = {row["key"]: row["path"] for row in available_cover_fonts()}
-        font_path = font_map.get(str(font_key or "").strip()) or ""
+        font_path = font_map.get(normalize_cover_studio_font_key(font_key)) or ""
         try:
             if font_path:
                 return ImageFont.truetype(font_path, font_size)
@@ -2113,6 +2179,17 @@ def _mode_meta(template_key: str) -> dict[str, Any]:
 
 def _mode_defaults(template_key: str) -> dict[str, Any]:
     return dict(_mode_meta(template_key).get("defaults") or {})
+
+
+def _mode_poster_limit(template_key: str) -> int:
+    return _clamp_int(_mode_meta(template_key).get("maxPosterCount"), fallback=8, minimum=2, maximum=8)
+
+
+def _normalize_mode_poster_rotation(value: Any, *, template_key: str) -> int:
+    mode = _mode_meta(template_key)
+    if "posterRotation" not in set(mode.get("supports") or []):
+        return 0
+    return _clamp_int(value, fallback=_mode_defaults(template_key)["posterRotation"], minimum=0, maximum=100)
 
 
 def _normalize_template_key(value: Any) -> str:

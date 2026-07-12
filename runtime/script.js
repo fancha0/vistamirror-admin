@@ -174,6 +174,20 @@ const DEFAULT_DRIVE115_CONFIG = {
   cookieMasked: ""
 };
 
+const DEFAULT_COVER_STUDIO_FONT_KEY = "heiti";
+const REMOVED_COVER_STUDIO_FONT_KEYS = new Set([
+  "hiragino",
+  "noteworthy",
+  "avenir",
+  "fu_lu_da_mao_bi_ti",
+  "the_mordeus"
+]);
+
+function normalizeCoverStudioFontKey(value) {
+  const key = String(value || "").trim();
+  return !key || REMOVED_COVER_STUDIO_FONT_KEYS.has(key) ? DEFAULT_COVER_STUDIO_FONT_KEY : key;
+}
+
 const DEFAULT_COVER_STUDIO_CONFIG = {
   currentPresetId: "default",
   lastViewId: "",
@@ -184,7 +198,7 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
     pickMode: "random",
     titleText: "",
     subtitleText: "",
-    fontKey: "hiragino",
+    fontKey: DEFAULT_COVER_STUDIO_FONT_KEY,
     titleFontSize: 108,
     subtitleFontSize: 44,
     presetName: "默认封面",
@@ -196,6 +210,20 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
     titleYOffset: 0,
     lockedItemIds: []
   },
+  scheduleDraft: {
+    templateKey: "fan_spread",
+    pickMode: "random",
+    titleText: "",
+    subtitleText: "",
+    fontKey: DEFAULT_COVER_STUDIO_FONT_KEY,
+    titleFontSize: 108,
+    subtitleFontSize: 44,
+    titleAlign: "left",
+    posterCount: 5,
+    accentTone: "blue",
+    posterRotation: 42,
+    titleYOffset: 0
+  },
   presets: [
     {
       id: "default",
@@ -204,7 +232,7 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
       pickMode: "random",
       titleText: "",
       subtitleText: "",
-      fontKey: "hiragino",
+      fontKey: DEFAULT_COVER_STUDIO_FONT_KEY,
       titleFontSize: 108,
       subtitleFontSize: 44,
       titleAlign: "left",
@@ -228,26 +256,51 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
   schedules: []
 };
 
+// Keep cover titles in sync with the selected Emby library. The Chinese title
+// always comes from Emby; the subtitle is only a lightweight display hint.
+const COVER_STUDIO_LIBRARY_SUBTITLES = [
+  ["国产动漫", "Chinese Animation"],
+  ["动漫电影", "Anime Movies"],
+  ["动漫剧集", "Anime Series"],
+  ["华语电影", "Chinese Movies"],
+  ["华语剧集", "Chinese Series"],
+  ["欧美电影", "Western Movies"],
+  ["欧美剧集", "Western Series"],
+  ["亚洲电影", "Asian Movies"],
+  ["亚洲剧集", "Asian Series"],
+  ["纪录片电影", "Documentary Movies"],
+  ["纪录片剧集", "Documentary Series"],
+  ["综艺", "Variety Shows"],
+  ["合集", "Collections"],
+  ["动画电影", "Animation Movies"],
+  ["动画剧集", "Animation Series"],
+  ["动画", "Animation"],
+  ["动漫", "Animation"]
+];
+
 const DEFAULT_COVER_STUDIO_MODES = [
   {
     key: "fan_spread",
     label: "扇形展开",
     description: "多张海报像扇面一样展开，适合动画和剧集类视图。",
     supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    maxPosterCount: 8,
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 6, accentTone: "gold", posterRotation: 68, titleYOffset: -12 }
   },
   {
     key: "banner_showcase",
     label: "横幅橱窗",
     description: "大背景主视觉加底部海报陈列，适合做流媒体风格分类封面。",
-    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
-    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "gold", posterRotation: 18, titleYOffset: 0 }
+    supports: ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+    maxPosterCount: 5,
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "gold", posterRotation: 0, titleYOffset: 0 }
   },
   {
     key: "hero_showcase",
     label: "主视觉橱窗",
     description: "强化主视觉人物与灯光层次，适合剧集与国漫的首页封面。",
     supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    maxPosterCount: 5,
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "blue", posterRotation: 12, titleYOffset: 0 }
   },
   {
@@ -255,6 +308,7 @@ const DEFAULT_COVER_STUDIO_MODES = [
     label: "海报陈列墙",
     description: "用更规整的海报橱窗形成分类感，适合电影库与动漫库封面。",
     supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    maxPosterCount: 6,
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 6, accentTone: "emerald", posterRotation: 8, titleYOffset: 0 }
   },
   {
@@ -262,6 +316,7 @@ const DEFAULT_COVER_STUDIO_MODES = [
     label: "沉浸展映台",
     description: "深色影院舞台感与倒影灯光更强，适合突出沉浸式流媒体封面。",
     supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
+    maxPosterCount: 5,
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "rose", posterRotation: 16, titleYOffset: 0 }
   }
 ];
@@ -835,6 +890,13 @@ function normalizeCoverStudioConfig(rawConfig) {
   const validTones = new Set(DEFAULT_COVER_STUDIO_ACCENT_TONES.map((item) => item.key));
   const resolveModeDefaults = (templateKey) =>
     DEFAULT_COVER_STUDIO_MODES.find((mode) => mode.key === templateKey)?.defaults || DEFAULT_COVER_STUDIO_MODES[0].defaults;
+  const resolveMode = (templateKey) =>
+    DEFAULT_COVER_STUDIO_MODES.find((mode) => mode.key === templateKey) || DEFAULT_COVER_STUDIO_MODES[0];
+  const resolvePosterLimit = (templateKey) => clampInt(resolveMode(templateKey).maxPosterCount, 8, 2, 8);
+  const normalizePosterRotation = (value, templateKey, fallback) =>
+    (resolveMode(templateKey).supports || []).includes("posterRotation")
+      ? clampInt(value, fallback, 0, 100)
+      : 0;
   const normalizeTemplateKey = (value) => {
     const key = String(value || "").trim();
     return validModes.has(key) ? key : DEFAULT_COVER_STUDIO_MODES[0].key;
@@ -849,15 +911,15 @@ function normalizeCoverStudioConfig(rawConfig) {
     pickMode: String(draftSource.pickMode || "random").trim().toLowerCase() === "recent" ? "recent" : "random",
     titleText: String(draftSource.titleText || "").trim(),
     subtitleText: String(draftSource.subtitleText || "").trim(),
-    fontKey: String(draftSource.fontKey || "hiragino").trim() || "hiragino",
+    fontKey: normalizeCoverStudioFontKey(draftSource.fontKey),
     titleFontSize: clampInt(draftSource.titleFontSize, 108, 56, 180),
     subtitleFontSize: clampInt(draftSource.subtitleFontSize, 44, 22, 72),
     presetName: String(draftSource.presetName || "默认封面").trim() || "默认封面",
     titleAlign: validAligns.has(String(draftSource.titleAlign || "").trim()) ? String(draftSource.titleAlign || "").trim() : draftDefaults.titleAlign,
     overlayStrength: 0,
-    posterCount: clampInt(draftSource.posterCount, draftDefaults.posterCount, 2, 8),
+    posterCount: clampInt(draftSource.posterCount, draftDefaults.posterCount, 2, resolvePosterLimit(draftTemplateKey)),
     accentTone: validTones.has(String(draftSource.accentTone || "").trim()) ? String(draftSource.accentTone || "").trim() : draftDefaults.accentTone,
-    posterRotation: clampInt(draftSource.posterRotation, draftDefaults.posterRotation, 0, 100),
+    posterRotation: normalizePosterRotation(draftSource.posterRotation, draftTemplateKey, draftDefaults.posterRotation),
     titleYOffset: clampInt(draftSource.titleYOffset, draftDefaults.titleYOffset, -160, 160),
     lockedItemIds: Array.isArray(draftSource.lockedItemIds)
       ? draftSource.lockedItemIds.map((item) => String(item || "").trim()).filter(Boolean)
@@ -885,14 +947,14 @@ function normalizeCoverStudioConfig(rawConfig) {
             pickMode: String(item.pickMode || "random").trim().toLowerCase() === "recent" ? "recent" : "random",
             titleText: String(item.titleText || "").trim(),
             subtitleText: String(item.subtitleText || "").trim(),
-            fontKey: String(item.fontKey || "hiragino").trim() || "hiragino",
+            fontKey: normalizeCoverStudioFontKey(item.fontKey),
             titleFontSize: clampInt(item.titleFontSize, 108, 56, 180),
             subtitleFontSize: clampInt(item.subtitleFontSize, 44, 22, 72),
             titleAlign: validAligns.has(String(item.titleAlign || "").trim()) ? String(item.titleAlign || "").trim() : defaults.titleAlign,
             overlayStrength: 0,
-            posterCount: clampInt(item.posterCount, defaults.posterCount, 2, 8),
+            posterCount: clampInt(item.posterCount, defaults.posterCount, 2, resolvePosterLimit(templateKey)),
             accentTone: validTones.has(String(item.accentTone || "").trim()) ? String(item.accentTone || "").trim() : defaults.accentTone,
-            posterRotation: clampInt(item.posterRotation, defaults.posterRotation, 0, 100),
+            posterRotation: normalizePosterRotation(item.posterRotation, templateKey, defaults.posterRotation),
             titleYOffset: clampInt(item.titleYOffset, defaults.titleYOffset, -160, 160),
             lockedItemIds: Array.isArray(item.lockedItemIds)
               ? item.lockedItemIds.map((row) => String(row || "").trim()).filter(Boolean)
@@ -940,7 +1002,7 @@ function normalizeCoverStudioConfig(rawConfig) {
             viewName: String(item.viewName || "").trim(),
             enabled: Boolean(item.enabled),
             cron: String(item.cron || "0 */6 * * *").trim() || "0 */6 * * *",
-            template: { ...templateSource },
+            template: buildCoverStudioScheduleTemplate(templateSource),
             fingerprint: item.fingerprint && typeof item.fingerprint === "object" ? item.fingerprint : {},
             initializedAt: String(item.initializedAt || "").trim(),
             lastCheckedAt: String(item.lastCheckedAt || "").trim(),
@@ -951,10 +1013,15 @@ function normalizeCoverStudioConfig(rawConfig) {
         })
         .filter(Boolean)
     : [];
+  const scheduleDraftSource = config.scheduleDraft && typeof config.scheduleDraft === "object"
+    ? config.scheduleDraft
+    : draft;
+  const scheduleDraft = buildCoverStudioScheduleTemplate(scheduleDraftSource);
   return {
     currentPresetId: String(config.currentPresetId || presets[0]?.id || "default").trim() || presets[0]?.id || "default",
     lastViewId: String(config.lastViewId || draft.viewId || "").trim(),
     draft,
+    scheduleDraft,
     presets,
     backups,
     schedule,
@@ -7296,16 +7363,16 @@ function readCoverStudioDraftFromInputs() {
       pickMode: String(elements.coverStudioPickMode?.value || "random").trim(),
       titleText: String(elements.coverStudioTitleText?.value || "").trim(),
       subtitleText: String(elements.coverStudioSubtitleText?.value || "").trim(),
-      fontKey: String(elements.coverStudioFontKey?.value || "hiragino").trim() || "hiragino",
+      fontKey: normalizeCoverStudioFontKey(elements.coverStudioFontKey?.value),
       titleFontSize: elements.coverStudioTitleSize?.value || 108,
       subtitleFontSize: elements.coverStudioSubtitleSize?.value || 44,
       presetName: String(elements.coverStudioPresetName?.value || "").trim() || "默认封面",
       titleAlign: String(elements.coverStudioTitleAlign?.value || "left").trim() || "left",
       overlayStrength: 0,
-      posterCount: elements.coverStudioPosterCount?.value || 5,
+      posterCount: elements.coverStudioPosterCount?.value ?? 5,
       accentTone: String(elements.coverStudioAccentTone?.value || "blue").trim() || "blue",
-      posterRotation: elements.coverStudioPosterRotation?.value || 42,
-      titleYOffset: elements.coverStudioTitleYOffset?.value || 0
+      posterRotation: elements.coverStudioPosterRotation?.value ?? 42,
+      titleYOffset: elements.coverStudioTitleYOffset?.value ?? 0
     }
   }).draft;
 }
@@ -7332,6 +7399,16 @@ function getCoverStudioModeMeta(templateKey) {
     ? appState.coverStudioModes
     : DEFAULT_COVER_STUDIO_MODES;
   return modes.find((mode) => String(mode?.key || "") === String(templateKey || "")) || modes[0];
+}
+
+function getCoverStudioModeCapabilities(templateKey) {
+  const mode = getCoverStudioModeMeta(templateKey) || {};
+  const supports = new Set(Array.isArray(mode.supports) ? mode.supports : []);
+  const parsedLimit = Number.parseInt(String(mode.maxPosterCount ?? 8), 10);
+  return {
+    supports,
+    posterLimit: Math.max(2, Math.min(8, Number.isFinite(parsedLimit) ? parsedLimit : 8))
+  };
 }
 
 function clearCoverStudioPreview({ keepFeedback = false } = {}) {
@@ -7384,7 +7461,7 @@ function renderCoverStudioFonts() {
   }
   const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
     ? appState.coverStudioFonts
-    : [{ key: "hiragino", label: "苹方黑体" }];
+    : [{ key: DEFAULT_COVER_STUDIO_FONT_KEY, label: "华文黑体" }];
   elements.coverStudioFontKey.innerHTML = fonts
     .map((font) => `<option value="${escapeHtml(font.key)}">${escapeHtml(font.label)}</option>`)
     .join("");
@@ -7420,6 +7497,56 @@ function buildCoverStudioViewOption(view) {
   const count = Number(view?.recursiveItemCount || view?.childCount || 0);
   const suffix = count > 0 ? ` · ${count} 项` : "";
   return `<option value="${escapeHtml(view.id)}">${escapeHtml(view.name)}${escapeHtml(suffix)}</option>`;
+}
+
+function getCoverStudioLibraryCopy(viewId) {
+  const normalizedId = String(viewId || "").trim();
+  const view = (appState.coverStudioViews || []).find((item) => String(item?.id || "").trim() === normalizedId);
+  const titleText = String(view?.name || "").trim();
+  if (!titleText) {
+    return null;
+  }
+  const normalizedTitle = titleText.replace(/\s+/g, "");
+  const match = COVER_STUDIO_LIBRARY_SUBTITLES.find(([name]) => normalizedTitle.includes(name));
+  return {
+    titleText,
+    subtitleText: match ? match[1] : ""
+  };
+}
+
+function applyCoverStudioManualLibraryCopy() {
+  const selectedViewIds = getSelectedCoverStudioViewIds();
+  if (selectedViewIds.length !== 1) {
+    return false;
+  }
+  const copy = getCoverStudioLibraryCopy(selectedViewIds[0]);
+  if (!copy) {
+    return false;
+  }
+  if (elements.coverStudioTitleText) {
+    elements.coverStudioTitleText.value = copy.titleText;
+  }
+  if (elements.coverStudioSubtitleText) {
+    elements.coverStudioSubtitleText.value = copy.subtitleText;
+  }
+  return true;
+}
+
+function applyCoverStudioScheduleLibraryCopy() {
+  const viewId = String(elements.coverStudioScheduleViewSelect?.value || "").trim();
+  const copy = getCoverStudioLibraryCopy(viewId);
+  if (!copy) {
+    clearCoverStudioSchedulePreview();
+    return false;
+  }
+  appState.coverStudioScheduleDraft = {
+    ...readCoverStudioScheduleTemplateFromInputs(),
+    titleText: copy.titleText,
+    subtitleText: copy.subtitleText
+  };
+  renderCoverStudioScheduleTemplateInputs();
+  clearCoverStudioSchedulePreview();
+  return true;
 }
 
 function renderCoverStudioViews() {
@@ -7480,7 +7607,7 @@ function renderCoverStudioPreview() {
 function renderCoverStudioModeControls() {
   const draft = appState.coverStudioConfig?.draft || DEFAULT_COVER_STUDIO_CONFIG.draft;
   const mode = getCoverStudioModeMeta(draft.templateKey);
-  const supports = new Set(Array.isArray(mode?.supports) ? mode.supports : []);
+  const { supports, posterLimit } = getCoverStudioModeCapabilities(draft.templateKey);
   if (elements.coverStudioTemplateChip) {
     elements.coverStudioTemplateChip.textContent = String(mode?.label || "模板").trim() || "模板";
   }
@@ -7507,6 +7634,7 @@ function renderCoverStudioModeControls() {
     elements.coverStudioOverlayStrength.disabled = true;
   }
   if (elements.coverStudioPosterCount) {
+    elements.coverStudioPosterCount.max = String(posterLimit);
     elements.coverStudioPosterCount.value = String(draft.posterCount ?? 5);
     elements.coverStudioPosterCount.disabled = !supports.has("posterCount");
   }
@@ -7515,7 +7643,7 @@ function renderCoverStudioModeControls() {
     elements.coverStudioAccentTone.disabled = !supports.has("accentTone");
   }
   if (elements.coverStudioPosterRotation) {
-    elements.coverStudioPosterRotation.value = String(draft.posterRotation ?? 42);
+    elements.coverStudioPosterRotation.value = String(supports.has("posterRotation") ? (draft.posterRotation ?? 42) : 0);
     elements.coverStudioPosterRotation.disabled = !supports.has("posterRotation");
   }
   if (elements.coverStudioTitleYOffset) {
@@ -7548,25 +7676,32 @@ function renderCoverStudioStatus() {
 }
 
 function buildCoverStudioScheduleTemplate(draft) {
+  const templateKey = String(draft.templateKey || "fan_spread");
+  const { supports, posterLimit } = getCoverStudioModeCapabilities(templateKey);
+  const posterCount = Number(draft.posterCount ?? 5);
+  const posterRotation = Number(draft.posterRotation ?? 42);
   return {
-    templateKey: String(draft.templateKey || "fan_spread"),
+    templateKey,
     pickMode: String(draft.pickMode || "random"),
     titleText: String(draft.titleText || ""),
     subtitleText: String(draft.subtitleText || ""),
-    fontKey: String(draft.fontKey || "hiragino"),
+    fontKey: normalizeCoverStudioFontKey(draft.fontKey),
     titleFontSize: Number(draft.titleFontSize || 108),
     subtitleFontSize: Number(draft.subtitleFontSize || 44),
     titleAlign: String(draft.titleAlign || "left"),
-    posterCount: Number(draft.posterCount || 5),
+    posterCount: Math.max(2, Math.min(posterLimit, Number.isFinite(posterCount) ? posterCount : 5)),
     accentTone: String(draft.accentTone || "blue"),
-    posterRotation: Number(draft.posterRotation || 42),
-    titleYOffset: Number(draft.titleYOffset || 0)
+    posterRotation: supports.has("posterRotation") && Number.isFinite(posterRotation) ? posterRotation : 0,
+    titleYOffset: Number(draft.titleYOffset ?? 0)
   };
 }
 
 function getCoverStudioScheduleTemplateDraft() {
   if (appState.coverStudioScheduleDraft) {
     return appState.coverStudioScheduleDraft;
+  }
+  if (appState.coverStudioConfig?.scheduleDraft) {
+    return appState.coverStudioConfig.scheduleDraft;
   }
   return buildCoverStudioScheduleTemplate(readCoverStudioDraftFromInputs());
 }
@@ -7587,13 +7722,14 @@ function renderCoverStudioScheduleTemplateInputs() {
     : DEFAULT_COVER_STUDIO_MODES;
   const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
     ? appState.coverStudioFonts
-    : [{ key: "hiragino", label: "苹方黑体" }];
+    : [{ key: DEFAULT_COVER_STUDIO_FONT_KEY, label: "华文黑体" }];
   const tones = Array.isArray(appState.coverStudioAccentTones) && appState.coverStudioAccentTones.length
     ? appState.coverStudioAccentTones
     : DEFAULT_COVER_STUDIO_ACCENT_TONES;
   const alignments = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
     ? appState.coverStudioTitleAlignOptions
     : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
+  const { supports, posterLimit } = getCoverStudioModeCapabilities(draft.templateKey);
   setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleTemplateKey, modes, draft.templateKey);
   setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleFontKey, fonts, draft.fontKey);
   setCoverStudioScheduleSelectOptions(elements.coverStudioScheduleAccentTone, tones, draft.accentTone);
@@ -7605,9 +7741,16 @@ function renderCoverStudioScheduleTemplateInputs() {
   if (elements.coverStudioScheduleSubtitleText) elements.coverStudioScheduleSubtitleText.value = draft.subtitleText || "";
   if (elements.coverStudioScheduleTitleSize) elements.coverStudioScheduleTitleSize.value = String(draft.titleFontSize || 108);
   if (elements.coverStudioScheduleSubtitleSize) elements.coverStudioScheduleSubtitleSize.value = String(draft.subtitleFontSize || 44);
-  if (elements.coverStudioSchedulePosterCount) elements.coverStudioSchedulePosterCount.value = String(draft.posterCount || 5);
-  if (elements.coverStudioSchedulePosterRotation) elements.coverStudioSchedulePosterRotation.value = String(draft.posterRotation || 42);
-  if (elements.coverStudioScheduleTitleYOffset) elements.coverStudioScheduleTitleYOffset.value = String(Number(draft.titleYOffset || 0));
+  if (elements.coverStudioSchedulePosterCount) {
+    elements.coverStudioSchedulePosterCount.max = String(posterLimit);
+    elements.coverStudioSchedulePosterCount.disabled = !supports.has("posterCount");
+    elements.coverStudioSchedulePosterCount.value = String(Math.max(2, Math.min(posterLimit, Number(draft.posterCount ?? 5))));
+  }
+  if (elements.coverStudioSchedulePosterRotation) {
+    elements.coverStudioSchedulePosterRotation.disabled = !supports.has("posterRotation");
+    elements.coverStudioSchedulePosterRotation.value = String(supports.has("posterRotation") ? Number(draft.posterRotation ?? 42) : 0);
+  }
+  if (elements.coverStudioScheduleTitleYOffset) elements.coverStudioScheduleTitleYOffset.value = String(Number(draft.titleYOffset ?? 0));
 }
 
 function readCoverStudioScheduleTemplateFromInputs() {
@@ -7617,8 +7760,12 @@ function readCoverStudioScheduleTemplateFromInputs() {
     const parsed = Number(element?.value);
     return Number.isFinite(parsed) ? parsed : defaultValue;
   };
+  const templateKey = value(elements.coverStudioScheduleTemplateKey, fallback.templateKey) || fallback.templateKey;
+  const { supports, posterLimit } = getCoverStudioModeCapabilities(templateKey);
+  const posterCount = numberValue(elements.coverStudioSchedulePosterCount, fallback.posterCount);
+  const posterRotation = numberValue(elements.coverStudioSchedulePosterRotation, fallback.posterRotation);
   return {
-    templateKey: value(elements.coverStudioScheduleTemplateKey, fallback.templateKey) || fallback.templateKey,
+    templateKey,
     pickMode: value(elements.coverStudioSchedulePickMode, fallback.pickMode) === "recent" ? "recent" : "random",
     titleText: value(elements.coverStudioScheduleTitleText, fallback.titleText),
     subtitleText: value(elements.coverStudioScheduleSubtitleText, fallback.subtitleText),
@@ -7626,9 +7773,9 @@ function readCoverStudioScheduleTemplateFromInputs() {
     titleFontSize: numberValue(elements.coverStudioScheduleTitleSize, fallback.titleFontSize),
     subtitleFontSize: numberValue(elements.coverStudioScheduleSubtitleSize, fallback.subtitleFontSize),
     titleAlign: value(elements.coverStudioScheduleTitleAlign, fallback.titleAlign) || fallback.titleAlign,
-    posterCount: numberValue(elements.coverStudioSchedulePosterCount, fallback.posterCount),
+    posterCount: Math.max(2, Math.min(posterLimit, posterCount)),
     accentTone: value(elements.coverStudioScheduleAccentTone, fallback.accentTone) || fallback.accentTone,
-    posterRotation: numberValue(elements.coverStudioSchedulePosterRotation, fallback.posterRotation),
+    posterRotation: supports.has("posterRotation") ? Math.max(0, Math.min(100, posterRotation)) : 0,
     titleYOffset: numberValue(elements.coverStudioScheduleTitleYOffset, fallback.titleYOffset)
   };
 }
@@ -7707,27 +7854,64 @@ function renderCoverStudioSchedules() {
     return;
   }
   elements.coverStudioScheduleList.innerHTML = schedules.map((plan) => {
-    const template = plan.template && typeof plan.template === "object" ? plan.template : {};
+    const resolvedViewName = String(
+      plan.viewName
+      || (appState.coverStudioViews || []).find((view) => String(view?.id || "") === String(plan.viewId || ""))?.name
+      || plan.viewId
+      || "未命名媒体库"
+    );
+    const template = {
+      ...buildCoverStudioScheduleTemplate(DEFAULT_COVER_STUDIO_CONFIG.draft),
+      ...(plan.template && typeof plan.template === "object" ? plan.template : {})
+    };
     const selectedTemplate = String(template.templateKey || "fan_spread");
+    const { supports: templateSupports, posterLimit } = getCoverStudioModeCapabilities(selectedTemplate);
     const selectedPickMode = String(template.pickMode || "random");
     const modeOptions = modes.map((mode) => `<option value="${escapeHtml(mode.key)}"${mode.key === selectedTemplate ? " selected" : ""}>${escapeHtml(mode.label)}</option>`).join("");
+    const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
+      ? appState.coverStudioFonts
+    : [{ key: DEFAULT_COVER_STUDIO_FONT_KEY, label: "华文黑体" }];
+    const tones = Array.isArray(appState.coverStudioAccentTones) && appState.coverStudioAccentTones.length
+      ? appState.coverStudioAccentTones
+      : DEFAULT_COVER_STUDIO_ACCENT_TONES;
+    const alignments = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
+      ? appState.coverStudioTitleAlignOptions
+      : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
+    const optionsFor = (items, selected) => items
+      .map((item) => `<option value="${escapeHtml(item.key)}"${item.key === selected ? " selected" : ""}>${escapeHtml(item.label)}</option>`)
+      .join("");
     const lastText = plan.lastCheckedAt ? `最近检查：${escapeHtml(plan.lastCheckedAt)}` : "尚未检查";
     const updateText = plan.lastUpdatedAt ? `最近更新：${escapeHtml(plan.lastUpdatedAt)}` : "尚未更新";
     return `<article class="cover-studio-schedule-plan" data-schedule-id="${escapeHtml(plan.id)}">
       <div class="cover-studio-schedule-plan-head">
-        <div><strong>${escapeHtml(plan.viewName || plan.viewId)}</strong><small>${lastText} · ${updateText}</small><small>${escapeHtml(plan.lastMessage || "尚未检查。")}</small></div>
-        <label class="switch-row" aria-label="启用 ${escapeHtml(plan.viewName || plan.viewId)} 自动封面"><input data-schedule-field="enabled" type="checkbox"${plan.enabled ? " checked" : ""}><span class="switch-track"></span></label>
+        <div><strong>${escapeHtml(resolvedViewName)}</strong><small>${lastText} · ${updateText}</small><small>${escapeHtml(plan.lastMessage || "尚未检查。")}</small></div>
+        <label class="switch-row" aria-label="启用 ${escapeHtml(resolvedViewName)} 自动封面"><input data-schedule-field="enabled" type="checkbox"${plan.enabled ? " checked" : ""}><span class="switch-track"></span></label>
       </div>
       <div class="cover-studio-schedule-plan-fields">
         <label><span>Cron</span><input data-schedule-field="cron" type="text" value="${escapeHtml(plan.cron || "0 */6 * * *")}"></label>
         <label><span>模板</span><select data-schedule-field="templateKey">${modeOptions}</select></label>
         <label><span>取图</span><select data-schedule-field="pickMode"><option value="recent"${selectedPickMode === "recent" ? " selected" : ""}>最近入库</option><option value="random"${selectedPickMode === "random" ? " selected" : ""}>随机</option></select></label>
       </div>
+      <details class="cover-studio-schedule-advanced">
+        <summary>编辑封面参数</summary>
+        <div class="cover-studio-schedule-advanced-grid">
+          <label><span>主标题</span><input data-schedule-field="titleText" type="text" value="${escapeHtml(template.titleText || "")}" placeholder="默认使用媒体库名称"></label>
+          <label><span>副标题</span><input data-schedule-field="subtitleText" type="text" value="${escapeHtml(template.subtitleText || "")}" placeholder="可留空"></label>
+          <label><span>字体</span><select data-schedule-field="fontKey">${optionsFor(fonts, normalizeCoverStudioFontKey(template.fontKey))}</select></label>
+          <label><span>标题对齐</span><select data-schedule-field="titleAlign">${optionsFor(alignments, String(template.titleAlign || "left"))}</select></label>
+          <label><span>标题字号</span><input data-schedule-field="titleFontSize" type="number" min="56" max="180" step="2" value="${escapeHtml(template.titleFontSize || 108)}"></label>
+          <label><span>副标题字号</span><input data-schedule-field="subtitleFontSize" type="number" min="22" max="72" step="2" value="${escapeHtml(template.subtitleFontSize || 44)}"></label>
+          <label><span>海报数量</span><input data-schedule-field="posterCount" type="number" min="2" max="${posterLimit}" step="1" value="${escapeHtml(template.posterCount ?? 5)}"${templateSupports.has("posterCount") ? "" : " disabled"}></label>
+          <label><span>主色倾向</span><select data-schedule-field="accentTone">${optionsFor(tones, String(template.accentTone || "blue"))}</select></label>
+          <label><span>旋转幅度</span><input data-schedule-field="posterRotation" type="number" min="0" max="100" step="2" value="${escapeHtml(templateSupports.has("posterRotation") ? (template.posterRotation ?? 42) : 0)}"${templateSupports.has("posterRotation") ? "" : " disabled"}></label>
+          <label><span>标题纵向位置</span><input data-schedule-field="titleYOffset" type="number" min="-160" max="160" step="4" value="${escapeHtml(Number(template.titleYOffset ?? 0))}"></label>
+        </div>
+      </details>
       <div class="cover-studio-schedule-plan-actions">
-        <button class="ghost-btn" type="button" data-schedule-action="save">保存</button>
+        <button class="ghost-btn" type="button" data-schedule-action="save">保存修改</button>
         <button class="ghost-btn" type="button" data-schedule-action="check">立即检查</button>
         <button class="ghost-btn" type="button" data-schedule-action="force">立即更新</button>
-        <button class="text-btn danger" type="button" data-schedule-action="remove">删除</button>
+        <button class="text-btn danger" type="button" data-schedule-action="remove">删除计划</button>
       </div>
     </article>`;
   }).join("");
@@ -12829,6 +13013,7 @@ function initEvents() {
     });
   });
   elements.coverStudioViewPicker?.addEventListener("change", () => {
+    applyCoverStudioManualLibraryCopy();
     syncCoverStudioDraftFromInputs();
     updateCoverStudioTitleMode();
     renderCoverStudioStatus();
@@ -12887,7 +13072,7 @@ function initEvents() {
     }
     setCoverStudioMode(button.dataset.coverStudioMode);
   });
-  elements.coverStudioScheduleViewSelect?.addEventListener("change", clearCoverStudioSchedulePreview);
+  elements.coverStudioScheduleViewSelect?.addEventListener("change", applyCoverStudioScheduleLibraryCopy);
   elements.coverStudioSchedulePreviewBtn?.addEventListener("click", generateCoverStudioSchedulePreview);
   [
     elements.coverStudioScheduleTemplateKey,
@@ -12918,10 +13103,10 @@ function initEvents() {
     appState.coverStudioScheduleDraft = {
       ...current,
       titleAlign: defaults.titleAlign || current.titleAlign,
-      posterCount: Number(defaults.posterCount || current.posterCount),
+      posterCount: Number(defaults.posterCount ?? current.posterCount),
       accentTone: defaults.accentTone || current.accentTone,
-      posterRotation: Number(defaults.posterRotation || current.posterRotation),
-      titleYOffset: Number(defaults.titleYOffset || 0)
+      posterRotation: Number(defaults.posterRotation ?? current.posterRotation),
+      titleYOffset: Number(defaults.titleYOffset ?? 0)
     };
     renderCoverStudioScheduleTemplateInputs();
     clearCoverStudioSchedulePreview();
@@ -12947,6 +13132,7 @@ function initEvents() {
     const previousConfig = appState.coverStudioConfig;
     appState.coverStudioConfig = normalizeCoverStudioConfig({
       ...appState.coverStudioConfig,
+      scheduleDraft: template,
       schedules: [
         ...(appState.coverStudioConfig?.schedules || []),
         {
@@ -12966,7 +13152,7 @@ function initEvents() {
       ]
     });
     if (await saveCoverStudioSchedules({ feedback: "已添加独立自动封面计划" })) {
-      appState.coverStudioScheduleDraft = null;
+      appState.coverStudioScheduleDraft = appState.coverStudioConfig.scheduleDraft;
       renderCoverStudioSchedules();
     } else {
       appState.coverStudioConfig = previousConfig;
@@ -12993,10 +13179,29 @@ function initEvents() {
       await saveCoverStudioSchedules({ feedback: "已删除封面计划" });
       return;
     }
+    const fieldValue = (name, fallback = "") => String(card.querySelector(`[data-schedule-field="${name}"]`)?.value ?? fallback).trim();
+    const fieldNumber = (name, fallback) => {
+      const value = Number(card.querySelector(`[data-schedule-field="${name}"]`)?.value);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const currentTemplate = {
+      ...buildCoverStudioScheduleTemplate(DEFAULT_COVER_STUDIO_CONFIG.draft),
+      ...(plan.template || {})
+    };
     const nextTemplate = {
-      ...(plan.template || {}),
-      templateKey: String(card.querySelector('[data-schedule-field="templateKey"]')?.value || plan.template?.templateKey || "fan_spread"),
-      pickMode: String(card.querySelector('[data-schedule-field="pickMode"]')?.value || plan.template?.pickMode || "random")
+      ...currentTemplate,
+      templateKey: fieldValue("templateKey", currentTemplate.templateKey) || currentTemplate.templateKey,
+      pickMode: fieldValue("pickMode", currentTemplate.pickMode) === "recent" ? "recent" : "random",
+      titleText: fieldValue("titleText", currentTemplate.titleText),
+      subtitleText: fieldValue("subtitleText", currentTemplate.subtitleText),
+      fontKey: fieldValue("fontKey", currentTemplate.fontKey) || currentTemplate.fontKey,
+      titleAlign: fieldValue("titleAlign", currentTemplate.titleAlign) || currentTemplate.titleAlign,
+      titleFontSize: fieldNumber("titleFontSize", currentTemplate.titleFontSize),
+      subtitleFontSize: fieldNumber("subtitleFontSize", currentTemplate.subtitleFontSize),
+      posterCount: fieldNumber("posterCount", currentTemplate.posterCount),
+      accentTone: fieldValue("accentTone", currentTemplate.accentTone) || currentTemplate.accentTone,
+      posterRotation: fieldNumber("posterRotation", currentTemplate.posterRotation),
+      titleYOffset: fieldNumber("titleYOffset", currentTemplate.titleYOffset)
     };
     updateCoverStudioSchedulePlan(planId, {
       enabled: Boolean(card.querySelector('[data-schedule-field="enabled"]')?.checked),

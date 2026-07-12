@@ -4,7 +4,7 @@ from datetime import datetime
 import threading
 from typing import Any, Callable
 
-from backend_modules.cover_studio_service import is_valid_cover_studio_cron
+from backend_modules.cover_studio_service import is_valid_cover_studio_cron, normalize_cover_studio_font_key
 
 
 class CoverStudioScheduler:
@@ -147,7 +147,7 @@ class CoverStudioScheduler:
                 view=target,
                 items=service.fetch_view_items(view_id=browse_view_id, pick_mode=str(template.get("pickMode") or "random")),
                 template_key=str(template.get("templateKey") or "fan_spread"),
-                font_key=str(template.get("fontKey") or "hiragino"),
+                font_key=normalize_cover_studio_font_key(template.get("fontKey")),
                 title_text=str(template.get("titleText") or "").strip() or view_name,
                 subtitle_text=str(template.get("subtitleText") or "").strip(),
                 title_font_size=template.get("titleFontSize"),

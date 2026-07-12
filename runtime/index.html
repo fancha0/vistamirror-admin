@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260711-cover-studio-tabs-2">
+  <link rel="stylesheet" href="styles.css?v=20260712-cover-studio-responsive-1">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -1428,7 +1428,7 @@
                           <label class="field">
                             <span>字体</span>
                             <select id="cover-studio-font-key">
-                              <option value="hiragino">苹方黑体</option>
+                              <option value="heiti">华文黑体</option>
                             </select>
                           </label>
                           <label class="field">
@@ -1512,7 +1512,6 @@
                             <label class="field">
                               <span>计划时间（Cron）</span>
                               <input id="cover-studio-schedule-cron" type="text" value="*/5 * * * *" placeholder="例如 */5 * * * *">
-                              <small>例如 <code>*/5 * * * *</code> 表示每 5 分钟检查一次。</small>
                             </label>
                             <button id="cover-studio-schedule-add-btn" class="primary-btn" type="button">添加自动计划</button>
                           </div>
@@ -1520,7 +1519,6 @@
                             <div class="cover-studio-target-head">
                               <div>
                                 <strong>新建计划参数</strong>
-                                <p>每个计划创建时保存一份独立参数快照。</p>
                               </div>
                             </div>
                             <div class="settings-subgrid cover-studio-auto-template-grid">
@@ -1538,7 +1536,6 @@
                               <label class="field"><span>标题纵向位置</span><input id="cover-studio-schedule-title-y-offset" type="number" min="-160" max="160" step="4"></label>
                             </div>
                           </section>
-                          <p class="cover-studio-auto-note">计划创建后，以上参数会独立保存，不受手动页面后续修改影响。</p>
                         </div>
                         <div class="cover-studio-auto-preview-card">
                           <div id="cover-studio-schedule-preview-stage" class="cover-studio-preview-stage">
@@ -1547,9 +1544,17 @@
                           <button id="cover-studio-schedule-preview-btn" class="primary-btn" type="button">生成预览</button>
                         </div>
                       </div>
-                      <div id="cover-studio-schedule-list" class="cover-studio-schedule-list">
-                        <div class="empty-state">暂无自动封面计划。</div>
-                      </div>
+                      <section class="cover-studio-auto-schedules" aria-label="已添加自动封面计划">
+                        <div class="cover-studio-auto-schedules-head">
+                          <div>
+                            <strong>已添加计划</strong>
+                            <p>每条计划可独立修改时间、封面参数和启停状态。</p>
+                          </div>
+                        </div>
+                        <div id="cover-studio-schedule-list" class="cover-studio-schedule-list">
+                          <div class="empty-state">暂无自动封面计划。选择一个媒体库后即可创建。</div>
+                        </div>
+                      </section>
                     </section>
                   </section>
 
@@ -2194,7 +2199,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260711-cover-studio-tabs-2"></script>
+  <script src="script.js?v=20260712-cover-schedule-draft-1"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

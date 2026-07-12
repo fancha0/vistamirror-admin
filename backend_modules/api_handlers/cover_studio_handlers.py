@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from backend_modules.cover_studio_service import is_valid_cover_studio_cron
+from backend_modules.cover_studio_service import is_valid_cover_studio_cron, normalize_cover_studio_font_key
 
 
 def handle_cover_studio_config_get(
@@ -130,7 +130,7 @@ def handle_cover_studio_preview(
     requested_view_ids = _request_view_ids(payload)
     template_key = str(payload.get("templateKey") or "stack_classic").strip() or "stack_classic"
     pick_mode = "recent" if str(payload.get("pickMode") or "").strip().lower() == "recent" else "random"
-    font_key = str(payload.get("fontKey") or "hiragino").strip() or "hiragino"
+    font_key = normalize_cover_studio_font_key(payload.get("fontKey"))
     title_text = str(payload.get("titleText") or "").strip()
     subtitle_text = str(payload.get("subtitleText") or "").strip()
     title_font_size = payload.get("titleFontSize")

@@ -236,7 +236,7 @@ class Stage1ApiHandlerTests(unittest.TestCase):
 
             class _StubCoverStudioService:
                 def list_fonts(self):
-                    return [{"key": "hiragino", "label": "苹方黑体"}]
+                    return [{"key": "heiti", "label": "华文黑体"}]
 
                 def list_modes(self):
                     return [{"key": "stack_classic", "label": "经典堆叠"}] * 6

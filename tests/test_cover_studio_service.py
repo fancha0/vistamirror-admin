@@ -170,6 +170,28 @@ class CoverStudioServiceTests(unittest.TestCase):
 
         self.assertTrue(any(row["key"] == "aa_hui_yun_ti" and row["label"] == "Aa绘云体" for row in fonts))
 
+    def test_cover_font_selection_excludes_removed_fonts_and_migrates_old_configs(self) -> None:
+        removed_keys = {"hiragino", "noteworthy", "avenir", "fu_lu_da_mao_bi_ti", "the_mordeus"}
+        self.assertFalse(removed_keys.intersection({row["key"] for row in available_cover_fonts()}))
+
+        config = normalize_cover_studio_config(
+            {
+                "draft": {"fontKey": "hiragino"},
+                "presets": [{"id": "legacy", "fontKey": "avenir"}],
+                "schedules": [
+                    {
+                        "id": "legacy-plan",
+                        "viewId": "view-1",
+                        "template": {"fontKey": "the_mordeus"},
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(config["draft"]["fontKey"], "heiti")
+        self.assertEqual(config["presets"][0]["fontKey"], "heiti")
+        self.assertEqual(config["schedules"][0]["template"]["fontKey"], "heiti")
+
     def test_cover_studio_modes_include_new_showcase_templates(self) -> None:
         keys = {mode["key"] for mode in cover_studio_modes()}
 
@@ -183,6 +205,23 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertNotIn("poster_wall", keys)
         self.assertNotIn("focus_poster", keys)
         self.assertNotIn("glory_view", keys)
+
+    def test_banner_showcase_exposes_its_fixed_layout_constraints(self) -> None:
+        banner = next(mode for mode in cover_studio_modes() if mode["key"] == "banner_showcase")
+        config = normalize_cover_studio_config(
+            {
+                "draft": {
+                    "templateKey": "banner_showcase",
+                    "posterCount": 8,
+                    "posterRotation": 76,
+                }
+            }
+        )
+
+        self.assertEqual(banner["maxPosterCount"], 5)
+        self.assertNotIn("posterRotation", banner["supports"])
+        self.assertEqual(config["draft"]["posterCount"], 5)
+        self.assertEqual(config["draft"]["posterRotation"], 0)
 
     def test_normalize_cover_studio_config_clamps_sizes(self) -> None:
         config = normalize_cover_studio_config(
@@ -223,6 +262,34 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertTrue(cron_matches(datetime(2026, 7, 11, 12, 10), "*/5 * * * *"))
         self.assertFalse(cron_matches(datetime(2026, 7, 11, 12, 11), "*/5 * * * *"))
 
+    def test_cover_studio_schedule_draft_survives_config_reload(self) -> None:
+        config = normalize_cover_studio_config(
+            {
+                "scheduleDraft": {
+                    "templateKey": "hero_showcase",
+                    "pickMode": "recent",
+                    "titleText": "欧美剧集",
+                    "subtitleText": "Western Series",
+                    "fontKey": "gong_fan_nu_fang_ti",
+                    "titleFontSize": 132,
+                    "subtitleFontSize": 48,
+                    "titleAlign": "center",
+                    "posterCount": 4,
+                    "accentTone": "neutral",
+                    "posterRotation": 18,
+                    "titleYOffset": -24,
+                }
+            }
+        )
+        reloaded = normalize_cover_studio_config(config)
+
+        self.assertEqual(reloaded["scheduleDraft"]["templateKey"], "hero_showcase")
+        self.assertEqual(reloaded["scheduleDraft"]["pickMode"], "recent")
+        self.assertEqual(reloaded["scheduleDraft"]["fontKey"], "gong_fan_nu_fang_ti")
+        self.assertEqual(reloaded["scheduleDraft"]["posterCount"], 4)
+        self.assertEqual(reloaded["scheduleDraft"]["posterRotation"], 18)
+        self.assertEqual(reloaded["scheduleDraft"]["titleYOffset"], -24)
+
     def test_cover_studio_schedule_rejects_invalid_cron(self) -> None:
         config = normalize_cover_studio_config(
             {"schedule": {"enabled": True, "cron": "every five minutes"}}
@@ -240,7 +307,13 @@ class CoverStudioServiceTests(unittest.TestCase):
                         "viewName": "国产动漫",
                         "enabled": True,
                         "cron": "*/5 * * * *",
-                        "template": {"templateKey": "fan_spread", "pickMode": "recent"},
+                        "template": {
+                            "templateKey": "fan_spread",
+                            "pickMode": "recent",
+                            "posterCount": 7,
+                            "posterRotation": 0,
+                            "titleYOffset": -48,
+                        },
                         "fingerprint": {"itemCount": 8, "latestItemId": "old", "latestCreatedAt": "2026-07-01"},
                     }
                 ]
@@ -268,9 +341,11 @@ class CoverStudioServiceTests(unittest.TestCase):
             def __init__(self):
                 self.generated = 0
                 self.applied = 0
+                self.preview_kwargs = {}
 
             def generate_preview(self, **kwargs):
                 self.generated += 1
+                self.preview_kwargs = dict(kwargs)
                 return type("Preview", (), {"token": "preview"})()
 
             def backup_and_apply(self, *, config, **kwargs):
@@ -301,6 +376,9 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertEqual(changed["results"][0]["status"], "success")
         self.assertEqual(cover.generated, 1)
         self.assertEqual(cover.applied, 1)
+        self.assertEqual(cover.preview_kwargs["poster_count"], 7)
+        self.assertEqual(cover.preview_kwargs["poster_rotation"], 0)
+        self.assertEqual(cover.preview_kwargs["title_y_offset"], -48)
 
     def test_generate_preview_returns_data_url(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -328,10 +406,11 @@ class CoverStudioServiceTests(unittest.TestCase):
                 emby_service=_FakeEmbyService(),
             )
             self.assertTrue(preview.primary_image_path.exists())
-            self.assertTrue(preview.primary_image_data_url.startswith("data:image/png;base64,"))
-            self.assertEqual(preview.primary_width, 1600)
-            self.assertEqual(preview.primary_height, 900)
-            self.assertEqual(preview.template_key, "fan_spread")
+        self.assertTrue(preview.primary_image_data_url.startswith("data:image/png;base64,"))
+        self.assertEqual(preview.primary_width, 1600)
+        self.assertEqual(preview.primary_height, 900)
+        self.assertEqual(preview.template_key, "fan_spread")
+        self.assertEqual(len(preview.selected_items), 4)
 
     def test_generate_preview_supports_new_showcase_template(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
