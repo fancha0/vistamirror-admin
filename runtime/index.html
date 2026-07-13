@@ -566,7 +566,7 @@
               </article>
             </div>
 
-            <p id="missing-feedback" class="action-feedback">点击“立即巡检”开始扫描 Emby 全库剧集缺失。</p>
+            <p id="missing-feedback" class="action-feedback">点击“立即巡检”核对 Emby 已入库季中已播出的单集，未来或未定档集不会计入缺失。</p>
 
             <div class="user-table-wrap missing-table-wrap">
               <table class="user-table playback-table">
@@ -575,7 +575,7 @@
                     <th>剧名</th>
                     <th>季</th>
                     <th>缺失集号</th>
-                    <th>完整度</th>
+                    <th>已播出完整度</th>
                     <th>状态</th>
                     <th>失败原因</th>
                     <th>最后巡检</th>
@@ -1355,16 +1355,6 @@
               <div class="config-main cover-studio-page-main">
                 <div class="config-grid settings-core-grid">
                   <section class="settings-card cover-studio-card field-span-2">
-                    <div class="settings-card-head">
-                      <div>
-                        <p class="section-label">系统与构建 / 封面工坊</p>
-                        <h4>封面工坊</h4>
-                        <p>生成预览后可直接覆盖 Emby 媒体库主封面（Primary）。</p>
-                      </div>
-                      <div class="settings-card-actions">
-                        <span id="cover-studio-status-badge" class="tmdb-status-badge is-off">未加载</span>
-                      </div>
-                    </div>
                     <div id="cover-studio-mode-tabs" class="cover-studio-mode-tabs" role="tablist" aria-label="封面工坊模式">
                       <button class="cover-studio-mode-tab is-active" type="button" role="tab" aria-selected="true" data-cover-studio-mode="manual">手动封面</button>
                       <button class="cover-studio-mode-tab" type="button" role="tab" aria-selected="false" data-cover-studio-mode="auto">自动封面</button>
@@ -1775,6 +1765,24 @@
   </div>
 
   <div id="global-toast" class="global-toast" hidden></div>
+
+  <div id="cover-studio-schedule-edit-modal" class="user-center-modal cover-studio-schedule-edit-modal" hidden>
+    <section class="user-center-modal-panel cover-studio-schedule-edit-panel" role="dialog" aria-modal="true" aria-labelledby="cover-studio-schedule-edit-title">
+      <div class="cover-studio-schedule-edit-head">
+        <div>
+          <p class="section-label">自动封面计划</p>
+          <h3 id="cover-studio-schedule-edit-title">编辑计划</h3>
+          <p>修改后仅影响当前媒体库的自动封面计划。</p>
+        </div>
+        <button id="cover-studio-schedule-edit-close" class="cover-studio-schedule-edit-close" type="button" aria-label="关闭计划编辑窗口">×</button>
+      </div>
+      <div id="cover-studio-schedule-edit-form" class="cover-studio-schedule-edit-form"></div>
+      <div class="cover-studio-schedule-edit-footer">
+        <button id="cover-studio-schedule-edit-cancel" class="ghost-btn" type="button">取消</button>
+        <button id="cover-studio-schedule-edit-save" class="primary-btn" type="button">保存计划</button>
+      </div>
+    </section>
+  </div>
 
   <div id="project-log-modal" class="user-center-modal project-log-modal" hidden>
     <section class="project-log-window" role="dialog" aria-modal="true" aria-labelledby="project-log-title">

@@ -400,6 +400,7 @@ const appState = {
   coverStudioScheduleDraft: null,
   coverStudioSchedulePreviewDataUrl: "",
   coverStudioSchedulePreviewLoading: false,
+  coverStudioEditingScheduleId: "",
   libraryDirectoryConfig: loadJson(STORAGE_KEYS.libraryDirectoryConfig, DEFAULT_LIBRARY_DIRECTORY_CONFIG),
   drive115Config: loadJson(STORAGE_KEYS.drive115Config, DEFAULT_DRIVE115_CONFIG),
   hdhiveConfig: loadJson(STORAGE_KEYS.hdhiveConfig, DEFAULT_HDHIVE_CONFIG),
@@ -1347,6 +1348,12 @@ const elements = {
   coverStudioSchedulePreviewBtn: document.getElementById("cover-studio-schedule-preview-btn"),
   coverStudioScheduleAddBtn: document.getElementById("cover-studio-schedule-add-btn"),
   coverStudioScheduleList: document.getElementById("cover-studio-schedule-list"),
+  coverStudioScheduleEditModal: document.getElementById("cover-studio-schedule-edit-modal"),
+  coverStudioScheduleEditTitle: document.getElementById("cover-studio-schedule-edit-title"),
+  coverStudioScheduleEditForm: document.getElementById("cover-studio-schedule-edit-form"),
+  coverStudioScheduleEditClose: document.getElementById("cover-studio-schedule-edit-close"),
+  coverStudioScheduleEditCancel: document.getElementById("cover-studio-schedule-edit-cancel"),
+  coverStudioScheduleEditSave: document.getElementById("cover-studio-schedule-edit-save"),
   coverStudioTitleText: document.getElementById("cover-studio-title-text"),
   coverStudioSubtitleText: document.getElementById("cover-studio-subtitle-text"),
   coverStudioFontKey: document.getElementById("cover-studio-font-key"),
@@ -7088,7 +7095,7 @@ function renderMissing() {
           <td class="missing-cell-series"><strong>${seriesName}</strong></td>
           <td class="missing-cell-season" data-label="季">${escapeHtml(seasonText)}</td>
           <td class="missing-cell-episodes" data-label="缺失集号"><span class="missing-episodes">${escapeHtml(missingText)}</span></td>
-          <td class="missing-cell-completeness" data-label="完整度">${completeness}</td>
+          <td class="missing-cell-completeness" data-label="已播出完整度">${completeness}</td>
           <td class="missing-cell-status" data-label="状态">${statusBadge}</td>
           <td class="missing-cell-reason" data-label="失败原因"><span class="missing-reason">${escapeHtml(reasonText)}</span></td>
           <td class="missing-cell-scanned" data-label="最后巡检">${escapeHtml(scannedAtText)}</td>
@@ -7158,7 +7165,7 @@ async function scanMissingEpisodes() {
     elements.missingScanBtn.textContent = "巡检中...";
   }
   if (elements.missingFeedback) {
-    elements.missingFeedback.textContent = "正在巡检全库剧集与 TMDB 季集差异...";
+    elements.missingFeedback.textContent = "正在核对 Emby 已入库季与 TMDB 已播出单集...";
   }
 
   try {
@@ -7838,6 +7845,113 @@ function renderCoverStudioScheduleViewOptions() {
   }
 }
 
+function getCoverStudioSchedulePlan(planId) {
+  return (appState.coverStudioConfig?.schedules || []).find((plan) => plan.id === planId) || null;
+}
+
+function getCoverStudioSchedulePlanViewName(plan) {
+  return String(
+    plan?.viewName
+    || (appState.coverStudioViews || []).find((view) => String(view?.id || "") === String(plan?.viewId || ""))?.name
+    || plan?.viewId
+    || "未命名媒体库"
+  );
+}
+
+function getCoverStudioScheduleTemplate(plan) {
+  return {
+    ...buildCoverStudioScheduleTemplate(DEFAULT_COVER_STUDIO_CONFIG.draft),
+    ...(plan?.template && typeof plan.template === "object" ? plan.template : {})
+  };
+}
+
+function closeCoverStudioScheduleEditor() {
+  appState.coverStudioEditingScheduleId = "";
+  if (elements.coverStudioScheduleEditModal) {
+    elements.coverStudioScheduleEditModal.hidden = true;
+  }
+}
+
+function renderCoverStudioScheduleEditor(plan) {
+  const form = elements.coverStudioScheduleEditForm;
+  if (!form || !plan) {
+    return;
+  }
+  const template = getCoverStudioScheduleTemplate(plan);
+  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
+    ? appState.coverStudioModes
+    : DEFAULT_COVER_STUDIO_MODES;
+  const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
+    ? appState.coverStudioFonts
+    : [{ key: DEFAULT_COVER_STUDIO_FONT_KEY, label: "华文黑体" }];
+  const tones = Array.isArray(appState.coverStudioAccentTones) && appState.coverStudioAccentTones.length
+    ? appState.coverStudioAccentTones
+    : DEFAULT_COVER_STUDIO_ACCENT_TONES;
+  const alignments = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
+    ? appState.coverStudioTitleAlignOptions
+    : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
+  const selectedTemplate = String(template.templateKey || "fan_spread");
+  const { supports, posterLimit } = getCoverStudioModeCapabilities(selectedTemplate);
+  const optionsFor = (items, selected) => items
+    .map((item) => `<option value="${escapeHtml(item.key)}"${item.key === selected ? " selected" : ""}>${escapeHtml(item.label)}</option>`)
+    .join("");
+  form.dataset.scheduleId = plan.id;
+  form.innerHTML = `
+    <div class="cover-studio-schedule-edit-summary">
+      <strong>${escapeHtml(getCoverStudioSchedulePlanViewName(plan))}</strong>
+      <span>封面与执行参数</span>
+    </div>
+    <div class="cover-studio-schedule-edit-grid">
+      <label class="field"><span>计划时间（Cron）</span><input data-schedule-modal-field="cron" type="text" value="${escapeHtml(plan.cron || "*/5 * * * *")}" placeholder="例如 */5 * * * *"></label>
+      <label class="field"><span>布局模板</span><select data-schedule-modal-field="templateKey">${optionsFor(modes, selectedTemplate)}</select></label>
+      <label class="field"><span>取图模式</span><select data-schedule-modal-field="pickMode"><option value="recent"${template.pickMode === "recent" ? " selected" : ""}>最近入库</option><option value="random"${template.pickMode === "random" ? " selected" : ""}>随机模式</option></select></label>
+      <label class="field"><span>主标题</span><input data-schedule-modal-field="titleText" type="text" value="${escapeHtml(template.titleText || "")}" placeholder="默认使用媒体库名称"></label>
+      <label class="field"><span>副标题</span><input data-schedule-modal-field="subtitleText" type="text" value="${escapeHtml(template.subtitleText || "")}" placeholder="可留空"></label>
+      <label class="field"><span>字体</span><select data-schedule-modal-field="fontKey">${optionsFor(fonts, normalizeCoverStudioFontKey(template.fontKey))}</select></label>
+      <label class="field"><span>标题对齐</span><select data-schedule-modal-field="titleAlign">${optionsFor(alignments, String(template.titleAlign || "left"))}</select></label>
+      <label class="field"><span>标题字号</span><input data-schedule-modal-field="titleFontSize" type="number" min="56" max="180" step="2" value="${escapeHtml(template.titleFontSize || 108)}"></label>
+      <label class="field"><span>副标题字号</span><input data-schedule-modal-field="subtitleFontSize" type="number" min="22" max="72" step="2" value="${escapeHtml(template.subtitleFontSize || 44)}"></label>
+      <label class="field"><span>海报数量</span><input data-schedule-modal-field="posterCount" type="number" min="2" max="${posterLimit}" step="1" value="${escapeHtml(template.posterCount ?? 5)}"${supports.has("posterCount") ? "" : " disabled"}></label>
+      <label class="field"><span>主色倾向</span><select data-schedule-modal-field="accentTone">${optionsFor(tones, String(template.accentTone || "blue"))}</select></label>
+      <label class="field"><span>旋转幅度</span><input data-schedule-modal-field="posterRotation" type="number" min="0" max="100" step="2" value="${escapeHtml(supports.has("posterRotation") ? (template.posterRotation ?? 42) : 0)}"${supports.has("posterRotation") ? "" : " disabled"}></label>
+      <label class="field"><span>标题纵向位置</span><input data-schedule-modal-field="titleYOffset" type="number" min="-160" max="160" step="4" value="${escapeHtml(Number(template.titleYOffset ?? 0))}"></label>
+    </div>`;
+}
+
+function openCoverStudioScheduleEditor(planId) {
+  const plan = getCoverStudioSchedulePlan(planId);
+  if (!plan || !elements.coverStudioScheduleEditModal) {
+    return;
+  }
+  appState.coverStudioEditingScheduleId = planId;
+  if (elements.coverStudioScheduleEditTitle) {
+    elements.coverStudioScheduleEditTitle.textContent = `编辑 ${getCoverStudioSchedulePlanViewName(plan)} 计划`;
+  }
+  renderCoverStudioScheduleEditor(plan);
+  elements.coverStudioScheduleEditModal.hidden = false;
+}
+
+function syncCoverStudioScheduleEditorCapabilities() {
+  const form = elements.coverStudioScheduleEditForm;
+  const templateKey = String(form?.querySelector('[data-schedule-modal-field="templateKey"]')?.value || "fan_spread");
+  const { supports, posterLimit } = getCoverStudioModeCapabilities(templateKey);
+  const posterCount = form?.querySelector('[data-schedule-modal-field="posterCount"]');
+  const posterRotation = form?.querySelector('[data-schedule-modal-field="posterRotation"]');
+  if (posterCount) {
+    posterCount.max = String(posterLimit);
+    posterCount.disabled = !supports.has("posterCount");
+    if (Number(posterCount.value) > posterLimit) {
+      posterCount.value = String(posterLimit);
+    }
+  }
+  if (posterRotation) {
+    posterRotation.disabled = !supports.has("posterRotation");
+    if (!supports.has("posterRotation")) {
+      posterRotation.value = "0";
+    }
+  }
+}
+
 function renderCoverStudioSchedules() {
   renderCoverStudioScheduleTemplateInputs();
   renderCoverStudioScheduleViewOptions();
@@ -7846,71 +7960,35 @@ function renderCoverStudioSchedules() {
     return;
   }
   const schedules = Array.isArray(appState.coverStudioConfig?.schedules) ? appState.coverStudioConfig.schedules : [];
-  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
-    ? appState.coverStudioModes
-    : DEFAULT_COVER_STUDIO_MODES;
   if (!schedules.length) {
     elements.coverStudioScheduleList.innerHTML = '<div class="empty-state">暂无自动封面计划。选择一个媒体库后即可创建。</div>';
     return;
   }
   elements.coverStudioScheduleList.innerHTML = schedules.map((plan) => {
-    const resolvedViewName = String(
-      plan.viewName
-      || (appState.coverStudioViews || []).find((view) => String(view?.id || "") === String(plan.viewId || ""))?.name
-      || plan.viewId
-      || "未命名媒体库"
-    );
-    const template = {
-      ...buildCoverStudioScheduleTemplate(DEFAULT_COVER_STUDIO_CONFIG.draft),
-      ...(plan.template && typeof plan.template === "object" ? plan.template : {})
-    };
-    const selectedTemplate = String(template.templateKey || "fan_spread");
-    const { supports: templateSupports, posterLimit } = getCoverStudioModeCapabilities(selectedTemplate);
-    const selectedPickMode = String(template.pickMode || "random");
-    const modeOptions = modes.map((mode) => `<option value="${escapeHtml(mode.key)}"${mode.key === selectedTemplate ? " selected" : ""}>${escapeHtml(mode.label)}</option>`).join("");
-    const fonts = Array.isArray(appState.coverStudioFonts) && appState.coverStudioFonts.length
-      ? appState.coverStudioFonts
-    : [{ key: DEFAULT_COVER_STUDIO_FONT_KEY, label: "华文黑体" }];
-    const tones = Array.isArray(appState.coverStudioAccentTones) && appState.coverStudioAccentTones.length
-      ? appState.coverStudioAccentTones
-      : DEFAULT_COVER_STUDIO_ACCENT_TONES;
-    const alignments = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
-      ? appState.coverStudioTitleAlignOptions
-      : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
-    const optionsFor = (items, selected) => items
-      .map((item) => `<option value="${escapeHtml(item.key)}"${item.key === selected ? " selected" : ""}>${escapeHtml(item.label)}</option>`)
-      .join("");
+    const resolvedViewName = getCoverStudioSchedulePlanViewName(plan);
+    const template = getCoverStudioScheduleTemplate(plan);
+    const mode = getCoverStudioModeMeta(template.templateKey);
+    const templateLabel = mode?.label || "自定义模板";
+    const pickModeLabel = template.pickMode === "recent" ? "最近入库" : "随机模式";
+    const statusLabel = plan.enabled ? "已启用" : "已暂停";
     const lastText = plan.lastCheckedAt ? `最近检查：${escapeHtml(plan.lastCheckedAt)}` : "尚未检查";
     const updateText = plan.lastUpdatedAt ? `最近更新：${escapeHtml(plan.lastUpdatedAt)}` : "尚未更新";
     return `<article class="cover-studio-schedule-plan" data-schedule-id="${escapeHtml(plan.id)}">
       <div class="cover-studio-schedule-plan-head">
-        <div><strong>${escapeHtml(resolvedViewName)}</strong><small>${lastText} · ${updateText}</small><small>${escapeHtml(plan.lastMessage || "尚未检查。")}</small></div>
-        <label class="switch-row" aria-label="启用 ${escapeHtml(resolvedViewName)} 自动封面"><input data-schedule-field="enabled" type="checkbox"${plan.enabled ? " checked" : ""}><span class="switch-track"></span></label>
+        <div><strong>${escapeHtml(resolvedViewName)}</strong><small>${lastText}</small></div>
+        <span class="cover-studio-schedule-status${plan.enabled ? " is-enabled" : ""}">${statusLabel}</span>
       </div>
-      <div class="cover-studio-schedule-plan-fields">
-        <label><span>Cron</span><input data-schedule-field="cron" type="text" value="${escapeHtml(plan.cron || "0 */6 * * *")}"></label>
-        <label><span>模板</span><select data-schedule-field="templateKey">${modeOptions}</select></label>
-        <label><span>取图</span><select data-schedule-field="pickMode"><option value="recent"${selectedPickMode === "recent" ? " selected" : ""}>最近入库</option><option value="random"${selectedPickMode === "random" ? " selected" : ""}>随机</option></select></label>
+      <div class="cover-studio-schedule-plan-meta">
+        <span><b>周期</b>${escapeHtml(plan.cron || "*/5 * * * *")}</span>
+        <span><b>模板</b>${escapeHtml(templateLabel)}</span>
+        <span><b>取图</b>${pickModeLabel}</span>
       </div>
-      <details class="cover-studio-schedule-advanced">
-        <summary>编辑封面参数</summary>
-        <div class="cover-studio-schedule-advanced-grid">
-          <label><span>主标题</span><input data-schedule-field="titleText" type="text" value="${escapeHtml(template.titleText || "")}" placeholder="默认使用媒体库名称"></label>
-          <label><span>副标题</span><input data-schedule-field="subtitleText" type="text" value="${escapeHtml(template.subtitleText || "")}" placeholder="可留空"></label>
-          <label><span>字体</span><select data-schedule-field="fontKey">${optionsFor(fonts, normalizeCoverStudioFontKey(template.fontKey))}</select></label>
-          <label><span>标题对齐</span><select data-schedule-field="titleAlign">${optionsFor(alignments, String(template.titleAlign || "left"))}</select></label>
-          <label><span>标题字号</span><input data-schedule-field="titleFontSize" type="number" min="56" max="180" step="2" value="${escapeHtml(template.titleFontSize || 108)}"></label>
-          <label><span>副标题字号</span><input data-schedule-field="subtitleFontSize" type="number" min="22" max="72" step="2" value="${escapeHtml(template.subtitleFontSize || 44)}"></label>
-          <label><span>海报数量</span><input data-schedule-field="posterCount" type="number" min="2" max="${posterLimit}" step="1" value="${escapeHtml(template.posterCount ?? 5)}"${templateSupports.has("posterCount") ? "" : " disabled"}></label>
-          <label><span>主色倾向</span><select data-schedule-field="accentTone">${optionsFor(tones, String(template.accentTone || "blue"))}</select></label>
-          <label><span>旋转幅度</span><input data-schedule-field="posterRotation" type="number" min="0" max="100" step="2" value="${escapeHtml(templateSupports.has("posterRotation") ? (template.posterRotation ?? 42) : 0)}"${templateSupports.has("posterRotation") ? "" : " disabled"}></label>
-          <label><span>标题纵向位置</span><input data-schedule-field="titleYOffset" type="number" min="-160" max="160" step="4" value="${escapeHtml(Number(template.titleYOffset ?? 0))}"></label>
-        </div>
-      </details>
+      <p class="cover-studio-schedule-plan-result">${escapeHtml(plan.lastMessage || "尚未检查。")}</p>
+      <small class="cover-studio-schedule-plan-update">${updateText}</small>
       <div class="cover-studio-schedule-plan-actions">
-        <button class="ghost-btn" type="button" data-schedule-action="save">保存修改</button>
-        <button class="ghost-btn" type="button" data-schedule-action="check">立即检查</button>
-        <button class="ghost-btn" type="button" data-schedule-action="force">立即更新</button>
+        <button class="primary-btn" type="button" data-schedule-action="force">立即更新</button>
+        <button class="ghost-btn" type="button" data-schedule-action="edit">编辑</button>
+        <button class="ghost-btn" type="button" data-schedule-action="toggle">${plan.enabled ? "停用" : "启用"}</button>
         <button class="text-btn danger" type="button" data-schedule-action="remove">删除计划</button>
       </div>
     </article>`;
@@ -13171,6 +13249,10 @@ function initEvents() {
       return;
     }
     const action = button.dataset.scheduleAction || "";
+    if (action === "edit") {
+      openCoverStudioScheduleEditor(planId);
+      return;
+    }
     if (action === "remove") {
       appState.coverStudioConfig = normalizeCoverStudioConfig({
         ...appState.coverStudioConfig,
@@ -13179,47 +13261,25 @@ function initEvents() {
       await saveCoverStudioSchedules({ feedback: "已删除封面计划" });
       return;
     }
-    const fieldValue = (name, fallback = "") => String(card.querySelector(`[data-schedule-field="${name}"]`)?.value ?? fallback).trim();
-    const fieldNumber = (name, fallback) => {
-      const value = Number(card.querySelector(`[data-schedule-field="${name}"]`)?.value);
-      return Number.isFinite(value) ? value : fallback;
-    };
-    const currentTemplate = {
-      ...buildCoverStudioScheduleTemplate(DEFAULT_COVER_STUDIO_CONFIG.draft),
-      ...(plan.template || {})
-    };
-    const nextTemplate = {
-      ...currentTemplate,
-      templateKey: fieldValue("templateKey", currentTemplate.templateKey) || currentTemplate.templateKey,
-      pickMode: fieldValue("pickMode", currentTemplate.pickMode) === "recent" ? "recent" : "random",
-      titleText: fieldValue("titleText", currentTemplate.titleText),
-      subtitleText: fieldValue("subtitleText", currentTemplate.subtitleText),
-      fontKey: fieldValue("fontKey", currentTemplate.fontKey) || currentTemplate.fontKey,
-      titleAlign: fieldValue("titleAlign", currentTemplate.titleAlign) || currentTemplate.titleAlign,
-      titleFontSize: fieldNumber("titleFontSize", currentTemplate.titleFontSize),
-      subtitleFontSize: fieldNumber("subtitleFontSize", currentTemplate.subtitleFontSize),
-      posterCount: fieldNumber("posterCount", currentTemplate.posterCount),
-      accentTone: fieldValue("accentTone", currentTemplate.accentTone) || currentTemplate.accentTone,
-      posterRotation: fieldNumber("posterRotation", currentTemplate.posterRotation),
-      titleYOffset: fieldNumber("titleYOffset", currentTemplate.titleYOffset)
-    };
-    updateCoverStudioSchedulePlan(planId, {
-      enabled: Boolean(card.querySelector('[data-schedule-field="enabled"]')?.checked),
-      cron: String(card.querySelector('[data-schedule-field="cron"]')?.value || "").trim(),
-      template: nextTemplate
-    });
-    if (action === "save") {
-      await saveCoverStudioSchedules();
+    if (action === "toggle") {
+      button.disabled = true;
+      updateCoverStudioSchedulePlan(planId, { enabled: !plan.enabled });
+      const saved = await saveCoverStudioSchedules({ feedback: plan.enabled ? "已停用自动封面计划" : "已启用自动封面计划" });
+      if (!saved) {
+        updateCoverStudioSchedulePlan(planId, { enabled: plan.enabled });
+        renderCoverStudioSchedules();
+      }
+      button.disabled = false;
       return;
     }
-    if (!(await saveCoverStudioSchedules({ feedback: "" }))) {
+    if (action !== "force") {
       return;
     }
     button.disabled = true;
     try {
       const result = await inviteApiFetch("/api/cover-studio/schedule/run", {
         method: "POST",
-        body: JSON.stringify({ planId, force: action === "force" })
+        body: JSON.stringify({ planId, force: true })
       });
       await loadCoverStudioConfigFromServer({ silent: true });
       showToast(result?.message || "计划检查完成", 1600);
@@ -13227,6 +13287,68 @@ function initEvents() {
       showToast(`执行失败：${error.message || "未知错误"}`, 1600);
     } finally {
       button.disabled = false;
+    }
+  });
+  elements.coverStudioScheduleEditForm?.addEventListener("change", (event) => {
+    if (event.target?.matches?.('[data-schedule-modal-field="templateKey"]')) {
+      syncCoverStudioScheduleEditorCapabilities();
+    }
+  });
+  [elements.coverStudioScheduleEditClose, elements.coverStudioScheduleEditCancel].forEach((button) => {
+    button?.addEventListener("click", closeCoverStudioScheduleEditor);
+  });
+  elements.coverStudioScheduleEditModal?.addEventListener("click", (event) => {
+    if (event.target === elements.coverStudioScheduleEditModal) {
+      closeCoverStudioScheduleEditor();
+    }
+  });
+  elements.coverStudioScheduleEditSave?.addEventListener("click", async () => {
+    const form = elements.coverStudioScheduleEditForm;
+    const planId = String(appState.coverStudioEditingScheduleId || form?.dataset.scheduleId || "");
+    const plan = getCoverStudioSchedulePlan(planId);
+    if (!plan || !form) {
+      closeCoverStudioScheduleEditor();
+      return;
+    }
+    const fieldValue = (name, fallback = "") => String(form.querySelector(`[data-schedule-modal-field="${name}"]`)?.value ?? fallback).trim();
+    const fieldNumber = (name, fallback) => {
+      const value = Number(form.querySelector(`[data-schedule-modal-field="${name}"]`)?.value);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const currentTemplate = getCoverStudioScheduleTemplate(plan);
+    const selectedTemplate = fieldValue("templateKey", currentTemplate.templateKey) || currentTemplate.templateKey;
+    const { supports, posterLimit } = getCoverStudioModeCapabilities(selectedTemplate);
+    const nextTemplate = {
+      ...currentTemplate,
+      templateKey: selectedTemplate,
+      pickMode: fieldValue("pickMode", currentTemplate.pickMode) === "recent" ? "recent" : "random",
+      titleText: fieldValue("titleText", currentTemplate.titleText),
+      subtitleText: fieldValue("subtitleText", currentTemplate.subtitleText),
+      fontKey: fieldValue("fontKey", currentTemplate.fontKey) || currentTemplate.fontKey,
+      titleAlign: fieldValue("titleAlign", currentTemplate.titleAlign) || currentTemplate.titleAlign,
+      titleFontSize: fieldNumber("titleFontSize", currentTemplate.titleFontSize),
+      subtitleFontSize: fieldNumber("subtitleFontSize", currentTemplate.subtitleFontSize),
+      posterCount: supports.has("posterCount")
+        ? Math.min(posterLimit, Math.max(2, fieldNumber("posterCount", currentTemplate.posterCount)))
+        : currentTemplate.posterCount,
+      accentTone: fieldValue("accentTone", currentTemplate.accentTone) || currentTemplate.accentTone,
+      posterRotation: supports.has("posterRotation") ? fieldNumber("posterRotation", currentTemplate.posterRotation) : 0,
+      titleYOffset: fieldNumber("titleYOffset", currentTemplate.titleYOffset)
+    };
+    const cron = fieldValue("cron", plan.cron);
+    if (!cron) {
+      showToast("请填写计划时间 Cron 表达式", 1400);
+      return;
+    }
+    updateCoverStudioSchedulePlan(planId, {
+      cron,
+      template: nextTemplate
+    });
+    elements.coverStudioScheduleEditSave.disabled = true;
+    const saved = await saveCoverStudioSchedules({ feedback: "计划已保存" });
+    elements.coverStudioScheduleEditSave.disabled = false;
+    if (saved) {
+      closeCoverStudioScheduleEditor();
     }
   });
   elements.aiTestBtn?.addEventListener("click", testAiConfig);

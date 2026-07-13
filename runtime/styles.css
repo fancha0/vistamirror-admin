@@ -14745,15 +14745,22 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 
 #view-workshop .cover-studio-schedule-list {
   display: grid;
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
   margin-top: 0;
 }
 
 #view-workshop .cover-studio-schedule-plan {
-  padding: 12px;
+  display: grid;
+  grid-template-rows: auto auto minmax(36px, 1fr) auto auto;
+  gap: 9px;
+  min-width: 0;
+  min-height: 238px;
+  padding: 13px;
   border: 1px solid #e1e8f2;
-  border-radius: 11px;
-  background: #fbfcfe;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #ffffff, #f6f9fe);
+  box-shadow: 0 10px 24px rgba(45, 73, 116, .06);
 }
 
 #view-workshop .cover-studio-schedule-plan-head,
@@ -14770,8 +14777,67 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 }
 
 #view-workshop .cover-studio-schedule-plan-head small {
-  margin-top: 3px;
+  margin-top: 5px;
   color: #7d8ca5;
+  font-size: 11px;
+}
+
+#view-workshop .cover-studio-schedule-status {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid #e2a9b1;
+  border-radius: 999px;
+  background: #fff3f4;
+  color: #b45a66;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+#view-workshop .cover-studio-schedule-status.is-enabled {
+  border-color: #a9dfbd;
+  background: #effbf3;
+  color: #27834a;
+}
+
+#view-workshop .cover-studio-schedule-plan-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+#view-workshop .cover-studio-schedule-plan-meta span:first-child {
+  grid-column: 1 / -1;
+}
+
+#view-workshop .cover-studio-schedule-plan-meta span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #e6edf6;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .78);
+  color: #425472;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+#view-workshop .cover-studio-schedule-plan-meta b {
+  color: #8795aa;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+#view-workshop .cover-studio-schedule-plan-result {
+  min-height: 0;
+  margin: 0;
+  color: #53647e;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+#view-workshop .cover-studio-schedule-plan-update {
+  color: #8b98ac;
   font-size: 11px;
 }
 
@@ -14803,17 +14869,166 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 
 #view-workshop .cover-studio-schedule-plan-actions {
   justify-content: flex-start;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  row-gap: 5px;
+  padding-top: 2px;
 }
 
 #view-workshop .cover-studio-schedule-plan-actions .ghost-btn,
 #view-workshop .cover-studio-schedule-plan-actions .text-btn {
-  min-height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
+  min-height: 29px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
 #view-workshop .cover-studio-schedule-plan-actions .danger {
   color: #c45b68;
+}
+
+#view-workshop .cover-studio-schedule-plan-actions .primary-btn {
+  min-height: 29px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.cover-studio-schedule-edit-modal {
+  z-index: 230;
+}
+
+.cover-studio-schedule-edit-panel {
+  width: min(860px, 100%);
+  max-height: min(820px, calc(100vh - 40px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  padding: 22px;
+  overflow: hidden;
+}
+
+.cover-studio-schedule-edit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e8edf5;
+}
+
+.cover-studio-schedule-edit-head .section-label {
+  margin: 0 0 5px;
+}
+
+.cover-studio-schedule-edit-head h3 {
+  margin: 0;
+  color: #263752;
+  font-size: 20px;
+}
+
+.cover-studio-schedule-edit-head p:not(.section-label) {
+  margin: 6px 0 0;
+  color: #7d8ca5;
+  font-size: 12px;
+}
+
+.cover-studio-schedule-edit-close {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 1px solid #dfe7f2;
+  border-radius: 10px;
+  background: #f9fbfe;
+  color: #6c7c95;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cover-studio-schedule-edit-close:hover {
+  border-color: #cbdaf0;
+  color: #345277;
+}
+
+.cover-studio-schedule-edit-form {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.cover-studio-schedule-edit-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #dde8f6;
+  border-radius: 12px;
+  background: #f7faff;
+}
+
+.cover-studio-schedule-edit-summary strong {
+  color: #2c3e5c;
+  font-size: 15px;
+}
+
+.cover-studio-schedule-edit-summary span {
+  color: #6580a6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cover-studio-schedule-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.cover-studio-schedule-edit-grid .field {
+  gap: 6px;
+}
+
+.cover-studio-schedule-edit-grid .field > span:first-child {
+  color: #64738d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cover-studio-schedule-edit-grid input:not([type="checkbox"]),
+.cover-studio-schedule-edit-grid select {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid #dce5f0;
+  border-radius: 10px;
+  background: #fbfcfe;
+  color: #34445f;
+}
+
+.cover-studio-schedule-edit-grid input:disabled {
+  cursor: not-allowed;
+  color: #9aa7ba;
+  background: #f1f4f8;
+}
+
+.cover-studio-schedule-edit-toggle .switch-row {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.cover-studio-schedule-edit-toggle .switch-row b {
+  color: #4c5f7d;
+  font-size: 13px;
+}
+
+.cover-studio-schedule-edit-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid #e8edf5;
 }
 
 #view-workshop .cover-studio-schedule-advanced {
@@ -15001,6 +15216,26 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
   #view-workshop .cover-studio-schedule-advanced-grid { grid-template-columns: 1fr; }
   #view-workshop .cover-studio-preview-actions > button { flex: 1 1 100%; }
   #view-workshop .cover-studio-schedule-plan-fields { grid-template-columns: 1fr; }
+  #view-workshop .cover-studio-schedule-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  #view-workshop .cover-studio-schedule-plan { min-height: 236px; padding: 10px; gap: 8px; border-radius: 13px; }
+  #view-workshop .cover-studio-schedule-plan-head { align-items: flex-start; gap: 6px; }
+  #view-workshop .cover-studio-schedule-plan-head strong { font-size: 13px; }
+  #view-workshop .cover-studio-schedule-plan-head small,
+  #view-workshop .cover-studio-schedule-plan-update { font-size: 10px; }
+  #view-workshop .cover-studio-schedule-status { padding: 4px 6px; font-size: 10px; }
+  #view-workshop .cover-studio-schedule-plan-meta { gap: 5px; }
+  #view-workshop .cover-studio-schedule-plan-meta span { padding: 6px; font-size: 11px; }
+  #view-workshop .cover-studio-schedule-plan-result { font-size: 11px; }
+  #view-workshop .cover-studio-schedule-plan-actions { justify-content: stretch; }
+  #view-workshop .cover-studio-schedule-plan-actions > button { flex: 1 1 calc(50% - 4px); }
+  .cover-studio-schedule-edit-modal { padding: 12px; }
+  .cover-studio-schedule-edit-panel { max-height: calc(100vh - 24px); padding: 16px; border-radius: 16px; }
+  .cover-studio-schedule-edit-grid { grid-template-columns: 1fr; }
+  .cover-studio-schedule-edit-head h3 { font-size: 18px; }
+}
+
+@media (max-width: 380px) {
+  #view-workshop .cover-studio-schedule-list { grid-template-columns: 1fr; }
 }
 
 /* Cover Studio must stay opaque: no inherited glass layer over controls or canvas. */

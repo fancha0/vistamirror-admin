@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import json
 import re
 import urllib.parse
@@ -62,7 +62,10 @@ class MissingEpisodeService:
                 continue
 
             try:
-                tmdb_id = self._match_tmdb_series_id(series)
+                # A full-library scan has no user confirmation step.  Do not let a
+                # title similarity guess turn an unrelated Emby series into a
+                # definite missing-episode result.
+                tmdb_id = self._match_tmdb_series_id(series, allow_title_fallback=False)
             except Exception as err:
                 warnings.append(f"{series_name}：TMDB 匹配失败（{str(err)[:120]}）")
                 tmdb_id = ""
@@ -87,8 +90,15 @@ class MissingEpisodeService:
                 continue
 
             matched_tmdb_series += 1
+            # Missing management is an inventory-gap check, not a wish list of all
+            # TMDB seasons.  Only compare seasons that Emby actually has episodes
+            # for, and only against episodes that have already aired.
+            local_seasons = {season for season, episodes in local_episodes_by_season.items() if season > 0 and episodes}
+            if not local_seasons:
+                continue
+
             try:
-                tmdb_season_counts = self._fetch_tmdb_season_counts(tmdb_id)
+                tmdb_seasons = self._fetch_tmdb_season_inventory(tmdb_id, seasons=local_seasons)
             except Exception as err:
                 tmdb_season_fetch_failures += 1
                 unknown_match_count += 1
@@ -109,7 +119,7 @@ class MissingEpisodeService:
                     }
                 )
                 continue
-            if not tmdb_season_counts:
+            if not tmdb_seasons:
                 unknown_match_count += 1
                 rows.append(
                     {
@@ -128,11 +138,20 @@ class MissingEpisodeService:
                 )
                 continue
 
-            for season_no, expected_count in sorted(tmdb_season_counts.items(), key=lambda item: item[0]):
-                if season_no <= 0 or expected_count <= 0:
+            for season_no in sorted(local_seasons):
+                inventory = tmdb_seasons.get(season_no) if isinstance(tmdb_seasons, dict) else None
+                if not isinstance(inventory, dict):
                     continue
                 local_set = local_episodes_by_season.get(season_no, set())
-                expected_set = set(range(1, expected_count + 1))
+                aired_set = set(inventory.get("airedEpisodes") or set())
+                registered_set = set(inventory.get("registeredEpisodes") or set())
+                # An episode with an unknown premiere date is deliberately not
+                # treated as missing. This mirrors the AI tool's MP-style rule and
+                # prevents long-running animations from reporting unreleased rows.
+                if not aired_set:
+                    continue
+                expected_count = len(aired_set)
+                expected_set = aired_set
                 present_set = expected_set.intersection(local_set)
                 missing_set = sorted(expected_set.difference(local_set))
                 if not missing_set:
@@ -148,6 +167,9 @@ class MissingEpisodeService:
                         "existingCount": len(present_set),
                         "expectedCount": expected_count,
                         "completeness": f"{len(present_set)}/{expected_count}",
+                        "registeredCount": len(registered_set),
+                        "futureCount": len(set(inventory.get("futureEpisodes") or set())),
+                        "unknownAirDateCount": len(set(inventory.get("unknownAirDateEpisodes") or set())),
                         "tmdbId": tmdb_id,
                         "embySeriesId": series_id,
                         "status": "missing",
@@ -212,7 +234,7 @@ class MissingEpisodeService:
         while True:
             path = (
                 f"/Shows/{safe_series_id}/Episodes"
-                "?Fields=ParentIndexNumber,IndexNumber,Name"
+                "?Fields=ParentIndexNumber,IndexNumber,Name,LocationType,IsMissing"
                 f"&Limit={page_size}&StartIndex={start_index}"
             )
             payload = self.emby_fetcher(path)
@@ -221,6 +243,8 @@ class MissingEpisodeService:
                 break
             for episode in items:
                 if not isinstance(episode, dict):
+                    continue
+                if bool(episode.get("IsMissing")) or str(episode.get("LocationType") or "").strip().lower() == "virtual":
                     continue
                 season_no = self._safe_int(episode.get("ParentIndexNumber"))
                 episode_no = self._safe_int(episode.get("IndexNumber"))
@@ -232,7 +256,7 @@ class MissingEpisodeService:
                 break
         return season_map
 
-    def _match_tmdb_series_id(self, series: dict[str, Any]) -> str:
+    def _match_tmdb_series_id(self, series: dict[str, Any], *, allow_title_fallback: bool = True) -> str:
         provider_ids = series.get("ProviderIds")
         if isinstance(provider_ids, dict):
             direct_id = str(provider_ids.get("Tmdb") or provider_ids.get("tmdb") or "").strip()
@@ -246,6 +270,9 @@ class MissingEpisodeService:
                 resolved_id = ""
             if resolved_id.isdigit():
                 return resolved_id
+
+        if not allow_title_fallback:
+            return ""
 
         series_name = str(series.get("Name") or "").strip()
         if not series_name:
@@ -299,9 +326,10 @@ class MissingEpisodeService:
                 best_id = candidate_id
         return best_id
 
-    def _fetch_tmdb_season_counts(self, tmdb_id: str) -> dict[int, int]:
+    def _fetch_tmdb_season_inventory(self, tmdb_id: str, *, seasons: set[int]) -> dict[int, dict[str, set[int]]]:
         safe_tmdb_id = str(tmdb_id or "").strip()
-        if not safe_tmdb_id:
+        requested_seasons = {int(season) for season in seasons if int(season) > 0}
+        if not safe_tmdb_id or not requested_seasons:
             return {}
         if safe_tmdb_id in self._tmdb_detail_cache:
             detail = self._tmdb_detail_cache[safe_tmdb_id]
@@ -313,16 +341,55 @@ class MissingEpisodeService:
         seasons = detail.get("seasons") if isinstance(detail, dict) else []
         if not isinstance(seasons, list):
             return {}
-        counts: dict[int, int] = {}
+        available_seasons: set[int] = set()
         for season in seasons:
             if not isinstance(season, dict):
                 continue
             season_no = self._safe_int(season.get("season_number"))
             expected = self._safe_int(season.get("episode_count"))
-            if season_no <= 0 or expected <= 0:
+            if season_no <= 0 or expected <= 0 or season_no not in requested_seasons:
                 continue
-            counts[season_no] = expected
-        return counts
+            available_seasons.add(season_no)
+
+        output: dict[int, dict[str, set[int]]] = {}
+        today = date.today()
+        for season_no in sorted(available_seasons):
+            params = {"language": self.tmdb_language}
+            payload = self._tmdb_get_json(
+                f"/tv/{urllib.parse.quote(safe_tmdb_id, safe='')}/season/{season_no}?{urllib.parse.urlencode(params)}"
+            )
+            episodes = payload.get("episodes") if isinstance(payload, dict) else []
+            if not isinstance(episodes, list):
+                continue
+            registered: set[int] = set()
+            aired: set[int] = set()
+            future: set[int] = set()
+            unknown: set[int] = set()
+            for episode in episodes:
+                if not isinstance(episode, dict):
+                    continue
+                episode_no = self._safe_int(episode.get("episode_number"))
+                if episode_no <= 0:
+                    continue
+                registered.add(episode_no)
+                air_date_text = str(episode.get("air_date") or "").strip()[:10]
+                if not air_date_text:
+                    unknown.add(episode_no)
+                    continue
+                try:
+                    air_date = date.fromisoformat(air_date_text)
+                except ValueError:
+                    unknown.add(episode_no)
+                    continue
+                (aired if air_date <= today else future).add(episode_no)
+            if registered:
+                output[season_no] = {
+                    "registeredEpisodes": registered,
+                    "airedEpisodes": aired,
+                    "futureEpisodes": future,
+                    "unknownAirDateEpisodes": unknown,
+                }
+        return output
 
     def _tmdb_get_json(self, path_with_query: str) -> dict[str, Any]:
         if not self.tmdb_token:
