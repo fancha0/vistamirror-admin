@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260712-cover-studio-responsive-1">
+  <link rel="stylesheet" href="styles.css?v=20260715-cover-studio-fixed-workspace-2">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -1360,13 +1360,12 @@
                       <button class="cover-studio-mode-tab" type="button" role="tab" aria-selected="false" data-cover-studio-mode="auto">自动封面</button>
                     </div>
                     <section id="cover-studio-manual-panel" class="cover-studio-mode-panel" role="tabpanel">
-                    <div class="cover-studio-shell">
-                      <div class="cover-studio-controls">
+                    <div class="cover-studio-shell cover-studio-workspace">
+                      <aside class="cover-studio-library-pane cover-studio-workspace-pane" aria-label="媒体库与预设">
                         <div class="cover-studio-target-card">
                           <div class="cover-studio-target-head">
                             <div>
                               <strong>封面目标</strong>
-                              <p>先选择媒体库视图，再生成预览。</p>
                             </div>
                             <span id="cover-studio-selection-chip" class="cover-studio-selection-chip">未选择</span>
                           </div>
@@ -1380,20 +1379,6 @@
                             <select id="cover-studio-view-select" class="cover-studio-legacy-view-select" aria-hidden="true" tabindex="-1">
                               <option value="">请选择 Emby 视图</option>
                             </select>
-                            <small>每个勾选的媒体库都会分别取图、生成并应用自己的封面。</small>
-                          </label>
-                          <label class="field">
-                            <span>布局模板</span>
-                            <select id="cover-studio-template-key">
-                              <option value="stack_classic">经典堆叠</option>
-                            </select>
-                          </label>
-                          <label class="field">
-                            <span>取图模式</span>
-                            <select id="cover-studio-pick-mode">
-                              <option value="random">随机模式</option>
-                              <option value="recent">最近入库</option>
-                            </select>
                           </label>
                           <label class="field">
                             <span>模板名称</span>
@@ -1404,11 +1389,47 @@
                             <button id="cover-studio-save-as-btn" class="ghost-btn" type="button">另存为</button>
                           </div>
                         </div>
+                      </aside>
 
+                      <section class="cover-studio-preview-pane cover-studio-workspace-pane" aria-label="封面预览">
+                        <div class="cover-studio-preview-card">
+                          <div id="cover-studio-preview-stage" class="cover-studio-preview-stage">
+                            <div class="empty-state">生成预览后会显示主图。</div>
+                          </div>
+                          <div class="cover-studio-preview-actions">
+                            <button id="cover-studio-preview-btn" class="primary-btn" type="button">生成预览</button>
+                            <button id="cover-studio-apply-btn" class="primary-btn" type="button">应用封面</button>
+                            <button id="cover-studio-restore-btn" class="ghost-btn" type="button">恢复原封面</button>
+                          </div>
+                        </div>
+                      </section>
+
+                      <aside class="cover-studio-controls cover-studio-settings-pane cover-studio-workspace-pane" aria-label="封面布局参数">
+                        <div class="cover-studio-settings-card">
+                          <div class="cover-studio-target-head">
+                            <div>
+                              <strong>封面设置</strong>
+                            </div>
+                            <span id="cover-studio-template-chip" class="cover-studio-selection-chip">经典堆叠</span>
+                          </div>
+                        </div>
+                        <label class="field">
+                          <span>布局模板</span>
+                          <select id="cover-studio-template-key">
+                            <option value="stack_classic">经典堆叠</option>
+                          </select>
+                        </label>
+                        <label class="field">
+                          <span>取图模式</span>
+                          <select id="cover-studio-pick-mode">
+                            <option value="random">随机模式</option>
+                            <option value="recent">最近入库</option>
+                          </select>
+                        </label>
                         <label class="field">
                           <span>主标题</span>
                           <input id="cover-studio-title-text" type="text" placeholder="例如：国产动漫">
-                          <small id="cover-studio-title-mode-hint">单选时可自定义标题；多选时自动使用每个媒体库自己的名称。</small>
+                          <small id="cover-studio-title-mode-hint" hidden>单选时可自定义标题；多选时自动使用每个媒体库自己的名称。</small>
                         </label>
                         <label class="field">
                           <span>副标题</span>
@@ -1434,9 +1455,7 @@
                           <div class="cover-studio-target-head">
                             <div>
                               <strong>布局细调</strong>
-                              <p>不同模板会自动启用或禁用对应参数。</p>
                             </div>
-                            <span id="cover-studio-template-chip" class="cover-studio-selection-chip">经典堆叠</span>
                           </div>
                           <div class="settings-subgrid">
                             <label class="field">
@@ -1466,28 +1485,16 @@
                               <input id="cover-studio-title-y-offset" type="number" min="-160" max="160" step="4" value="0">
                             </label>
                           </div>
-                          <p id="cover-studio-template-hint" class="tmdb-token-hint">当前模板将应用自己的默认布局参数。</p>
+                          <p id="cover-studio-template-hint" class="tmdb-token-hint" hidden>当前模板将应用自己的默认布局参数。</p>
                         </div>
                         <p id="cover-studio-feedback" class="tmdb-token-hint">先选择视图并生成预览。</p>
-                      </div>
-
-                      <div class="cover-studio-preview-card">
-                        <div id="cover-studio-preview-stage" class="cover-studio-preview-stage">
-                          <div class="empty-state">生成预览后会显示主图。</div>
-                        </div>
-                        <div class="cover-studio-preview-actions">
-                          <button id="cover-studio-preview-btn" class="primary-btn" type="button">生成预览</button>
-                          <button id="cover-studio-apply-btn" class="primary-btn" type="button">应用封面</button>
-                          <button id="cover-studio-restore-btn" class="ghost-btn" type="button">恢复原封面</button>
-                        </div>
-                      </div>
+                      </aside>
                     </div>
                     </section>
                     <section id="cover-studio-auto-panel" class="cover-studio-mode-panel cover-studio-auto-panel" role="tabpanel" hidden>
                       <div class="cover-studio-auto-head">
                         <div>
                           <h5>自动封面计划</h5>
-                          <p>每条计划只绑定一个媒体库。首次检查建立基线，发现新影视后自动更新 Primary 主图。</p>
                         </div>
                       </div>
                       <div class="cover-studio-auto-workspace">
@@ -1538,7 +1545,6 @@
                         <div class="cover-studio-auto-schedules-head">
                           <div>
                             <strong>已添加计划</strong>
-                            <p>每条计划可独立修改时间、封面参数和启停状态。</p>
                           </div>
                         </div>
                         <div id="cover-studio-schedule-list" class="cover-studio-schedule-list">
@@ -2207,7 +2213,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260712-cover-schedule-draft-1"></script>
+  <script src="script.js?v=20260715-cover-studio-mode-persist-1"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

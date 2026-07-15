@@ -10,6 +10,7 @@ const STORAGE_KEYS = {
   drive115Config: "vistamirrorDrive115Config",
   hdhiveConfig: "vistamirrorHDHiveConfig",
   activeView: "embyPulseActiveView",
+  coverStudioMode: "vistamirrorCoverStudioMode",
   inviteSyncEndpoint: "embyPulseInviteSyncEndpoint",
   qualityLastScanAt: "embyPulseQualityLastScanAt",
   sidebarCollapsed: "vistamirrorSidebarCollapsed"
@@ -318,6 +319,30 @@ const DEFAULT_COVER_STUDIO_MODES = [
     supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
     maxPosterCount: 5,
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 5, accentTone: "rose", posterRotation: 16, titleYOffset: 0 }
+  },
+  {
+    key: "bookshelf_gallery",
+    label: "书架陈列",
+    description: "暖色书架与直立海报陈列，适合纪录片、电影精选与剧集分类。",
+    supports: ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+    maxPosterCount: 7,
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 7, accentTone: "gold", posterRotation: 0, titleYOffset: 0 }
+  },
+  {
+    key: "honeycomb_hex",
+    label: "蜂巢六边形",
+    description: "以六边形影像网格聚焦内容，适合动画、动作和科幻类媒体库。",
+    supports: ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+    maxPosterCount: 7,
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 7, accentTone: "blue", posterRotation: 0, titleYOffset: 0 }
+  },
+  {
+    key: "panorama_gallery",
+    label: "全景画廊",
+    description: "弧形展墙配合地面倒影，适合做沉浸式电影与剧集分类封面。",
+    supports: ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+    maxPosterCount: 7,
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 7, accentTone: "gold", posterRotation: 0, titleYOffset: 0 }
   }
 ];
 
@@ -396,7 +421,7 @@ const appState = {
   notificationConfig: loadJson(STORAGE_KEYS.notificationConfig, DEFAULT_NOTIFICATION_CONFIG),
   aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
   coverStudioConfig: loadJson(STORAGE_KEYS.coverStudioConfig, DEFAULT_COVER_STUDIO_CONFIG),
-  coverStudioMode: "manual",
+  coverStudioMode: localStorage.getItem(STORAGE_KEYS.coverStudioMode) === "auto" ? "auto" : "manual",
   coverStudioScheduleDraft: null,
   coverStudioSchedulePreviewDataUrl: "",
   coverStudioSchedulePreviewLoading: false,
@@ -7816,6 +7841,7 @@ function clearCoverStudioSchedulePreview() {
 function setCoverStudioMode(mode) {
   const nextMode = mode === "auto" ? "auto" : "manual";
   appState.coverStudioMode = nextMode;
+  localStorage.setItem(STORAGE_KEYS.coverStudioMode, nextMode);
   elements.coverStudioManualPanel?.toggleAttribute("hidden", nextMode !== "manual");
   elements.coverStudioAutoPanel?.toggleAttribute("hidden", nextMode !== "auto");
   elements.coverStudioModeTabs?.querySelectorAll("[data-cover-studio-mode]").forEach((button) => {

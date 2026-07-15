@@ -3,229 +3,200 @@ from __future__ import annotations
 from typing import Any
 
 
-CINEMATIC_SHOWCASE_VARIANTS: dict[str, dict[str, dict[str, Any]]] = {
-    "thumb": {
-        "banner": {
-            "layout_style": "streaming_banner",
-            "frame_inset": 30,
-            "frame_radius": 34,
-            "frame_outline_alpha": 104,
-            "left_panel_ratio": 0.37,
-            "glow_alpha": 24,
-            "floor_glow_alpha": 0,
-            "hero_box": (30, 30, 1220, 660),
-            "hero_radius": 34,
-            "hero_mask_blur": 0,
-            "hero_opacity": 1.0,
-            "hero_ring_alpha": 0,
-            "poster_limit": 5,
-            "reflection_opacity": 0.025,
-            "reflection_scale": 0.22,
-            "angle_tune_scale": 0.0,
-            "strict_poster_row": True,
-            "title": {
-                "x_bounds": (92, 420),
-                "base_y": 104,
-                "decor": {"marker": "vertical", "marker_gap": 26, "marker_width": 4, "subtitle_gap": 14},
-            },
-            "poster_specs": [
-                {"origin": (50, 360), "size": (196, 292), "rotation": 0.0, "radius": 24, "elevation": 1, "glow_alpha": 22},
-                {"origin": (263, 360), "size": (196, 292), "rotation": 0.0, "radius": 24, "elevation": 1, "glow_alpha": 22},
-                {"origin": (476, 360), "size": (196, 292), "rotation": 0.0, "radius": 24, "elevation": 1, "glow_alpha": 22},
-                {"origin": (689, 360), "size": (196, 292), "rotation": 0.0, "radius": 24, "elevation": 1, "glow_alpha": 22},
-                {"origin": (902, 360), "size": (196, 292), "rotation": 0.0, "radius": 24, "elevation": 1, "glow_alpha": 22},
-            ],
+# Cover Studio only creates Emby Primary artwork.  The layouts below therefore
+# use the full-size Primary canvas and never maintain a parallel Thumb variant.
+CINEMATIC_SHOWCASE_VARIANTS: dict[str, dict[str, Any]] = {
+    "banner": {
+        "layout_style": "streaming_banner",
+        "frame_inset": 38,
+        "frame_radius": 44,
+        "frame_outline_alpha": 116,
+        "left_panel_ratio": 0.36,
+        "glow_alpha": 28,
+        "floor_glow_alpha": 0,
+        "hero_box": (38, 38, 1524, 824),
+        "hero_radius": 44,
+        "hero_mask_blur": 0,
+        "hero_opacity": 1.0,
+        "hero_ring_alpha": 0,
+        "poster_limit": 5,
+        "reflection_opacity": 0.028,
+        "reflection_scale": 0.22,
+        "angle_tune_scale": 0.0,
+        "strict_poster_row": True,
+        "title": {
+            "x_bounds": (116, 530),
+            "base_y": 136,
+            "decor": {"marker": "vertical", "marker_gap": 32, "marker_width": 6, "subtitle_gap": 18},
         },
-        "hero": {
-            "left_panel_ratio": 0.4,
-            "glow_alpha": 58,
-            "floor_glow_alpha": 22,
-            "hero_box": (596, 24, 612, 470),
-            "hero_radius": 48,
-            "hero_mask_blur": 22,
-            "hero_opacity": 0.62,
-            "hero_ring_alpha": 34,
-            "poster_limit": 5,
-            "reflection_opacity": 0.1,
-            "reflection_scale": 0.44,
-            "title": {
-                "x_bounds": (70, 470),
-                "base_y": 74,
-                "decor": {"line_gap": 14, "line_length": 62, "line_height": 4, "subtitle_gap": 14},
-            },
-            "poster_specs": [
-                {"origin": (72, 474), "size": (172, 224), "rotation": -4.2, "radius": 22, "elevation": 1},
-                {"origin": (270, 458), "size": (186, 242), "rotation": -2.0, "radius": 22, "elevation": 2},
-                {"origin": (488, 426), "size": (224, 292), "rotation": 0.0, "radius": 26, "elevation": 5, "glow_alpha": 122},
-                {"origin": (752, 454), "size": (186, 242), "rotation": 1.8, "radius": 22, "elevation": 2},
-                {"origin": (970, 470), "size": (172, 224), "rotation": 4.0, "radius": 22, "elevation": 1},
-            ],
+        "poster_specs": [
+            {"origin": (64, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
+            {"origin": (330, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
+            {"origin": (596, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
+            {"origin": (862, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
+            {"origin": (1128, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
+        ],
+    },
+    "hero": {
+        "left_panel_ratio": 0.4,
+        "glow_alpha": 70,
+        "floor_glow_alpha": 26,
+        "hero_box": (760, 18, 782, 690),
+        "hero_radius": 62,
+        "hero_mask_blur": 28,
+        "hero_opacity": 0.66,
+        "hero_ring_alpha": 42,
+        "poster_limit": 5,
+        "reflection_opacity": 0.12,
+        "reflection_scale": 0.54,
+        "title": {
+            "x_bounds": (86, 618),
+            "base_y": 88,
+            "decor": {"line_gap": 18, "line_length": 96, "line_height": 6, "subtitle_gap": 18},
         },
-        "gallery": {
-            "left_panel_ratio": 0.38,
-            "glow_alpha": 44,
-            "floor_glow_alpha": 18,
-            "hero_box": (626, 22, 594, 404),
-            "hero_radius": 38,
-            "hero_mask_blur": 18,
-            "hero_opacity": 0.38,
-            "hero_ring_alpha": 22,
-            "poster_limit": 6,
-            "reflection_opacity": 0.08,
-            "reflection_scale": 0.4,
-            "title": {
-                "x_bounds": (72, 468),
-                "base_y": 70,
-                "decor": {"line_gap": 12, "line_length": 58, "line_height": 4, "subtitle_gap": 12},
-            },
-            "poster_specs": [
-                {"origin": (66, 474), "size": (154, 208), "rotation": -2.0, "radius": 20, "elevation": 1},
-                {"origin": (248, 466), "size": (160, 216), "rotation": -1.2, "radius": 20, "elevation": 2},
-                {"origin": (434, 454), "size": (166, 226), "rotation": -0.4, "radius": 20, "elevation": 3},
-                {"origin": (630, 454), "size": (166, 226), "rotation": 0.4, "radius": 20, "elevation": 3},
-                {"origin": (822, 466), "size": (160, 216), "rotation": 1.2, "radius": 20, "elevation": 2},
-                {"origin": (1004, 474), "size": (154, 208), "rotation": 2.0, "radius": 20, "elevation": 1},
-            ],
+        "poster_specs": [
+            {"origin": (92, 562), "size": (206, 292), "rotation": -4.2, "radius": 24, "elevation": 1},
+            {"origin": (326, 532), "size": (218, 310), "rotation": -2.0, "radius": 24, "elevation": 2},
+            {"origin": (592, 488), "size": (262, 372), "rotation": 0.0, "radius": 28, "elevation": 6, "glow_alpha": 136},
+            {"origin": (896, 532), "size": (218, 310), "rotation": 1.8, "radius": 24, "elevation": 2},
+            {"origin": (1140, 562), "size": (206, 292), "rotation": 4.1, "radius": 24, "elevation": 1},
+        ],
+    },
+    "gallery": {
+        "left_panel_ratio": 0.38,
+        "glow_alpha": 52,
+        "floor_glow_alpha": 20,
+        "hero_box": (860, 42, 640, 490),
+        "hero_radius": 48,
+        "hero_mask_blur": 24,
+        "hero_opacity": 0.42,
+        "hero_ring_alpha": 24,
+        "poster_limit": 6,
+        "reflection_opacity": 0.1,
+        "reflection_scale": 0.48,
+        "title": {
+            "x_bounds": (84, 612),
+            "base_y": 86,
+            "decor": {"line_gap": 16, "line_length": 88, "line_height": 6, "subtitle_gap": 16},
         },
-        "immersive": {
-            "left_panel_ratio": 0.43,
-            "glow_alpha": 60,
-            "floor_glow_alpha": 28,
-            "hero_box": (560, 28, 666, 442),
-            "hero_radius": 44,
-            "hero_mask_blur": 20,
-            "hero_opacity": 0.56,
-            "hero_ring_alpha": 36,
-            "poster_limit": 5,
-            "reflection_opacity": 0.13,
-            "reflection_scale": 0.5,
-            "title": {
-                "x_bounds": (76, 502),
-                "base_y": 86,
-                "decor": {"line_gap": 14, "line_length": 66, "line_height": 4, "subtitle_gap": 14},
-            },
-            "poster_specs": [
-                {"origin": (84, 474), "size": (176, 226), "rotation": -3.0, "radius": 22, "elevation": 1},
-                {"origin": (286, 458), "size": (190, 246), "rotation": -1.6, "radius": 22, "elevation": 2},
-                {"origin": (518, 430), "size": (214, 278), "rotation": 0.0, "radius": 24, "elevation": 5, "glow_alpha": 124},
-                {"origin": (772, 456), "size": (190, 246), "rotation": 1.8, "radius": 22, "elevation": 2},
-                {"origin": (986, 474), "size": (176, 226), "rotation": 3.2, "radius": 22, "elevation": 1},
-            ],
+        "poster_specs": [
+            {"origin": (86, 566), "size": (184, 266), "rotation": -2.2, "radius": 22, "elevation": 1},
+            {"origin": (292, 552), "size": (192, 276), "rotation": -1.4, "radius": 22, "elevation": 2},
+            {"origin": (506, 536), "size": (198, 284), "rotation": -0.6, "radius": 22, "elevation": 3},
+            {"origin": (722, 536), "size": (198, 284), "rotation": 0.6, "radius": 22, "elevation": 3},
+            {"origin": (938, 552), "size": (192, 276), "rotation": 1.4, "radius": 22, "elevation": 2},
+            {"origin": (1144, 566), "size": (184, 266), "rotation": 2.2, "radius": 22, "elevation": 1},
+        ],
+    },
+    "immersive": {
+        "left_panel_ratio": 0.43,
+        "glow_alpha": 74,
+        "floor_glow_alpha": 34,
+        "hero_box": (732, 34, 808, 624),
+        "hero_radius": 56,
+        "hero_mask_blur": 26,
+        "hero_opacity": 0.58,
+        "hero_ring_alpha": 46,
+        "poster_limit": 5,
+        "reflection_opacity": 0.15,
+        "reflection_scale": 0.58,
+        "title": {
+            "x_bounds": (92, 650),
+            "base_y": 104,
+            "decor": {"line_gap": 20, "line_length": 96, "line_height": 6, "subtitle_gap": 18},
+        },
+        "poster_specs": [
+            {"origin": (108, 564), "size": (204, 288), "rotation": -3.2, "radius": 24, "elevation": 1},
+            {"origin": (344, 538), "size": (220, 312), "rotation": -1.6, "radius": 24, "elevation": 2},
+            {"origin": (620, 500), "size": (248, 352), "rotation": 0.0, "radius": 28, "elevation": 6, "glow_alpha": 138},
+            {"origin": (914, 536), "size": (220, 312), "rotation": 1.8, "radius": 24, "elevation": 2},
+            {"origin": (1162, 564), "size": (204, 288), "rotation": 3.2, "radius": 24, "elevation": 1},
+        ],
+    },
+}
+
+
+# These layouts are Primary-only compositions.  They intentionally describe the
+# scene language rather than hard-code a media-library title or artwork so the
+# existing cover studio inputs remain the single source of content.
+PRIMARY_LAYOUT_VARIANTS: dict[str, dict[str, Any]] = {
+    "bookshelf": {
+        "layout_style": "bookshelf",
+        "poster_limit": 7,
+        "title": {
+            "x_bounds": (72, 700),
+            "base_y": 72,
+            "decor": {"line_gap": 16, "line_length": 88, "line_height": 5, "subtitle_gap": 16},
         },
     },
-    "cover": {
-        "banner": {
-            "layout_style": "streaming_banner",
-            "frame_inset": 38,
-            "frame_radius": 44,
-            "frame_outline_alpha": 116,
-            "left_panel_ratio": 0.36,
-            "glow_alpha": 28,
-            "floor_glow_alpha": 0,
-            "hero_box": (38, 38, 1524, 824),
-            "hero_radius": 44,
-            "hero_mask_blur": 0,
-            "hero_opacity": 1.0,
-            "hero_ring_alpha": 0,
-            "poster_limit": 5,
-            "reflection_opacity": 0.028,
-            "reflection_scale": 0.22,
-            "angle_tune_scale": 0.0,
-            "strict_poster_row": True,
-            "title": {
-                "x_bounds": (116, 530),
-                "base_y": 136,
-                "decor": {"marker": "vertical", "marker_gap": 32, "marker_width": 6, "subtitle_gap": 18},
-            },
-            "poster_specs": [
-                {"origin": (64, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
-                {"origin": (330, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
-                {"origin": (596, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
-                {"origin": (862, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
-                {"origin": (1128, 458), "size": (246, 356), "rotation": 0.0, "radius": 28, "elevation": 1, "glow_alpha": 24},
-            ],
+    "honeycomb": {
+        "layout_style": "honeycomb",
+        "poster_limit": 7,
+        "title": {
+            "x_bounds": (72, 620),
+            "base_y": 310,
+            "decor": {"line_gap": 16, "line_length": 84, "line_height": 5, "subtitle_gap": 16},
         },
-        "hero": {
-            "left_panel_ratio": 0.4,
-            "glow_alpha": 70,
-            "floor_glow_alpha": 26,
-            "hero_box": (760, 18, 782, 690),
-            "hero_radius": 62,
-            "hero_mask_blur": 28,
-            "hero_opacity": 0.66,
-            "hero_ring_alpha": 42,
-            "poster_limit": 5,
-            "reflection_opacity": 0.12,
-            "reflection_scale": 0.54,
-            "title": {
-                "x_bounds": (86, 618),
-                "base_y": 88,
-                "decor": {"line_gap": 18, "line_length": 96, "line_height": 6, "subtitle_gap": 18},
-            },
-            "poster_specs": [
-                {"origin": (92, 562), "size": (206, 292), "rotation": -4.2, "radius": 24, "elevation": 1},
-                {"origin": (326, 532), "size": (218, 310), "rotation": -2.0, "radius": 24, "elevation": 2},
-                {"origin": (592, 488), "size": (262, 372), "rotation": 0.0, "radius": 28, "elevation": 6, "glow_alpha": 136},
-                {"origin": (896, 532), "size": (218, 310), "rotation": 1.8, "radius": 24, "elevation": 2},
-                {"origin": (1140, 562), "size": (206, 292), "rotation": 4.1, "radius": 24, "elevation": 1},
-            ],
-        },
-        "gallery": {
-            "left_panel_ratio": 0.38,
-            "glow_alpha": 52,
-            "floor_glow_alpha": 20,
-            "hero_box": (860, 42, 640, 490),
-            "hero_radius": 48,
-            "hero_mask_blur": 24,
-            "hero_opacity": 0.42,
-            "hero_ring_alpha": 24,
-            "poster_limit": 6,
-            "reflection_opacity": 0.1,
-            "reflection_scale": 0.48,
-            "title": {
-                "x_bounds": (84, 612),
-                "base_y": 86,
-                "decor": {"line_gap": 16, "line_length": 88, "line_height": 6, "subtitle_gap": 16},
-            },
-            "poster_specs": [
-                {"origin": (86, 566), "size": (184, 266), "rotation": -2.2, "radius": 22, "elevation": 1},
-                {"origin": (292, 552), "size": (192, 276), "rotation": -1.4, "radius": 22, "elevation": 2},
-                {"origin": (506, 536), "size": (198, 284), "rotation": -0.6, "radius": 22, "elevation": 3},
-                {"origin": (722, 536), "size": (198, 284), "rotation": 0.6, "radius": 22, "elevation": 3},
-                {"origin": (938, 552), "size": (192, 276), "rotation": 1.4, "radius": 22, "elevation": 2},
-                {"origin": (1144, 566), "size": (184, 266), "rotation": 2.2, "radius": 22, "elevation": 1},
-            ],
-        },
-        "immersive": {
-            "left_panel_ratio": 0.43,
-            "glow_alpha": 74,
-            "floor_glow_alpha": 34,
-            "hero_box": (732, 34, 808, 624),
-            "hero_radius": 56,
-            "hero_mask_blur": 26,
-            "hero_opacity": 0.58,
-            "hero_ring_alpha": 46,
-            "poster_limit": 5,
-            "reflection_opacity": 0.15,
-            "reflection_scale": 0.58,
-            "title": {
-                "x_bounds": (92, 650),
-                "base_y": 104,
-                "decor": {"line_gap": 20, "line_length": 96, "line_height": 6, "subtitle_gap": 18},
-            },
-            "poster_specs": [
-                {"origin": (108, 564), "size": (204, 288), "rotation": -3.2, "radius": 24, "elevation": 1},
-                {"origin": (344, 538), "size": (220, 312), "rotation": -1.6, "radius": 24, "elevation": 2},
-                {"origin": (620, 500), "size": (248, 352), "rotation": 0.0, "radius": 28, "elevation": 6, "glow_alpha": 138},
-                {"origin": (914, 536), "size": (220, 312), "rotation": 1.8, "radius": 24, "elevation": 2},
-                {"origin": (1162, 564), "size": (204, 288), "rotation": 3.2, "radius": 24, "elevation": 1},
-            ],
+    },
+    "panorama": {
+        "layout_style": "panorama_gallery",
+        "poster_limit": 7,
+        "title": {
+            "x_bounds": (74, 670),
+            "base_y": 74,
+            "decor": {"line_gap": 16, "line_length": 88, "line_height": 5, "subtitle_gap": 16},
         },
     },
 }
 
 
-def get_cinematic_showcase_variant(variant: str, *, thumb: bool) -> dict[str, Any]:
+# The fan layout is intentionally restrained: it is a cinematic poster display,
+# not a literal folding fan.  It is rendered on the Emby Primary canvas only.
+FAN_SPREAD_LAYOUT: dict[str, Any] = {
+    "title_area_ratio": 0.33,
+    "poster_limit": 7,
+    # Keep the user-facing rotation control subtle so the seven-card arc stays
+    # symmetrical instead of becoming a scattered collage.
+    "rotation_tune_scale": 0.004,
+    "reflection_opacity": 0.0,
+    "reflection_scale": 0.0,
+    "horizontal_inset": 50,
+    "poster_aspect_ratio": 0.633,
+    "min_poster_height": 360,
+    # 3-card mode still fills the width, but this cap keeps its rotated edge
+    # posters completely inside the Primary frame.
+    "max_poster_height": 520,
+    "shelf_box": (34, 694, 1566, 864),
+    "shelf_radius": 44,
+    "shelf_alpha": 0,
+    "shelf_border_alpha": 0,
+    "title": {
+        "x_bounds": (78, 486),
+        "base_y": 108,
+    },
+    "poster_specs": [
+        # Seven cards share one virtual pivot below the canvas. Their top edges
+        # trace a single symmetric half-circle, rather than a stepped wave.
+        {"origin": (50, 410), "size": (228, 360), "rotation": -14.0, "radius": 27, "elevation": 1, "glow_alpha": 48},
+        {"origin": (256, 338), "size": (228, 360), "rotation": -9.0, "radius": 27, "elevation": 2, "glow_alpha": 56},
+        {"origin": (462, 280), "size": (228, 360), "rotation": -4.0, "radius": 27, "elevation": 3, "glow_alpha": 66},
+        {"origin": (677, 242), "size": (246, 389), "rotation": 0.0, "radius": 30, "elevation": 7, "glow_alpha": 138, "reflection_opacity": 0.20},
+        {"origin": (910, 280), "size": (228, 360), "rotation": 4.0, "radius": 27, "elevation": 3, "glow_alpha": 66},
+        {"origin": (1116, 338), "size": (228, 360), "rotation": 9.0, "radius": 27, "elevation": 2, "glow_alpha": 56},
+        {"origin": (1322, 410), "size": (228, 360), "rotation": 14.0, "radius": 27, "elevation": 1, "glow_alpha": 48},
+    ],
+}
+
+
+def get_fan_spread_layout() -> dict[str, Any]:
+    return FAN_SPREAD_LAYOUT
+
+
+def get_cinematic_showcase_variant(variant: str) -> dict[str, Any]:
     safe_variant = str(variant or "banner").strip().lower() or "banner"
-    bucket = CINEMATIC_SHOWCASE_VARIANTS["thumb" if thumb else "cover"]
-    return bucket.get(safe_variant, bucket["banner"])
+    return CINEMATIC_SHOWCASE_VARIANTS.get(safe_variant, CINEMATIC_SHOWCASE_VARIANTS["banner"])
+
+
+def get_primary_layout_variant(variant: str) -> dict[str, Any]:
+    safe_variant = str(variant or "bookshelf").strip().lower() or "bookshelf"
+    return PRIMARY_LAYOUT_VARIANTS.get(safe_variant, PRIMARY_LAYOUT_VARIANTS["bookshelf"])

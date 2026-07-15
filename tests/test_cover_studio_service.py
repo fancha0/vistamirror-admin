@@ -22,7 +22,11 @@ from backend_modules.cover_studio_service import (
     normalize_cover_studio_config,
 )
 from backend_modules.cover_studio_scheduler import CoverStudioScheduler, cron_matches
-from backend_modules.cover_studio_template_specs import get_cinematic_showcase_variant
+from backend_modules.cover_studio_template_specs import (
+    get_cinematic_showcase_variant,
+    get_fan_spread_layout,
+    get_primary_layout_variant,
+)
 
 
 class _FakeEmbyService:
@@ -61,13 +65,6 @@ class _BackdropEmbyService(_FakeEmbyService):
         buffer = BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
-
-
-class _PrimaryOnlyEmbyService(_FakeEmbyService):
-    def upload_view_image(self, *, view_id: str, image_type: str, image_bytes: bytes, content_type: str = "image/png") -> None:
-        if image_type == "Thumb":
-            raise RuntimeError("thumb unsupported")
-        super().upload_view_image(view_id=view_id, image_type=image_type, image_bytes=image_bytes, content_type=content_type)
 
 
 class _ViewFallbackEmbyCoverService(EmbyCoverService):
@@ -200,11 +197,47 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertIn("hero_showcase", keys)
         self.assertIn("gallery_wall_showcase", keys)
         self.assertIn("immersive_stage", keys)
+        self.assertIn("bookshelf_gallery", keys)
+        self.assertIn("honeycomb_hex", keys)
+        self.assertIn("panorama_gallery", keys)
         self.assertNotIn("stack_classic", keys)
         self.assertNotIn("rotated_stack", keys)
         self.assertNotIn("poster_wall", keys)
         self.assertNotIn("focus_poster", keys)
         self.assertNotIn("glory_view", keys)
+
+    def test_primary_layout_templates_are_primary_only_and_renderable(self) -> None:
+        expected_variants = {
+            "bookshelf_gallery": "bookshelf",
+            "honeycomb_hex": "honeycomb",
+            "panorama_gallery": "panorama",
+        }
+        modes = {mode["key"]: mode for mode in cover_studio_modes()}
+        images = [Image.new("RGB", (420, 630), (36 + index * 20, 74, 142)) for index in range(7)]
+
+        for template_key, variant in expected_variants.items():
+            with self.subTest(template_key=template_key):
+                self.assertEqual(modes[template_key]["family"], "primary_layout")
+                self.assertEqual(modes[template_key]["variant"], variant)
+                self.assertEqual(modes[template_key]["maxPosterCount"], 7)
+                self.assertNotIn("posterRotation", modes[template_key]["supports"])
+                self.assertEqual(get_primary_layout_variant(variant)["poster_limit"], 7)
+                canvas = CoverStudioService(data_dir=pathlib.Path(tempfile.gettempdir()))._render_mode_cover(
+                    template_key=template_key,
+                    images=images,
+                    hero_image=None,
+                    title_text="影视精选",
+                    subtitle_text="Media Collection",
+                    font_key="heiti",
+                    title_font_size=108,
+                    subtitle_font_size=44,
+                    title_align="left",
+                    overlay_strength=0,
+                    accent_tone="gold",
+                    poster_rotation=0,
+                    title_y_offset=0,
+                )
+                self.assertEqual(canvas.size, (1600, 900))
 
     def test_banner_showcase_exposes_its_fixed_layout_constraints(self) -> None:
         banner = next(mode for mode in cover_studio_modes() if mode["key"] == "banner_showcase")
@@ -222,6 +255,51 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertNotIn("posterRotation", banner["supports"])
         self.assertEqual(config["draft"]["posterCount"], 5)
         self.assertEqual(config["draft"]["posterRotation"], 0)
+
+    def test_fan_spread_primary_uses_the_cinematic_center_stage_layout(self) -> None:
+        layout = get_fan_spread_layout()
+        for count in (3, 5, 7):
+            poster_specs = CoverStudioService._build_fan_spread_poster_specs(
+                canvas_size=(1600, 900),
+                count=count,
+                layout=layout,
+            )
+            focus = max(poster_specs, key=lambda spec: int(spec["elevation"]))
+
+            self.assertEqual(len(poster_specs), count)
+            self.assertEqual(focus["rotation"], 0.0)
+            self.assertGreater(focus["size"][0] / poster_specs[0]["size"][0], 1.07)
+            self.assertLess(focus["size"][0] / poster_specs[0]["size"][0], 1.10)
+            self.assertEqual(focus["origin"][1], min(int(spec["origin"][1]) for spec in poster_specs))
+            self.assertEqual(
+                [int(spec["origin"][1]) for spec in poster_specs],
+                list(reversed([int(spec["origin"][1]) for spec in poster_specs])),
+            )
+            self.assertEqual(
+                [float(spec["rotation"]) for spec in poster_specs],
+                [-float(spec["rotation"]) for spec in reversed(poster_specs)],
+            )
+            rendered_sizes = [
+                CoverStudioService._fan_spread_rendered_card_size(
+                    tuple(spec["size"]),
+                    float(spec["rotation"]),
+                )
+                for spec in poster_specs
+            ]
+            for left_index in range(count // 2):
+                right_index = count - 1 - left_index
+                left_center = int(poster_specs[left_index]["origin"][0]) + rendered_sizes[left_index][0] / 2
+                right_center = int(poster_specs[right_index]["origin"][0]) + rendered_sizes[right_index][0] / 2
+                self.assertAlmostEqual(left_center + right_center, 1600, delta=1)
+            if count % 2:
+                center = count // 2
+                self.assertAlmostEqual(
+                    int(poster_specs[center]["origin"][0]) + rendered_sizes[center][0] / 2,
+                    800,
+                    delta=1,
+                )
+        self.assertEqual(layout["reflection_opacity"], 0.0)
+        self.assertEqual(layout["shelf_alpha"], 0)
 
     def test_normalize_cover_studio_config_clamps_sizes(self) -> None:
         config = normalize_cover_studio_config(
@@ -442,8 +520,7 @@ class CoverStudioServiceTests(unittest.TestCase):
             self.assertEqual(preview.template_key, "banner_showcase")
 
     def test_banner_showcase_variant_matches_p2_alignment_rules(self) -> None:
-        cover_meta = get_cinematic_showcase_variant("banner", thumb=False)
-        thumb_meta = get_cinematic_showcase_variant("banner", thumb=True)
+        cover_meta = get_cinematic_showcase_variant("banner")
 
         self.assertEqual(cover_meta["layout_style"], "streaming_banner")
         self.assertTrue(cover_meta["strict_poster_row"])
@@ -459,33 +536,19 @@ class CoverStudioServiceTests(unittest.TestCase):
             {814},
         )
 
-        self.assertEqual(thumb_meta["layout_style"], "streaming_banner")
-        self.assertTrue(thumb_meta["strict_poster_row"])
-        self.assertGreaterEqual(thumb_meta["frame_radius"], 30)
-        self.assertNotIn("shelf_box", thumb_meta)
-        self.assertNotIn("shelf_alpha", thumb_meta)
-        self.assertEqual(thumb_meta["angle_tune_scale"], 0.0)
-        self.assertEqual({spec["rotation"] for spec in thumb_meta["poster_specs"]}, {0.0})
-        self.assertEqual({spec["size"] for spec in thumb_meta["poster_specs"]}, {(196, 292)})
-        self.assertEqual(
-            {spec["origin"][1] + spec["size"][1] for spec in thumb_meta["poster_specs"]},
-            {652},
-        )
-
-        for thumb in (False, True):
-            for variant in ("hero", "gallery", "immersive"):
-                meta = get_cinematic_showcase_variant(variant, thumb=thumb)
-                for glass_key in (
-                    "frame_radius",
-                    "shelf_style",
-                    "shelf_box",
-                    "shelf_radius",
-                    "shelf_alpha",
-                    "shelf_blur",
-                    "shelf_outline_alpha",
-                    "shelf_highlight_alpha",
-                ):
-                    self.assertNotIn(glass_key, meta)
+        for variant in ("hero", "gallery", "immersive"):
+            meta = get_cinematic_showcase_variant(variant)
+            for glass_key in (
+                "frame_radius",
+                "shelf_style",
+                "shelf_box",
+                "shelf_radius",
+                "shelf_alpha",
+                "shelf_blur",
+                "shelf_outline_alpha",
+                "shelf_highlight_alpha",
+            ):
+                self.assertNotIn(glass_key, meta)
 
     def test_banner_showcase_prefers_emby_backdrop_for_hero(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -525,7 +588,7 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertEqual(emby.backdrop_requests, [("series-1", "backdrop-a", 1800)])
         self.assertGreater(rendered.getpixel((1300, 180))[0], 100)
 
-    def test_backup_and_apply_keeps_only_primary_and_removes_thumb(self) -> None:
+    def test_backup_and_apply_writes_primary_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service = CoverStudioService(data_dir=pathlib.Path(temp_dir))
             emby = _FakeEmbyService()
@@ -560,7 +623,7 @@ class CoverStudioServiceTests(unittest.TestCase):
             )
         self.assertTrue(result["appliedAt"])
         self.assertEqual([row[1] for row in emby.uploads], ["Primary"])
-        self.assertEqual(emby.deletes, [("view-2", "Thumb")])
+        self.assertEqual(emby.deletes, [])
         self.assertIn("view-2", config["backups"])
 
     def test_unknown_template_key_falls_back_to_fan_spread(self) -> None:
@@ -609,44 +672,6 @@ class CoverStudioServiceTests(unittest.TestCase):
             service.paths,
             ["/Items/series-1/Images/Backdrop?maxWidth=1600&quality=94&Index=0&tag=tag-a"],
         )
-
-    def test_backup_and_apply_succeeds_when_thumb_upload_is_unsupported(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            service = CoverStudioService(data_dir=pathlib.Path(temp_dir))
-            emby = _PrimaryOnlyEmbyService()
-            preview = service.generate_preview(
-                view={"id": "view-2", "name": "华语剧集"},
-                items=[
-                    {"id": "1", "imageItemId": "1", "primaryTag": "a", "name": "A"},
-                    {"id": "2", "imageItemId": "2", "primaryTag": "b", "name": "B"},
-                    {"id": "3", "imageItemId": "3", "primaryTag": "c", "name": "C"},
-                    {"id": "4", "imageItemId": "4", "primaryTag": "d", "name": "D"},
-                ],
-                template_key="banner_showcase",
-                font_key="hiragino",
-                title_text="华语剧集",
-                subtitle_text="Chinese Series",
-                title_font_size=108,
-                subtitle_font_size=44,
-                title_align="left",
-                overlay_strength=74,
-                poster_count=5,
-                accent_tone="gold",
-                poster_rotation=18,
-                title_y_offset=0,
-                emby_service=emby,
-            )
-            config = default_cover_studio_config()
-            result = service.backup_and_apply(
-                config=config,
-                view_id="view-2",
-                preview_token=preview.token,
-                emby_service=emby,
-            )
-
-        self.assertTrue(result["appliedAt"])
-        self.assertEqual([row[1] for row in emby.uploads], ["Primary"])
-
 
 if __name__ == "__main__":
     unittest.main()
