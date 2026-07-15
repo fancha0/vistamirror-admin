@@ -804,7 +804,7 @@
                 <div class="panel-head compact">
                   <div>
                     <h3>通知渠道</h3>
-                    <p class="section-label">像 MP 一样先添加渠道卡片，再点击卡片进入配置弹窗</p>
+                    <p class="section-label">添加并配置通知渠道</p>
                   </div>
                 </div>
                 <div class="notify-channel-hub-shell">
@@ -891,7 +891,7 @@
                     </section>
 
                     <section id="notify-pane-telegram" class="notify-channel-pane notify-channel-modal-pane notify-modal-section" data-notify-pane="telegram" data-notify-modal-section="channel">
-                      <div class="notify-channel-pane-head">
+                      <div class="notify-channel-pane-head" hidden>
                         <div class="bot-card-title-wrap">
                           <span class="bot-channel-icon bot-channel-icon-telegram" aria-hidden="true"></span>
                           <div>
@@ -934,11 +934,11 @@
                           该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
                         </p>
                       </div>
-                      <p id="notify-telegram-status" class="hint-text">Telegram 未启用</p>
+                      <p id="notify-telegram-status" class="hint-text" hidden>Telegram 未启用</p>
                     </section>
 
                     <section id="notify-pane-wecom" class="notify-channel-pane notify-channel-modal-pane notify-modal-section" data-notify-pane="wecom" data-notify-modal-section="channel" hidden>
-                      <div class="notify-channel-pane-head">
+                      <div class="notify-channel-pane-head" hidden>
                         <div class="bot-card-title-wrap">
                           <span class="bot-channel-icon bot-channel-icon-wechat" aria-hidden="true"></span>
                           <div>
@@ -997,7 +997,7 @@
                         </div>
                         <p id="bot-wechat-callback-url" class="route-copy">等待连接 Emby 后自动生成</p>
                       </div>
-                      <p id="notify-wecom-status" class="hint-text">企业微信未启用</p>
+                      <p id="notify-wecom-status" class="hint-text" hidden>企业微信未启用</p>
                     </section>
                   </div>
                   <div class="notify-channel-modal-footer">
@@ -1361,7 +1361,7 @@
                     </div>
                     <section id="cover-studio-manual-panel" class="cover-studio-mode-panel" role="tabpanel">
                     <div class="cover-studio-shell cover-studio-workspace">
-                      <aside class="cover-studio-library-pane cover-studio-workspace-pane" aria-label="媒体库与预设">
+                      <aside class="cover-studio-library-pane cover-studio-workspace-pane" aria-label="媒体库选择">
                         <div class="cover-studio-target-card">
                           <div class="cover-studio-target-head">
                             <div>
@@ -1380,14 +1380,6 @@
                               <option value="">请选择 Emby 视图</option>
                             </select>
                           </label>
-                          <label class="field">
-                            <span>模板名称</span>
-                            <input id="cover-studio-preset-name" type="text" placeholder="默认封面">
-                          </label>
-                          <div class="cover-studio-preset-actions">
-                            <button id="cover-studio-save-current-btn" class="ghost-btn" type="button">保存当前</button>
-                            <button id="cover-studio-save-as-btn" class="ghost-btn" type="button">另存为</button>
-                          </div>
                         </div>
                       </aside>
 

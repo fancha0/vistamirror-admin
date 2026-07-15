@@ -10438,12 +10438,11 @@ function renderNotificationChannelCards(config) {
         return `
           <article class="notify-channel-card ${configured ? "is-configured" : "is-draft"}" data-notify-channel-card-wrap="${escapeHtml(channel)}">
             <button class="notify-channel-card-main" type="button" data-notify-channel-open="${escapeHtml(channel)}">
-              <span class="notify-channel-card-status ${enabled ? "is-online" : configured ? "is-idle" : "is-pending"}" aria-hidden="true"></span>
+              <span class="bot-channel-icon ${escapeHtml(meta.iconClass)}" aria-hidden="true"></span>
               <span class="notify-channel-card-copy">
-                <strong>${escapeHtml(meta.label)}</strong>
+                <strong><span class="notify-channel-card-status ${enabled ? "is-online" : configured ? "is-idle" : "is-pending"}" aria-hidden="true"></span>${escapeHtml(meta.label)}</strong>
                 <small>${escapeHtml(statusText)} · 已开启 ${routeCount} 项事件</small>
               </span>
-              <span class="bot-channel-icon ${escapeHtml(meta.iconClass)}" aria-hidden="true"></span>
             </button>
             <button class="notify-channel-card-remove" type="button" aria-label="移除 ${escapeHtml(meta.label)}" data-notify-channel-remove="${escapeHtml(channel)}">×</button>
           </article>
@@ -10555,9 +10554,8 @@ function renderNotificationChannelModal(config) {
     elements.notifyChannelModalTitle.textContent = channel ? `${meta.label} 配置` : "配置渠道";
   }
   if (elements.notifyChannelModalSubtitle) {
-    elements.notifyChannelModalSubtitle.textContent = channel
-      ? `填写 ${meta.label} 接入信息`
-      : "填写通知渠道接入信息";
+    elements.notifyChannelModalSubtitle.textContent = "";
+    elements.notifyChannelModalSubtitle.hidden = true;
   }
   if (elements.notifyChannelModalIcon) {
     elements.notifyChannelModalIcon.className = `bot-channel-icon ${meta.iconClass}`;

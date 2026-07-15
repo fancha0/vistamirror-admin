@@ -10203,9 +10203,10 @@ body.has-glass-overlay .frozen-navbar {
 }
 
 .main-content[data-active-view="bot-assistant"] #view-bot-assistant .notify-channel-card-status {
-  width: 10px;
-  height: 10px;
-  margin-top: 0;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin: 0 8px 1px 0;
   border-radius: 999px;
   background: #c7d2e5;
   box-shadow: 0 0 0 6px rgba(199, 210, 229, 0.18);
@@ -10233,6 +10234,8 @@ body.has-glass-overlay .frozen-navbar {
 }
 
 .main-content[data-active-view="bot-assistant"] #view-bot-assistant .notify-channel-card-copy strong {
+  display: flex;
+  align-items: center;
   color: #24324a;
   font-size: 18px;
   font-weight: 900;
@@ -10247,12 +10250,12 @@ body.has-glass-overlay .frozen-navbar {
 }
 
 .main-content[data-active-view="bot-assistant"] #view-bot-assistant .notify-channel-card .bot-channel-icon {
-  position: absolute;
-  right: 18px;
-  bottom: 16px;
-  width: 38px;
-  height: 38px;
-  box-shadow: 0 8px 16px rgba(61, 84, 149, 0.14);
+  position: relative;
+  right: auto;
+  bottom: auto;
+  width: 42px;
+  height: 42px;
+  box-shadow: 0 8px 16px rgba(61, 84, 149, 0.12);
 }
 
 .main-content[data-active-view="bot-assistant"] #view-bot-assistant .notify-channel-card-remove {
@@ -10411,6 +10414,13 @@ body.has-glass-overlay .frozen-navbar {
   color: #8694ae;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.notify-channel-modal-title-wrap p[hidden],
+.notify-channel-modal .notify-channel-pane-head[hidden],
+.notify-channel-modal #notify-telegram-status[hidden],
+.notify-channel-modal #notify-wecom-status[hidden] {
+  display: none !important;
 }
 
 .notify-channel-modal-shortcuts {
@@ -11153,10 +11163,10 @@ body.has-glass-overlay .frozen-navbar {
 }
 
 .main-content[data-active-view="bot-assistant"] #view-bot-assistant .notify-channel-card .bot-channel-icon {
-  width: 30px;
-  height: 30px;
-  right: 14px;
-  bottom: 13px;
+  width: 36px;
+  height: 36px;
+  right: auto;
+  bottom: auto;
   box-shadow: none;
 }
 
@@ -11291,6 +11301,18 @@ body.has-glass-overlay .frozen-navbar {
    enterprise WeChat fields (and vice versa), even after the modal moves to body. */
 .notify-channel-modal .notify-channel-pane.is-active:not([hidden]) {
   display: grid !important;
+  gap: 14px;
+}
+
+.notify-channel-modal .notify-channel-pane > .toggle-row {
+  min-height: 88px;
+  padding: 16px 18px;
+  border-color: #e3eaf5;
+  background: #fbfcff;
+}
+
+.notify-channel-modal .notify-channel-pane > .toggle-row + .toggle-row {
+  margin-top: -4px;
 }
 
 .notify-channel-modal .notify-channel-pane[hidden] {
@@ -15530,7 +15552,7 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 }
 
 #view-workshop .cover-studio-library-pane .cover-studio-view-picker {
-  max-height: min(34vh, 300px);
+  max-height: min(56vh, 560px);
 }
 
 /* Keep the desktop manual studio inside the viewport; only side panes scroll. */
