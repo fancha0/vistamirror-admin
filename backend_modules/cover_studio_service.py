@@ -1388,47 +1388,11 @@ class CoverStudioService:
     ) -> Image.Image:
         canvas = self._build_primary_layout_canvas(tone=tone, base_color=(3, 10, 19))
         width, height = canvas.size
-        grid = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        grid_draw = ImageDraw.Draw(grid)
-        # Faint empty cells give the filled tiles a deliberate honeycomb structure.
-        for row in range(3):
-            for column in range(5):
-                center_x = 670 + column * 218 + (109 if row % 2 else 0)
-                center_y = 228 + row * 190
-                points = self._hexagon_points(center=(center_x, center_y), radius_x=122, radius_y=140)
-                grid_draw.line(points + [points[0]], fill=(tone["accent"][0], tone["accent"][1], tone["accent"][2], 56), width=2)
-        grid = grid.filter(ImageFilter.GaussianBlur(radius=0.35))
-        canvas.alpha_composite(grid)
+        # Keep the fixed wall atmospheric and irregular: selected library posters
+        # are the only user-specific artwork, while the background supplies depth.
+        canvas.alpha_composite(self._build_honeycomb_tech_wall(size=canvas.size, tone=tone))
 
-        # This is a fixed ambient media wall, deliberately independent from
-        # the requested poster count. It keeps sparse 3/5-poster covers from
-        # falling back to an empty black background while the selected library
-        # posters remain the only bright, user-specific content.
-        ambient_centers = [
-            (650, 205), (868, 205), (1086, 205), (1304, 205), (1522, 205),
-            (759, 394), (977, 394), (1195, 394), (1413, 394),
-            (650, 583), (868, 583), (1086, 583), (1304, 583), (1522, 583),
-            (759, 772), (977, 772), (1195, 772), (1413, 772),
-        ]
         safe_foreground_count = max(2, min(len(images), int(foreground_count or len(images))))
-        for index, center in enumerate(ambient_centers):
-            # This background wall is fixed: it never consumes an additional
-            # library poster or changes with the requested foreground count.
-            source_image = self._build_honeycomb_ambient_poster(index=index, size=(224, 252), tone=tone)
-            ambient_tile = self._create_hex_poster_tile(
-                source_image,
-                size=(224, 252),
-                tone=tone,
-                focus=False,
-            )
-            # The fixed wall is intentionally atmospheric. It must support,
-            # rather than compete with, the chosen foreground posters.
-            ambient_tile.putalpha(ambient_tile.getchannel("A").point(lambda value: int(value * 0.56)))
-            self._alpha_paste(
-                canvas,
-                ambient_tile,
-                (center[0] - ambient_tile.width // 2, center[1] - ambient_tile.height // 2),
-            )
 
         # A large, centered honeycomb makes the media itself the feature while
         # preserving a readable left-side title lane.
@@ -1453,6 +1417,176 @@ class CoverStudioService:
             )
             self._alpha_paste(canvas, tile, (center[0] - tile.width // 2, center[1] - tile.height // 2))
         return canvas
+
+    def _build_honeycomb_tech_wall(
+        self,
+        *,
+        size: tuple[int, int],
+        tone: dict[str, tuple[int, int, int]],
+    ) -> Image.Image:
+        """Build a sparse, layered sci-fi honeycomb wall behind the media tiles."""
+        width, height = size
+        wall = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(wall)
+
+        # A blue-black cinema gradient keeps the wall present without becoming a grid UI.
+        top_color = (2, 9, 24)
+        bottom_color = (5, 27, 51)
+        for y in range(height):
+            progress = y / max(1, height - 1)
+            eased = progress * progress
+            color = tuple(
+                int(top_color[channel] * (1 - eased) + bottom_color[channel] * eased)
+                for channel in range(3)
+            )
+            draw.line((0, y, width, y), fill=color + (255,))
+
+        atmosphere = Image.new("RGBA", size, (0, 0, 0, 0))
+        atmosphere_draw = ImageDraw.Draw(atmosphere)
+        atmosphere_draw.ellipse(
+            (int(width * 0.37), -260, width + 180, int(height * 0.78)),
+            fill=tone["glow"] + (30,),
+        )
+        atmosphere_draw.ellipse(
+            (-260, int(height * 0.58), int(width * 0.52), height + 260),
+            fill=tone["accent"] + (17,),
+        )
+        atmosphere_draw.polygon(
+            [(int(width * 0.66), -20), (width + 120, -20), (int(width * 0.76), height), (int(width * 0.46), height)],
+            fill=tone["glow"] + (15,),
+        )
+        wall.alpha_composite(atmosphere.filter(ImageFilter.GaussianBlur(radius=56)))
+
+        rng = random.Random(8621)
+        grain = Image.new("RGBA", size, (0, 0, 0, 0))
+        grain_draw = ImageDraw.Draw(grain)
+        for _ in range(3300):
+            x = rng.randrange(width)
+            y = rng.randrange(height)
+            grain_draw.point((x, y), fill=(180, 210, 255, rng.choice((2, 3, 4, 5))))
+        for _ in range(90):
+            x = rng.randrange(width)
+            y = rng.randrange(height)
+            radius = rng.choice((1, 1, 1, 2))
+            grain_draw.ellipse(
+                (x - radius, y - radius, x + radius, y + radius),
+                fill=(203, 231, 255, rng.choice((20, 28, 38, 48))),
+            )
+        wall.alpha_composite(grain)
+
+        # Layer one: a continuous wall of low-contrast dark hexagons. It is
+        # intentionally uneven and extends beyond the frame, so it reads as a
+        # large environment rather than a UI grid behind the selected posters.
+        far_wall = Image.new("RGBA", size, (0, 0, 0, 0))
+        far_draw = ImageDraw.Draw(far_wall)
+        wall_rng = random.Random(3489)
+        far_fills = (
+            (7, 24, 47),
+            (12, 33, 58),
+            (8, 42, 55),
+            (19, 35, 58),
+        )
+        for row in range(-1, 7):
+            for column in range(-1, 10):
+                radius_x = wall_rng.choice((102, 112, 122, 130))
+                radius_y = int(radius_x * wall_rng.choice((1.08, 1.16, 1.22)))
+                center_x = -76 + column * 196 + (98 if row % 2 else 0) + wall_rng.randint(-12, 12)
+                center_y = -66 + row * 158 + wall_rng.randint(-10, 10)
+                points = self._hexagon_points(
+                    center=(center_x, center_y),
+                    radius_x=radius_x,
+                    radius_y=radius_y,
+                )
+                distance_to_focus = math.hypot(center_x - 1110, center_y - 440)
+                fill_alpha = wall_rng.choice((31, 36, 42, 48, 51))
+                edge_alpha = wall_rng.choice((31, 38, 46, 51))
+                if distance_to_focus < 440:
+                    fill_alpha = min(58, fill_alpha + 9)
+                    edge_alpha = min(74, edge_alpha + 16)
+                fill = far_fills[(row * 3 + column) % len(far_fills)] + (fill_alpha,)
+                far_draw.polygon(points, fill=fill)
+                far_draw.line(
+                    points + [points[0]],
+                    fill=tone["accent"] + (edge_alpha,),
+                    width=1 if distance_to_focus > 440 else 2,
+                    joint="curve",
+                )
+        wall.alpha_composite(far_wall.filter(ImageFilter.GaussianBlur(radius=0.42)))
+
+        # Layer three: only a few nearer structural lines receive a soft glow.
+        near_cells = (
+            (604, 126, 146, 166, 18, 1, False),
+            (842, 62, 132, 150, 12, 1, False),
+            (1080, 88, 142, 162, 18, 1, False),
+            (1344, 132, 156, 178, 30, 2, True),
+            (1568, 292, 146, 166, 18, 1, False),
+            (682, 388, 150, 172, 25, 2, False),
+            (1438, 410, 162, 184, 35, 2, True),
+            (350, 590, 150, 172, 12, 1, False),
+            (602, 714, 142, 162, 18, 1, False),
+            (1008, 792, 146, 166, 18, 1, False),
+            (1280, 716, 156, 178, 25, 2, False),
+            (1574, 748, 150, 172, 12, 1, False),
+            (150, 902, 150, 172, 12, 1, False),
+        )
+        near_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+        near_draw = ImageDraw.Draw(near_layer)
+        glow_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow_layer)
+        for center_x, center_y, radius_x, radius_y, opacity_percent, line_width, is_focus in near_cells:
+            points = self._hexagon_points(
+                center=(center_x, center_y),
+                radius_x=radius_x,
+                radius_y=radius_y,
+            )
+            alpha = int(255 * opacity_percent / 100)
+            near_draw.line(
+                points + [points[0]],
+                fill=tone["accent"] + (alpha,),
+                width=line_width,
+                joint="curve",
+            )
+            if is_focus:
+                glow_draw.line(
+                    points + [points[0]],
+                    fill=tone["glow"] + (min(86, alpha + 30),),
+                    width=4,
+                    joint="curve",
+                )
+        wall.alpha_composite(glow_layer.filter(ImageFilter.GaussianBlur(radius=14)))
+        wall.alpha_composite(near_layer)
+
+        # Layer two: abstract distant scenes are intentionally sparse. They use
+        # no library artwork and stay below the foreground poster brightness.
+        ambient_cells = (
+            (0, (250, 176), (176, 198), 0.08),
+            (1, (690, 154), (196, 222), 0.12),
+            (2, (1210, 142), (210, 238), 0.16),
+            (3, (1460, 310), (194, 220), 0.10),
+            (4, (520, 628), (184, 208), 0.08),
+            (5, (752, 742), (190, 216), 0.12),
+            (0, (1388, 722), (210, 238), 0.18),
+            (2, (1480, 748), (170, 194), 0.10),
+        )
+        for index, center, tile_size, opacity in ambient_cells:
+            source_image = self._build_honeycomb_ambient_poster(
+                index=index,
+                size=tile_size,
+                tone=tone,
+            )
+            ambient_tile = self._create_hex_poster_tile(
+                source_image,
+                size=tile_size,
+                tone=tone,
+                focus=False,
+            )
+            ambient_tile.putalpha(ambient_tile.getchannel("A").point(lambda value: int(value * opacity)))
+            self._alpha_paste(
+                wall,
+                ambient_tile,
+                (center[0] - ambient_tile.width // 2, center[1] - ambient_tile.height // 2),
+            )
+        return wall
 
     def _render_panorama_gallery_cover(
         self,

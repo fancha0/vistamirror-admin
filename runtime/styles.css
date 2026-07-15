@@ -11279,7 +11279,23 @@ body.has-glass-overlay .frozen-navbar {
 .notify-modal-section-head strong { display: block; color: #24324a; font-size: 15px; }
 .notify-modal-section-head small { display: block; margin-top: 4px; color: #8290a8; font-size: 12px; }
 .notify-modal-section-body { display: grid; gap: 12px; padding-top: 14px; }
-.notify-channel-modal .notify-channel-pane { border: 0; border-radius: 0; padding: 0; background: transparent; }
+.notify-channel-modal .notify-channel-pane {
+  display: none !important;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+/* Channel credentials are isolated: a Telegram modal must never render the
+   enterprise WeChat fields (and vice versa), even after the modal moves to body. */
+.notify-channel-modal .notify-channel-pane.is-active:not([hidden]) {
+  display: grid !important;
+}
+
+.notify-channel-modal .notify-channel-pane[hidden] {
+  display: none !important;
+}
 
 
 @media (max-width: 960px) {
@@ -15632,6 +15648,159 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
     justify-self: center;
     width: auto;
     min-width: 132px;
+  }
+}
+
+/* Phone manual studio: keep the canvas first and make the media picker touch-friendly. */
+@media (max-width: 620px) {
+  #view-workshop .cover-studio-card {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  #view-workshop .cover-studio-mode-tabs {
+    margin-bottom: 14px;
+  }
+
+  #view-workshop #cover-studio-manual-panel,
+  .main-content[data-active-view="workshop"] #view-workshop #cover-studio-manual-panel {
+    width: 100%;
+    min-width: 0;
+    padding-bottom: calc(92px + env(safe-area-inset-bottom));
+    overflow: visible;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-workspace,
+  .main-content[data-active-view="workshop"] #view-workshop #cover-studio-manual-panel .cover-studio-workspace {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-areas:
+      "preview"
+      "library"
+      "settings";
+    gap: 16px;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-preview-pane {
+    grid-area: preview;
+    grid-column: auto;
+    grid-row: auto;
+    position: static;
+    order: 0 !important;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-library-pane {
+    grid-area: library;
+    grid-column: auto;
+    grid-row: auto;
+    order: 1;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-settings-pane {
+    grid-area: settings;
+    grid-column: auto;
+    grid-row: auto;
+    order: 2;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-library-pane,
+  #view-workshop #cover-studio-manual-panel .cover-studio-settings-pane {
+    display: grid;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    min-height: 0;
+    padding: 0;
+    overflow: visible;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-preview-card {
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-preview-stage {
+    min-height: 0;
+    aspect-ratio: 16 / 9;
+    border-radius: 12px;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-preview-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  #view-workshop #cover-studio-manual-panel .cover-studio-preview-actions > button {
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding-inline: 8px;
+    font-size: 13px;
+  }
+
+  #view-workshop #cover-studio-manual-panel #cover-studio-restore-btn {
+    grid-column: 1 / -1;
+  }
+
+  #view-workshop .cover-studio-library-pane .cover-studio-target-card,
+  #view-workshop .cover-studio-settings-card,
+  #view-workshop .cover-studio-tuning-card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  #view-workshop .cover-studio-library-pane .cover-studio-view-picker {
+    grid-auto-rows: minmax(42px, auto);
+    gap: 5px;
+    max-height: 224px;
+    padding: 4px !important;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  #view-workshop .cover-studio-view-option {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    min-height: 42px;
+    padding: 7px 8px;
+  }
+
+  #view-workshop .cover-studio-view-option input[type="checkbox"] {
+    appearance: auto;
+    -webkit-appearance: checkbox;
+    width: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    height: 18px !important;
+    min-height: 18px !important;
+    max-height: 18px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+    accent-color: #2f78e8;
+  }
+
+  #view-workshop .cover-studio-view-option span {
+    font-size: 14px;
+  }
+
+  #view-workshop .cover-studio-view-option small {
+    font-size: 10px;
+  }
+
+  #view-workshop .cover-studio-preset-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 }
 

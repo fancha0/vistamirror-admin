@@ -10562,14 +10562,18 @@ function renderNotificationChannelModal(config) {
   if (elements.notifyChannelModalIcon) {
     elements.notifyChannelModalIcon.className = `bot-channel-icon ${meta.iconClass}`;
   }
-  if (elements.notifyPaneTelegram) {
-    elements.notifyPaneTelegram.hidden = !isTelegram;
-    elements.notifyPaneTelegram.classList.toggle("is-active", isTelegram);
-  }
-  if (elements.notifyPaneWecom) {
-    elements.notifyPaneWecom.hidden = isTelegram || !channel;
-    elements.notifyPaneWecom.classList.toggle("is-active", channel === "wecom");
-  }
+  // The modal is mounted under document.body. Set both visibility mechanisms
+  // explicitly so the inactive channel cannot leak through page-level styles.
+  const setChannelPaneVisibility = (pane, paneChannel) => {
+    if (!(pane instanceof HTMLElement)) return;
+    const active = Boolean(channel) && paneChannel === channel;
+    pane.hidden = !active;
+    pane.classList.toggle("is-active", active);
+    pane.setAttribute("aria-hidden", active ? "false" : "true");
+    pane.style.display = active ? "grid" : "none";
+  };
+  setChannelPaneVisibility(elements.notifyPaneTelegram, "telegram");
+  setChannelPaneVisibility(elements.notifyPaneWecom, "wecom");
   const platformEnabled = Boolean(config?.enabled);
   if (elements.notifyChannelPlatformSummary) {
     const webhookWarning = appState.botWebhookWarning ? "Webhook 未就绪" : "Webhook 已就绪";
