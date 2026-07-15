@@ -150,40 +150,41 @@ PRIMARY_LAYOUT_VARIANTS: dict[str, dict[str, Any]] = {
 }
 
 
-# The fan layout is intentionally restrained: it is a cinematic poster display,
-# not a literal folding fan.  It is rendered on the Emby Primary canvas only.
+# The fan layout is a mirrored poster fan, not a wave or generic card row.
+# It is rendered on the Emby Primary canvas only.
 FAN_SPREAD_LAYOUT: dict[str, Any] = {
-    "title_area_ratio": 0.33,
+    "title_area_ratio": 0.32,
     "poster_limit": 7,
-    # Keep the user-facing rotation control subtle so the seven-card arc stays
-    # symmetrical instead of becoming a scattered collage.
+    # The UI rotation control scales these fixed, mirrored fan angles instead
+    # of introducing a shared tilt that would break the two fan halves.
     "rotation_tune_scale": 0.004,
-    "reflection_opacity": 0.0,
-    "reflection_scale": 0.0,
-    "horizontal_inset": 50,
+    "reflection_opacity": 0.065,
+    "reflection_scale": 0.20,
+    "horizontal_inset": 54,
     "poster_aspect_ratio": 0.633,
-    "min_poster_height": 360,
-    # 3-card mode still fills the width, but this cap keeps its rotated edge
-    # posters completely inside the Primary frame.
-    "max_poster_height": 520,
-    "shelf_box": (34, 694, 1566, 864),
-    "shelf_radius": 44,
-    "shelf_alpha": 0,
+    "min_poster_height": 350,
+    "max_poster_height": 590,
+    "poster_overlap_ratio": 0.10,
+    "focus_scale": 1.10,
+    "fan_drop_ratio": 0.095,
+    "shelf_box": (132, 594, 1548, 838),
+    "shelf_radius": 52,
+    "shelf_alpha": 38,
     "shelf_border_alpha": 0,
     "title": {
         "x_bounds": (78, 486),
         "base_y": 108,
     },
     "poster_specs": [
-        # Seven cards share one virtual pivot below the canvas. Their top edges
-        # trace a single symmetric half-circle, rather than a stepped wave.
-        {"origin": (50, 410), "size": (228, 360), "rotation": -14.0, "radius": 27, "elevation": 1, "glow_alpha": 48},
-        {"origin": (256, 338), "size": (228, 360), "rotation": -9.0, "radius": 27, "elevation": 2, "glow_alpha": 56},
-        {"origin": (462, 280), "size": (228, 360), "rotation": -4.0, "radius": 27, "elevation": 3, "glow_alpha": 66},
-        {"origin": (677, 242), "size": (246, 389), "rotation": 0.0, "radius": 30, "elevation": 7, "glow_alpha": 138, "reflection_opacity": 0.20},
-        {"origin": (910, 280), "size": (228, 360), "rotation": 4.0, "radius": 27, "elevation": 3, "glow_alpha": 66},
-        {"origin": (1116, 338), "size": (228, 360), "rotation": 9.0, "radius": 27, "elevation": 2, "glow_alpha": 56},
-        {"origin": (1322, 410), "size": (228, 360), "rotation": 14.0, "radius": 27, "elevation": 1, "glow_alpha": 48},
+        # Seven cards orbit a shared lower pivot. Their angles are fixed mirror
+        # pairs so the visual reads as one fan with a clear center hinge.
+        {"rotation": -12.0, "elevation": 1},
+        {"rotation": -8.0, "elevation": 2},
+        {"rotation": -4.0, "elevation": 3},
+        {"rotation": 0.0, "elevation": 8},
+        {"rotation": 4.0, "elevation": 3},
+        {"rotation": 8.0, "elevation": 2},
+        {"rotation": 12.0, "elevation": 1},
     ],
 }
 

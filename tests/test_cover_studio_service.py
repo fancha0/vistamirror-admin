@@ -269,7 +269,7 @@ class CoverStudioServiceTests(unittest.TestCase):
             self.assertEqual(len(poster_specs), count)
             self.assertEqual(focus["rotation"], 0.0)
             self.assertGreater(focus["size"][0] / poster_specs[0]["size"][0], 1.07)
-            self.assertLess(focus["size"][0] / poster_specs[0]["size"][0], 1.10)
+            self.assertLessEqual(focus["size"][0] / poster_specs[0]["size"][0], 1.12)
             self.assertEqual(focus["origin"][1], min(int(spec["origin"][1]) for spec in poster_specs))
             self.assertEqual(
                 [int(spec["origin"][1]) for spec in poster_specs],
@@ -279,6 +279,11 @@ class CoverStudioServiceTests(unittest.TestCase):
                 [float(spec["rotation"]) for spec in poster_specs],
                 [-float(spec["rotation"]) for spec in reversed(poster_specs)],
             )
+            if count == 7:
+                self.assertEqual(
+                    [float(spec["rotation"]) for spec in poster_specs],
+                    [-12.0, -8.0, -4.0, 0.0, 4.0, 8.0, 12.0],
+                )
             rendered_sizes = [
                 CoverStudioService._fan_spread_rendered_card_size(
                     tuple(spec["size"]),
@@ -298,8 +303,8 @@ class CoverStudioServiceTests(unittest.TestCase):
                     800,
                     delta=1,
                 )
-        self.assertEqual(layout["reflection_opacity"], 0.0)
-        self.assertEqual(layout["shelf_alpha"], 0)
+        self.assertGreater(layout["reflection_opacity"], 0.05)
+        self.assertGreater(layout["shelf_alpha"], 30)
 
     def test_normalize_cover_studio_config_clamps_sizes(self) -> None:
         config = normalize_cover_studio_config(

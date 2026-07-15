@@ -2006,16 +2006,23 @@ class CoverStudioService:
         ordering = sorted(range(spec_count), key=lambda idx: int(visible_specs[idx].get("elevation", 0)))
         for idx in ordering:
             spec = visible_specs[idx]
-            # Fan spread is a clean streaming shelf: a poster and its soft
-            # shadow only.  Do not add the showcase glow, white sheen, glass
-            # frame, or reflected duplicate behind the artwork.
+            # Fan spread keeps the artwork direct on the stage: no white
+            # frame or glass card, only a soft shadow and a restrained floor
+            # reflection below the poster group.
             card = self._create_poster_card(
                 visible_images[idx],
                 size=tuple(spec["size"]),
                 rotation=float(spec.get("rotation", 0.0)) * rotation_scale,
                 radius=int(spec.get("radius", 24)),
             )
-            self._alpha_paste(canvas, card, tuple(spec["origin"]))
+            self._paste_with_reflection(
+                canvas,
+                card,
+                tuple(spec["origin"]),
+                opacity=float(layout.get("reflection_opacity", 0.0)),
+                blur_radius=12,
+                scale=float(layout.get("reflection_scale", 0.0)),
+            )
 
     @staticmethod
     def _build_fan_spread_poster_specs(
@@ -2024,37 +2031,55 @@ class CoverStudioService:
         count: int,
         layout: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Lay cards on one symmetric fan arc and use the available Primary width."""
+        """Build a mirrored fan around one focused center poster.
+
+        Cards are positioned from a shared center hinge and pasted from the
+        outer leaves inward. This deliberately avoids the "wave row" effect:
+        the central card is foremost, while every left/right pair keeps the
+        same distance, size, drop and opposing angle.
+        """
         width, height = canvas_size
-        safe_count = max(1, int(count))
+        safe_count = max(1, min(int(count), int(layout.get("poster_limit", 7))))
         inset = int(layout.get("horizontal_inset", 50))
         aspect_ratio = float(layout.get("poster_aspect_ratio", 0.633))
         min_height = int(layout.get("min_poster_height", 360))
         max_height = int(layout.get("max_poster_height", 612))
+        overlap_ratio = max(0.08, min(0.12, float(layout.get("poster_overlap_ratio", 0.10))))
+        focus_scale = max(1.08, min(1.12, float(layout.get("focus_scale", 1.10))))
+        usable_width = max(1, width - inset * 2)
 
-        # Fewer cards grow taller; all counts still use the same full-width fan.
-        height_ratio = max(0.40, min(0.68, 0.94 - safe_count * 0.077))
-        card_height = max(min_height, min(max_height, int(height * height_ratio)))
+        # Solve poster width from the available Primary span first. This keeps
+        # 3/5/7 selections visually full without forcing the cards to overlap
+        # beyond their outer edges.
+        span_units = safe_count - overlap_ratio * max(0, safe_count - 1)
+        if safe_count % 2:
+            span_units += focus_scale - 1.0
+        max_width_by_span = usable_width / max(1.0, span_units)
+        preferred_height_ratio = {1: 0.67, 3: 0.65, 5: 0.55, 7: 0.47}.get(safe_count, 0.47)
+        preferred_width = height * preferred_height_ratio * aspect_ratio
+        card_width = max(1, int(min(max_width_by_span, preferred_width)))
+        card_height = max(min_height, min(max_height, int(card_width / aspect_ratio)))
         card_width = max(1, int(card_height * aspect_ratio))
         center_index = safe_count // 2
         card_widths = [card_width] * safe_count
         if safe_count % 2:
-            card_widths[center_index] = int(round(card_width * 1.08))
+            card_widths[center_index] = int(round(card_width * focus_scale))
         elif safe_count > 1:
             card_widths[center_index - 1] = int(round(card_width * 1.04))
             card_widths[center_index] = int(round(card_width * 1.04))
 
-        outer_y = int(height * (0.30 + 0.039 * max(0, safe_count - 3)))
-        arc_lift = int(height * (0.10 + 0.011 * safe_count))
-        max_rotation = 8.0 + safe_count * 0.85
-        rotations = [
-            round((0.0 if safe_count == 1 else (index / (safe_count - 1)) * 2.0 - 1.0) * max_rotation, 2)
-            for index in range(safe_count)
-        ]
+        if safe_count == 7:
+            rotations = [-12.0, -8.0, -4.0, 0.0, 4.0, 8.0, 12.0]
+        else:
+            outer_angle = 8.0 if safe_count <= 3 else 10.0
+            rotations = [
+                round((0.0 if safe_count == 1 else (index / (safe_count - 1)) * 2.0 - 1.0) * outer_angle, 2)
+                for index in range(safe_count)
+            ]
         card_sizes: list[tuple[int, int]] = []
         for index, card_width_value in enumerate(card_widths):
             is_focus = index == center_index if safe_count % 2 else index in {center_index - 1, center_index}
-            card_sizes.append((card_width_value, card_height if not is_focus else int(round(card_height * 1.08))))
+            card_sizes.append((card_width_value, card_height if not is_focus else int(round(card_height * focus_scale))))
 
         # Image.rotate(expand=True) grows the outer canvas. Position against that
         # rendered size, rather than an unrotated poster width, so both halves
@@ -2063,24 +2088,27 @@ class CoverStudioService:
             CoverStudioService._fan_spread_rendered_card_size(size, rotation)
             for size, rotation in zip(card_sizes, rotations)
         ]
-        outer_rendered_width = max(rendered_sizes[0][0], rendered_sizes[-1][0])
-        center_start = inset + outer_rendered_width / 2
-        center_end = width - inset - outer_rendered_width / 2
+        # Each leaf advances by only 90% of the regular card width. The result
+        # is an intentional 8-12% edge overlap, not a crowded card stack.
+        center_step = card_width * (1.0 - overlap_ratio)
+        center_y = int(height * 0.255)
+        fan_drop = int(height * float(layout.get("fan_drop_ratio", 0.095)))
+        half_span = max(1, safe_count // 2)
 
         specs: list[dict[str, Any]] = []
         for index, (card_size, rotation, rendered_size) in enumerate(zip(card_sizes, rotations, rendered_sizes)):
-            normalized = 0.0 if safe_count == 1 else (index / (safe_count - 1)) * 2.0 - 1.0
-            arc_progress = 1.0 - normalized * normalized
-            card_y = int(round(outer_y - arc_lift * arc_progress))
+            distance = abs(index - center_index)
+            normalized_distance = distance / half_span
+            card_y = int(round(center_y + fan_drop * normalized_distance**1.35))
             is_focus = index == center_index if safe_count % 2 else index in {center_index - 1, center_index}
-            visual_center_x = width / 2 if safe_count == 1 else center_start + (center_end - center_start) * index / (safe_count - 1)
+            visual_center_x = width / 2 + (index - center_index) * center_step
             specs.append(
                 {
                     "origin": (int(round(visual_center_x - rendered_size[0] / 2)), card_y),
                     "size": card_size,
                     "rotation": rotation,
                     "radius": 30 if is_focus else 27,
-                    "elevation": 7 if is_focus else 1 + int(round((1.0 - abs(normalized)) * 2)),
+                    "elevation": 8 if is_focus else max(1, half_span + 1 - distance),
                 }
             )
         return specs
