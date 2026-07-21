@@ -222,6 +222,44 @@ class PlaybackNotificationEventFactory:
                 continue
         return fallback
 
+    @staticmethod
+    def _pick_item_overview(item: dict[str, Any] | None) -> str:
+        """Read synopsis fields from the current item, not a parent series."""
+        if not isinstance(item, dict):
+            return ""
+        for key in ("Overview", "ShortOverview", "Description"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def _resolve_playback_overview(
+        self,
+        *,
+        content_type: str,
+        fetched_item_detail: dict[str, Any],
+        session_now_playing_item: dict[str, Any],
+        payload_now_playing_item: dict[str, Any],
+        payload_item: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> str:
+        """Use the movie or episode being played; never borrow series text for an episode."""
+        for source in (
+            fetched_item_detail,
+            session_now_playing_item,
+            payload_now_playing_item,
+            payload_item,
+        ):
+            overview = self._pick_item_overview(source)
+            if overview:
+                return overview
+
+        # Top-level Overview is not reliable for episode webhooks: Emby may
+        # populate it with the series synopsis. It is safe for movie playback.
+        if content_type != "剧集":
+            return self._pick_item_overview(payload)
+        return ""
+
     def build(
         self,
         payload: dict[str, Any],
@@ -249,12 +287,13 @@ class PlaybackNotificationEventFactory:
             payload = merged_payload
 
         item_id = self._extract_item_id(payload)
-        item_detail = self._fetch_item_detail(emby_config=emby_config, item_id=item_id)
+        fetched_item_detail = self._fetch_item_detail(emby_config=emby_config, item_id=item_id)
+        item_detail = dict(fetched_item_detail or {})
         now_playing_item = session_detail.get("NowPlayingItem") if isinstance(session_detail.get("NowPlayingItem"), dict) else {}
-        payload_item = payload.get("NowPlayingItem") if isinstance(payload.get("NowPlayingItem"), dict) else {}
-        if not payload_item and isinstance(payload.get("Item"), dict):
-            payload_item = dict(payload.get("Item") or {})
+        payload_now_playing_item = payload.get("NowPlayingItem") if isinstance(payload.get("NowPlayingItem"), dict) else {}
+        payload_item = payload.get("Item") if isinstance(payload.get("Item"), dict) else {}
         item_detail = self._merge_playback_detail(item_detail, now_playing_item)
+        item_detail = self._merge_playback_detail(item_detail, payload_now_playing_item)
         item_detail = self._merge_playback_detail(item_detail, payload_item)
         if item_id and not str(item_detail.get("Id") or "").strip():
             item_detail["Id"] = item_id
@@ -366,10 +405,13 @@ class PlaybackNotificationEventFactory:
             percent = f"{int(round(ratio * 100))}%"
 
         device_name = self._build_playback_device_display(payload)
-        overview = (
-            str(item_detail.get("Overview") or "").strip()
-            or self._pick_first_value(payload, [("Overview",), ("overview",), ("Item", "Overview"), ("item", "overview")])
-            or ""
+        overview = self._resolve_playback_overview(
+            content_type=content_type,
+            fetched_item_detail=fetched_item_detail,
+            session_now_playing_item=now_playing_item,
+            payload_now_playing_item=payload_now_playing_item,
+            payload_item=payload_item,
+            payload=payload,
         )
 
         poster_url, detail_url = self._build_item_urls(emby_config=emby_config, item_id=item_id)

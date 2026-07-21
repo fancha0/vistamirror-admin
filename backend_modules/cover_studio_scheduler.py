@@ -146,7 +146,7 @@ class CoverStudioScheduler:
             preview = self.cover_service.generate_preview(
                 view=target,
                 items=service.fetch_view_items(view_id=browse_view_id, pick_mode=str(template.get("pickMode") or "random")),
-                template_key=str(template.get("templateKey") or "fan_spread"),
+                template_key=str(template.get("templateKey") or "banner_showcase"),
                 font_key=normalize_cover_studio_font_key(template.get("fontKey")),
                 title_text=str(template.get("titleText") or "").strip() or view_name,
                 subtitle_text=str(template.get("subtitleText") or "").strip(),

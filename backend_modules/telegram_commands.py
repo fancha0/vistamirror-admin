@@ -20,6 +20,7 @@ from typing import Any, Callable, Union
 from .ai_agent_service import AIAgentService
 from .ai_chat_service import AIChatService
 from .ai_assistant import normalize_ai_config
+from .moviepilot_config import default_moviepilot_config, normalize_moviepilot_config
 from .ai_conversation_store import AiConversationStore
 from .ai_media_host import AIMediaHost
 from .ai_missing_episode_support import is_missing_episode_meta_question
@@ -84,6 +85,7 @@ def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
             "botConfig": sync_notification_config_to_bot_config(notification_config, normalize_bot_config({})),
             "notificationConfig": notification_config,
             "aiConfig": normalize_ai_config({}),
+            "moviePilotConfig": default_moviepilot_config(),
             "drive115Config": default_drive115_config(),
             "hdhiveConfig": default_hdhive_config(),
             "libraryDirectoryConfig": {},
@@ -100,6 +102,7 @@ def _read_store(store_path: pathlib.Path) -> dict[str, Any]:
         "botConfig": normalize_bot_config(data.get("botConfig")),
         "notificationConfig": normalize_notification_config(data.get("notificationConfig"), legacy_bot_config=data.get("botConfig")),
         "aiConfig": normalize_ai_config(data.get("aiConfig")),
+        "moviePilotConfig": normalize_moviepilot_config(data.get("moviePilotConfig")),
         "drive115Config": normalize_drive115_config(data.get("drive115Config")),
         "hdhiveConfig": normalize_hdhive_config(data.get("hdhiveConfig")),
         "libraryDirectoryConfig": data.get("libraryDirectoryConfig") if isinstance(data.get("libraryDirectoryConfig"), dict) else {},

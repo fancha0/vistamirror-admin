@@ -374,7 +374,7 @@ class Stage1ApiHandlerTests(unittest.TestCase):
             {
                 "viewIds": ["uv-1", "uv-2"],
                 "titleText": "国产动漫",
-                "templateKey": "fan_spread",
+                "templateKey": "banner_showcase",
             }
         )
 
@@ -425,7 +425,7 @@ class Stage1ApiHandlerTests(unittest.TestCase):
         self.assertEqual(stub_cover_service.title_calls, [("uv-1", "国产动漫"), ("uv-2", "华语剧集")])
 
     def test_cover_studio_preview_only_does_not_overwrite_manual_draft(self) -> None:
-        handler = _DummyHandler({"viewId": "uv-1", "previewOnly": True, "templateKey": "fan_spread"})
+        handler = _DummyHandler({"viewId": "uv-1", "previewOnly": True, "templateKey": "banner_showcase"})
         stored_config = dev_server._default_cover_studio_config()
         stored_config["draft"]["titleText"] = "手动封面标题"
         writes = []

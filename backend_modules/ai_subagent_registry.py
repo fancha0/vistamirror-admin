@@ -44,6 +44,8 @@ class AISubagentRegistry:
         lowered = text.lower()
         if self._matches_resource_operator(text, lowered):
             return self.get("resource-operator")
+        if self._matches_moviepilot_operator(text, lowered):
+            return self.get("moviepilot-operator")
         if self._matches_playback_analyst(text, lowered):
             return self.get("playback-analyst")
         if self._matches_media_librarian(text, lowered):
@@ -74,4 +76,11 @@ class AISubagentRegistry:
             or "115cdn" in lowered
             or "anxia.com" in lowered
             or "115.com/s/" in lowered
+        )
+
+    @staticmethod
+    def _matches_moviepilot_operator(text: str, lowered: str) -> bool:
+        return bool(
+            re.search(r"moviepilot|媒体订阅|订阅列表|下载任务|任务队列|mp订阅|mp任务", text, flags=re.IGNORECASE)
+            or "movie-pilot" in lowered
         )

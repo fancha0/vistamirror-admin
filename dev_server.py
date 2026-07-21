@@ -49,6 +49,16 @@ from backend_modules.ai_assistant import (
     normalize_ai_config as module_normalize_ai_config,
     validate_ai_config as module_validate_ai_config,
 )
+from backend_modules.moviepilot_config import (
+    apply_moviepilot_env_overrides as module_apply_moviepilot_env_overrides,
+    default_moviepilot_config as module_default_moviepilot_config,
+    env_managed_moviepilot_fields,
+    merge_moviepilot_config_for_save,
+    normalize_moviepilot_config as module_normalize_moviepilot_config,
+    public_moviepilot_config,
+    validate_moviepilot_config as module_validate_moviepilot_config,
+)
+from backend_modules.moviepilot_service_adapter import MoviePilotServiceAdapter, MoviePilotServiceError
 from backend_modules.drive115_service import (
     Drive115Service,
     apply_drive115_env_overrides,
@@ -160,6 +170,16 @@ PLAYBACK_EVENT_LOG_FILE = DATA_DIR / "playback_events.jsonl"
 PROJECT_EVENT_LOG_FILE = DATA_DIR / "project_events.jsonl"
 PROJECT_EVENT_STATE_FILE = DATA_DIR / ".project_events_state.json"
 MISSING_SCAN_CACHE_FILE = DATA_DIR / "missing_scan.json"
+MISSING_SCAN_STATE_LOCK = threading.Lock()
+MISSING_SCAN_STATE: dict[str, Any] = {
+    "running": False,
+    "startedAt": "",
+    "finishedAt": "",
+    "error": "",
+    "progress": {"phase": "idle", "completed": 0, "total": 0, "currentTitle": ""},
+    "summary": {},
+    "warnings": [],
+}
 DEFAULT_WEBHOOK_TOKEN = "vistamirror"
 PUBLIC_BASE_ENV_NAMES = ("VISTAMIRROR_PUBLIC_BASE_URL", "BOT_PUBLIC_BASE_URL")
 LAST_WEBHOOK_STATE: dict[str, Any] = {
@@ -168,6 +188,24 @@ LAST_WEBHOOK_STATE: dict[str, Any] = {
     "lastPlaybackReceivedAt": "",
     "lastPlaybackProcessed": None,
 }
+
+
+def _missing_scan_state_snapshot() -> dict[str, Any]:
+    with MISSING_SCAN_STATE_LOCK:
+        return copy.deepcopy(MISSING_SCAN_STATE)
+
+
+def _update_missing_scan_state(**changes: Any) -> dict[str, Any]:
+    with MISSING_SCAN_STATE_LOCK:
+        for key, value in changes.items():
+            if key == "progress" and isinstance(value, dict):
+                current = MISSING_SCAN_STATE.get("progress")
+                merged = dict(current) if isinstance(current, dict) else {}
+                merged.update(value)
+                MISSING_SCAN_STATE[key] = merged
+            else:
+                MISSING_SCAN_STATE[key] = value
+        return copy.deepcopy(MISSING_SCAN_STATE)
 RECENT_WEBHOOK_EVENTS: dict[str, float] = {}
 ANNUAL_RANKING_MEMORY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ANNUAL_RANKING_REDIS_URL = str(os.environ.get("REDIS_URL") or "").strip()
@@ -616,6 +654,10 @@ def _default_ai_config() -> dict[str, Any]:
     return module_default_ai_config()
 
 
+def _default_moviepilot_config() -> dict[str, Any]:
+    return module_default_moviepilot_config()
+
+
 def _default_cover_studio_config() -> dict[str, Any]:
     return module_default_cover_studio_config()
 
@@ -634,6 +676,10 @@ def _normalize_bot_config(raw: Any) -> dict[str, Any]:
 
 def _normalize_ai_config(raw: Any) -> dict[str, Any]:
     return module_normalize_ai_config(raw)
+
+
+def _normalize_moviepilot_config(raw: Any) -> dict[str, Any]:
+    return module_normalize_moviepilot_config(raw)
 
 
 def _normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
@@ -712,6 +758,10 @@ def _validate_ai_config(raw: Any) -> tuple[dict[str, Any] | None, str | None]:
     return module_validate_ai_config(raw)
 
 
+def _validate_moviepilot_config(raw: Any) -> tuple[dict[str, Any], str]:
+    return module_validate_moviepilot_config(raw)
+
+
 def _validate_notification_config(raw: Any, *, legacy_bot_config: Any = None) -> tuple[dict[str, Any] | None, str | None]:
     return module_validate_notification_config(raw, legacy_bot_config=legacy_bot_config)
 
@@ -738,6 +788,10 @@ def _env_managed_bot_fields() -> list[str]:
 
 def _env_managed_ai_fields() -> list[str]:
     return env_managed_ai_fields()
+
+
+def _env_managed_moviepilot_fields() -> list[str]:
+    return env_managed_moviepilot_fields()
 
 
 def _env_managed_drive115_fields() -> list[str]:
@@ -916,6 +970,10 @@ def _apply_ai_env_overrides(raw: Any) -> dict[str, Any]:
     return apply_ai_env_overrides(raw)
 
 
+def _apply_moviepilot_env_overrides(raw: Any) -> dict[str, Any]:
+    return module_apply_moviepilot_env_overrides(raw)
+
+
 def _default_drive115_config() -> dict[str, Any]:
     return module_default_drive115_config()
 
@@ -933,6 +991,7 @@ def _env_controlled_fields_payload() -> dict[str, list[str]]:
         "embyConfig": _env_managed_emby_fields(),
         "botConfig": _env_managed_bot_fields(),
         "notificationConfig": _notification_env_controlled_fields(),
+        "moviePilotConfig": _env_managed_moviepilot_fields(),
         "aiConfig": _env_managed_ai_fields(),
         "drive115Config": _env_managed_drive115_fields(),
         "hdhiveConfig": _env_managed_hdhive_fields(),
@@ -1036,6 +1095,7 @@ def _read_store_unlocked() -> dict[str, Any]:
             default_notification_config=_default_notification_config,
             default_bot_config=_default_bot_config,
             default_ai_config=_default_ai_config,
+            default_moviepilot_config=_default_moviepilot_config,
             default_cover_studio_config=_default_cover_studio_config,
             default_drive115_config=_default_drive115_config,
             default_hdhive_config=_default_hdhive_config,
@@ -1050,6 +1110,7 @@ def _read_store_unlocked() -> dict[str, Any]:
         normalize_notification_config=_normalize_notification_config,
         sync_notification_config_to_bot_config=sync_notification_config_to_bot_config,
         normalize_ai_config=_normalize_ai_config,
+        normalize_moviepilot_config=_normalize_moviepilot_config,
         normalize_cover_studio_config=_normalize_cover_studio_config,
         normalize_drive115_config=_normalize_drive115_config,
         normalize_hdhive_config=_normalize_hdhive_config,
@@ -1242,6 +1303,12 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/ai/config":
             self._handle_ai_config_get()
             return
+        if path == "/api/moviepilot/config":
+            self._handle_moviepilot_config_get()
+            return
+        if path == "/api/moviepilot/capabilities":
+            self._handle_moviepilot_capabilities()
+            return
         if path == "/api/cover-studio/config":
             self._handle_cover_studio_config_get()
             return
@@ -1296,6 +1363,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/missing/list":
             self._handle_missing_list_query(parsed.query)
             return
+        if path == "/api/missing/scan/status":
+            self._handle_missing_scan_status()
+            return
         if path.startswith("/api/emby"):
             self._proxy_emby()
             return
@@ -1343,6 +1413,30 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/ai/config":
             self._handle_ai_config_save()
+            return
+        if path == "/api/moviepilot/config":
+            self._handle_moviepilot_config_save()
+            return
+        if path == "/api/moviepilot/test":
+            self._handle_moviepilot_config_test()
+            return
+        if path == "/api/moviepilot/search":
+            self._handle_moviepilot_search()
+            return
+        if path == "/api/moviepilot/explore":
+            self._handle_moviepilot_explore()
+            return
+        if path == "/api/moviepilot/detail":
+            self._handle_moviepilot_detail()
+            return
+        if path == "/api/moviepilot/tool":
+            self._handle_moviepilot_tool()
+            return
+        if path == "/api/moviepilot/resources/search":
+            self._handle_moviepilot_resource_search()
+            return
+        if path == "/api/moviepilot/resources/download":
+            self._handle_moviepilot_resource_download()
             return
         if path == "/api/cover-studio/config":
             self._handle_cover_studio_config_save()
@@ -1690,6 +1784,21 @@ class AppHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "缺少 TMDB Token，请先在系统设置里填写并保存。"})
             return
 
+        scan_limit = max(20, min(5000, scan_limit))
+        if _missing_scan_state_snapshot().get("running"):
+            self._send_json(202, {"ok": True, "accepted": False, "status": _missing_scan_state_snapshot()})
+            return
+
+        started_at = datetime.now().isoformat(timespec="seconds")
+        _update_missing_scan_state(
+            running=True,
+            startedAt=started_at,
+            finishedAt="",
+            error="",
+            progress={"phase": "starting", "completed": 0, "total": 0, "currentTitle": ""},
+            summary={},
+            warnings=[],
+        )
         self._log_event(
             level="info",
             module="system",
@@ -1704,8 +1813,22 @@ class AppHandler(SimpleHTTPRequestHandler):
             tmdb_language=tmdb_language,
             tmdb_region=tmdb_region,
         )
+
+        worker = threading.Thread(
+            target=self._run_missing_scan_job,
+            kwargs={"service": service, "scan_limit": scan_limit},
+            name="missing-episode-scan",
+            daemon=True,
+        )
+        worker.start()
+        self._send_json(202, {"ok": True, "accepted": True, "status": _missing_scan_state_snapshot()})
+
+    def _run_missing_scan_job(self, *, service: MissingEpisodeService, scan_limit: int) -> None:
+        def update_progress(progress: dict[str, Any]) -> None:
+            _update_missing_scan_state(progress=progress)
+
         try:
-            result = service.scan(scan_limit=scan_limit)
+            result = service.scan(scan_limit=scan_limit, progress_callback=update_progress)
         except urllib.error.HTTPError as err:
             raw_detail = err.read().decode("utf-8", errors="replace")
             detail = {"status": err.code, "error": raw_detail[:300], "scanLimit": scan_limit}
@@ -1717,7 +1840,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                 status=502,
                 detail=detail,
             )
-            self._send_json(502, {"ok": False, "error": "缺集巡检失败：上游请求异常。", "detail": detail})
+            _update_missing_scan_state(
+                running=False,
+                finishedAt=datetime.now().isoformat(timespec="seconds"),
+                error="缺集巡检失败：上游请求异常。",
+                progress={"phase": "failed"},
+                warnings=["缺集巡检失败：上游请求异常。"],
+            )
             return
         except Exception as err:
             detail = {"error": str(err)[:300], "scanLimit": scan_limit}
@@ -1729,7 +1858,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                 status=502,
                 detail=detail,
             )
-            self._send_json(502, {"ok": False, "error": "缺集巡检失败，请检查 Emby/TMDB 配置。", "detail": detail})
+            _update_missing_scan_state(
+                running=False,
+                finishedAt=datetime.now().isoformat(timespec="seconds"),
+                error="缺集巡检失败，请检查 Emby/TMDB 配置。",
+                progress={"phase": "failed"},
+                warnings=["缺集巡检失败，请检查 Emby/TMDB 配置。"],
+            )
             return
 
         output = {
@@ -1741,10 +1876,23 @@ class AppHandler(SimpleHTTPRequestHandler):
         }
         try:
             MISSING_SCAN_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            MISSING_SCAN_CACHE_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception:
-            # 缓存写入失败不阻断接口返回
-            pass
+            # Keep the previous complete result readable while a new scan is
+            # being committed, so a browser refresh never observes a partial
+            # JSON file and falls back to the empty state.
+            temporary_cache = MISSING_SCAN_CACHE_FILE.with_suffix(".json.tmp")
+            temporary_cache.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary_cache.replace(MISSING_SCAN_CACHE_FILE)
+        except Exception as err:
+            # Cache failures must not block the completed scan response, but
+            # record them because the next page refresh cannot restore results.
+            self._log_event(
+                level="error",
+                module="system",
+                action="missing_scan_cache_write_failed",
+                message="缺集巡检结果缓存保存失败。",
+                status=500,
+                detail={"error": str(err)[:300]},
+            )
 
         summary = output.get("summary") if isinstance(output, dict) else {}
         self._log_event(
@@ -1761,7 +1909,17 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "unknownMatchCount": summary.get("unknownMatchCount"),
             },
         )
-        self._send_json(200, output)
+        _update_missing_scan_state(
+            running=False,
+            finishedAt=datetime.now().isoformat(timespec="seconds"),
+            error="",
+            progress={"phase": "completed", "currentTitle": ""},
+            summary=summary if isinstance(summary, dict) else {},
+            warnings=output.get("warnings") if isinstance(output.get("warnings"), list) else [],
+        )
+
+    def _handle_missing_scan_status(self) -> None:
+        self._send_json(200, {"ok": True, "status": _missing_scan_state_snapshot()})
 
     def _handle_missing_list_query(self, raw_query: str) -> None:
         params = urllib.parse.parse_qs(raw_query or "")
@@ -1779,6 +1937,13 @@ class AppHandler(SimpleHTTPRequestHandler):
         rows = payload.get("rows") if isinstance(payload, dict) else []
         if not isinstance(rows, list):
             rows = []
+        debug = payload.get("debug") if isinstance(payload, dict) and isinstance(payload.get("debug"), dict) else {}
+        # The old scanner used the registered episode total and could turn
+        # future episodes into missing ones. Never render its persisted rows as
+        # a current result: a user must run the strict TMDB-aired scan once.
+        stale_cache = bool(rows) and str(debug.get("calculation") or "") != "shared_strict_ai_result"
+        if stale_cache:
+            rows = []
         filtered: list[dict[str, Any]] = []
         season_filter = 0
         if season_filter_raw:
@@ -1792,15 +1957,27 @@ class AppHandler(SimpleHTTPRequestHandler):
                 continue
             status = str(row.get("status") or "").strip().lower()
             series_name = str(row.get("seriesName") or "").strip()
-            season_no = int(row.get("seasonNo") or 0)
-            missing_episodes = row.get("missingEpisodes")
-            missing_text = ",".join(str(item) for item in missing_episodes) if isinstance(missing_episodes, list) else ""
+            season_rows = row.get("seasonRows") if isinstance(row.get("seasonRows"), list) else []
+            season_numbers = {
+                int(item.get("seasonNo") or 0)
+                for item in season_rows
+                if isinstance(item, dict) and str(item.get("seasonNo") or "").strip()
+            }
+            # Backward-compatible with caches generated by the legacy
+            # per-season scanner while the new cache uses one row per series.
+            legacy_season_no = int(row.get("seasonNo") or 0)
+            if legacy_season_no > 0:
+                season_numbers.add(legacy_season_no)
+            missing_values = row.get("missingLabels") or row.get("missingEpisodes")
+            missing_text = ",".join(str(item) for item in missing_values) if isinstance(missing_values, list) else ""
+            future_values = row.get("futureLabels")
+            future_text = ",".join(str(item) for item in future_values) if isinstance(future_values, list) else ""
             reason_text = str(row.get("reason") or "").strip()
             if status_filter and status_filter != "all" and status != status_filter:
                 continue
             if series_filter and series_filter not in series_name.lower():
                 continue
-            if season_filter and season_no != season_filter:
+            if season_filter and season_filter not in season_numbers:
                 continue
             if keyword:
                 haystack = " ".join(
@@ -1810,6 +1987,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                         str(row.get("embySeriesId") or ""),
                         str(row.get("completeness") or ""),
                         missing_text,
+                        future_text,
                         reason_text,
                     ]
                 ).lower()
@@ -1819,7 +1997,8 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         summary = payload.get("summary") if isinstance(payload, dict) and isinstance(payload.get("summary"), dict) else {}
         warnings = payload.get("warnings") if isinstance(payload, dict) and isinstance(payload.get("warnings"), list) else []
-        debug = payload.get("debug") if isinstance(payload, dict) and isinstance(payload.get("debug"), dict) else {}
+        if stale_cache:
+            warnings = ["检测到旧版缺集巡检缓存，已隐藏以避免把未来未播集误报为缺集。请点击“立即巡检”生成严格结果。"] + warnings
         self._send_json(
             200,
             {
@@ -1829,6 +2008,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "total": len(filtered),
                 "warnings": warnings[:200],
                 "debug": debug,
+                "stale": stale_cache,
             },
         )
 
@@ -2602,6 +2782,407 @@ class AppHandler(SimpleHTTPRequestHandler):
             200,
             {"ok": True, "message": "AI 连接测试成功", "sample": self._shorten(answer, limit=80), "elapsedMs": elapsed_ms},
         )
+
+    def _handle_moviepilot_config_get(self) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            effective_config = _apply_moviepilot_env_overrides(store.get("moviePilotConfig"))
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "moviePilotConfig": public_moviepilot_config(effective_config),
+                "envControlledFields": _env_controlled_fields_payload(),
+            },
+        )
+
+    def _handle_moviepilot_config_save(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw_config = payload.get("moviePilotConfig") if isinstance(payload, dict) else payload
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            current_config = _normalize_moviepilot_config(store.get("moviePilotConfig"))
+            saved_config = merge_moviepilot_config_for_save(current_config, raw_config)
+            for field in _env_managed_moviepilot_fields():
+                saved_config[field] = current_config.get(field)
+            effective_config = _apply_moviepilot_env_overrides(saved_config)
+            validated_config, error = _validate_moviepilot_config(effective_config)
+            if error:
+                self._send_json(400, {"ok": False, "error": error})
+                return
+            store["moviePilotConfig"] = _normalize_moviepilot_config(saved_config)
+            _write_store_unlocked(store)
+
+        self._log_event(
+            level="info",
+            module="system",
+            action="moviepilot_config_saved",
+            message="MoviePilot 配置已保存。",
+            status=200,
+            detail={
+                "enabled": bool(validated_config.get("enabled")),
+                "baseUrl": str(validated_config.get("baseUrl") or ""),
+                "envControlledFields": _env_managed_moviepilot_fields(),
+            },
+        )
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "moviePilotConfig": public_moviepilot_config(validated_config),
+                "envControlledFields": _env_controlled_fields_payload(),
+            },
+        )
+
+    def _handle_moviepilot_config_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw_config = payload.get("moviePilotConfig") if isinstance(payload, dict) else payload
+        with STORE_LOCK:
+            saved_config = _read_store_unlocked().get("moviePilotConfig")
+        candidate = merge_moviepilot_config_for_save(saved_config, raw_config)
+        effective_config = _apply_moviepilot_env_overrides(candidate)
+        config, error = _validate_moviepilot_config(effective_config)
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        if not config.get("enabled"):
+            self._send_json(400, {"ok": False, "error": "请先启用 MoviePilot 后再测试连接。"})
+            return
+        try:
+            started = time.time()
+            result = MoviePilotServiceAdapter(config).capabilities()
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._log_event(
+                level="warning",
+                module="system",
+                action="moviepilot_config_test_failed",
+                message="MoviePilot 连接测试失败。",
+                status=502,
+                detail={"baseUrl": str(config.get("baseUrl") or ""), "error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+
+        self._log_event(
+            level="info",
+            module="system",
+            action="moviepilot_config_test_success",
+            message="MoviePilot 连接测试成功。",
+            status=200,
+            detail={
+                "baseUrl": str(config.get("baseUrl") or ""),
+                "toolCount": int(result.get("toolCount") or 0),
+                "readToolCount": int(result.get("readToolCount") or 0),
+                "elapsedMs": elapsed_ms,
+            },
+        )
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "message": "MoviePilot 连接成功，已读取 MCP 工具列表。",
+                "toolCount": int(result.get("toolCount") or 0),
+                "readToolCount": int(result.get("readToolCount") or 0),
+                "elapsedMs": elapsed_ms,
+            },
+        )
+
+    def _moviepilot_effective_config(self) -> tuple[dict[str, Any], str]:
+        with STORE_LOCK:
+            config = _apply_moviepilot_env_overrides(_read_store_unlocked().get("moviePilotConfig"))
+        if not config.get("enabled"):
+            return config, "MoviePilot 尚未启用，请先在 AI 配置中完成连接设置。"
+        _, error = _validate_moviepilot_config(config)
+        return config, error
+
+    def _handle_moviepilot_capabilities(self) -> None:
+        config, error = self._moviepilot_effective_config()
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        try:
+            capabilities = MoviePilotServiceAdapter(config).capabilities()
+        except MoviePilotServiceError as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        tools = capabilities.get("tools") if isinstance(capabilities.get("tools"), list) else []
+        self._send_json(200, {"ok": True, "tools": tools, "toolCount": len(tools), "readToolCount": sum(1 for tool in tools if isinstance(tool, dict) and tool.get("readOnly"))})
+
+    def _handle_moviepilot_tool(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        name = str(payload.get("tool") or "").strip()
+        arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+        if not name:
+            self._send_json(400, {"ok": False, "error": "请选择 MoviePilot 功能。"})
+            return
+        config, error = self._moviepilot_effective_config()
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        try:
+            adapter = MoviePilotServiceAdapter(config)
+            tool = next((row for row in adapter.discover_tools() if row.get("name") == name), None)
+            if not tool:
+                self._send_json(404, {"ok": False, "error": "MoviePilot 未暴露该功能，请刷新功能中心。"})
+                return
+            schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else {}
+            properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+            required = schema.get("required") if isinstance(schema.get("required"), list) else []
+            safe_arguments = {str(key): value for key, value in arguments.items() if str(key) in properties and value not in (None, "")}
+            missing = [str(key) for key in required if str(key) not in safe_arguments]
+            if missing:
+                self._send_json(400, {"ok": False, "error": "请填写必填参数：" + "、".join(missing)})
+                return
+            started = time.time()
+            result = adapter.invoke_named_tool(name, safe_arguments)
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        if not result.get("ok"):
+            self._send_json(502, {"ok": False, "error": str(result.get("message") or "MoviePilot 操作失败。")})
+            return
+        self._log_event(level="info", module="moviepilot", action="moviepilot_tool_invoked", message="MoviePilot 功能已执行。", status=200, detail={"tool": name, "readOnly": bool(result.get("readOnly")), "argumentNames": sorted(safe_arguments.keys()), "elapsedMs": elapsed_ms})
+        self._send_json(200, {"ok": True, "tool": name, "readOnly": bool(result.get("readOnly")), "result": MoviePilotServiceAdapter.public_result(result.get("result")), "elapsedMs": elapsed_ms})
+
+    def _handle_moviepilot_resource_search(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        tmdb_id = str(payload.get("tmdbId") or payload.get("tmdb_id") or "").strip()
+        media_type = str(payload.get("mediaType") or payload.get("media_type") or "").strip().lower()
+        if not tmdb_id.isdigit() or media_type not in {"movie", "tv", "anime"}:
+            self._send_json(400, {"ok": False, "error": "资源搜索需要影片的 TMDB ID 与类型。"})
+            return
+        try:
+            page = max(1, int(payload.get("page") or 1))
+        except (TypeError, ValueError):
+            self._send_json(400, {"ok": False, "error": "资源页码无效。"})
+            return
+        filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+        config, error = self._moviepilot_effective_config()
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        query_type = "tv" if media_type == "anime" else media_type
+        try:
+            started = time.time()
+            adapter = MoviePilotServiceAdapter(config)
+            refresh = adapter.invoke_named_tool("search_torrents", {"tmdb_id": int(tmdb_id), "media_type": query_type})
+            result_args = {"page": page}
+            for source_key, target_key in (("site", "site"), ("season", "season"), ("freeState", "free_state"), ("resolution", "resolution"), ("edition", "edition"), ("videoCode", "video_code"), ("releaseGroup", "release_group"), ("titlePattern", "title_pattern")):
+                value = filters.get(source_key)
+                if value not in (None, ""):
+                    result_args[target_key] = value
+            cached = adapter.invoke_named_tool("get_search_results", result_args)
+            if not cached.get("ok"):
+                self._send_json(502, {"ok": False, "error": str(cached.get("message") or "MoviePilot 未返回资源缓存。"), "searchError": str(refresh.get("message") or "")})
+                return
+            normalized = MoviePilotServiceAdapter.normalize_torrent_results(cached.get("result"), tmdb_id=tmdb_id)
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        refresh_error = str(refresh.get("message") or "") if not refresh.get("ok") else ""
+        self._log_event(level="info" if not refresh_error else "warning", module="moviepilot", action="moviepilot_resource_search", message="MoviePilot 资源搜索完成。" if not refresh_error else "MoviePilot 资源刷新失败，已返回缓存结果。", status=200, detail={"tmdbId": tmdb_id, "mediaType": query_type, "page": page, "resultCount": len(normalized["items"]), "refreshError": refresh_error, "elapsedMs": elapsed_ms})
+        self._send_json(200, {"ok": True, "refreshSucceeded": not bool(refresh_error), "searchError": refresh_error, "items": normalized["items"], "filters": normalized["filters"], "totalCount": normalized["totalCount"], "page": normalized["page"], "totalPages": normalized["totalPages"], "elapsedMs": elapsed_ms})
+
+    def _handle_moviepilot_resource_download(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        refs = payload.get("references") if isinstance(payload.get("references"), list) else []
+        refs = [str(value).strip() for value in refs if str(value).strip()][:50]
+        if not refs:
+            self._send_json(400, {"ok": False, "error": "请至少选择一个资源。"})
+            return
+        config, error = self._moviepilot_effective_config()
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        options = {key: payload.get(key) for key in ("downloader", "save_path", "labels") if payload.get(key) not in (None, "")}
+        adapter = MoviePilotServiceAdapter(config)
+        succeeded: list[str] = []
+        failed: list[dict[str, str]] = []
+        for reference in refs:
+            arguments = {"torrent_url": reference, **options}
+            result = adapter.invoke_named_tool("add_download_tasks", arguments)
+            if result.get("ok"):
+                succeeded.append(reference)
+            else:
+                failed.append({"reference": reference, "error": str(result.get("message") or "创建下载任务失败。")})
+        self._log_event(level="info" if not failed else "warning", module="moviepilot", action="moviepilot_resource_download", message="MoviePilot 下载任务已提交。", status=200, detail={"selectedCount": len(refs), "successCount": len(succeeded), "failedCount": len(failed), "downloader": str(options.get("downloader") or "")})
+        self._send_json(200, {"ok": True, "selectedCount": len(refs), "successCount": len(succeeded), "failed": failed})
+
+    def _handle_moviepilot_search(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        query = str(payload.get("query") or payload.get("keyword") or "").strip()
+        if not query:
+            self._send_json(400, {"ok": False, "error": "请输入要搜索的影视名称。"})
+            return
+        with STORE_LOCK:
+            config = _apply_moviepilot_env_overrides(_read_store_unlocked().get("moviePilotConfig"))
+        if not config.get("enabled"):
+            self._send_json(400, {"ok": False, "error": "MoviePilot 尚未启用，请先在 AI 配置中完成连接设置。"})
+            return
+        _, error = _validate_moviepilot_config(config)
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        try:
+            started = time.time()
+            result = MoviePilotServiceAdapter(config).query_search_tool(query)
+            if not result.get("ok"):
+                self._send_json(422, {"ok": False, "error": str(result.get("message") or "MoviePilot 未返回可用搜索结果。")})
+                return
+            items = MoviePilotServiceAdapter.normalize_search_results(result.get("result"))
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._log_event(
+                level="warning",
+                module="moviepilot",
+                action="moviepilot_search_failed",
+                message="MoviePilot 可视化搜索失败。",
+                status=502,
+                detail={"error": str(err)},
+            )
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(
+            level="info",
+            module="moviepilot",
+            action="moviepilot_search_completed",
+            message="MoviePilot 可视化搜索完成。",
+            status=200,
+            detail={"query": query, "tool": str(result.get("tool") or ""), "resultCount": len(items), "elapsedMs": elapsed_ms},
+        )
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "query": query,
+                "tool": str(result.get("tool") or ""),
+                "items": items,
+                "elapsedMs": elapsed_ms,
+            },
+        )
+
+    def _handle_moviepilot_explore(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        source = str(payload.get("source") or "tmdb_trending").strip()
+        media_type = str(payload.get("mediaType") or "all").strip().lower()
+        try:
+            page = max(1, min(1000, int(payload.get("page") or 1)))
+        except (TypeError, ValueError):
+            self._send_json(400, {"ok": False, "error": "探索页码无效。"})
+            return
+        allowed_sources = {
+            "tmdb_trending", "tmdb_movies", "tmdb_tvs", "douban_hot", "douban_movie_hot",
+            "douban_tv_hot", "douban_showing", "douban_movies", "douban_tvs",
+            "douban_movie_top250", "douban_tv_weekly_chinese", "douban_tv_weekly_global",
+            "douban_tv_animation", "bangumi_calendar",
+        }
+        if source not in allowed_sources or media_type not in {"all", "movie", "tv"}:
+            self._send_json(400, {"ok": False, "error": "探索筛选参数无效。"})
+            return
+        with STORE_LOCK:
+            config = _apply_moviepilot_env_overrides(_read_store_unlocked().get("moviePilotConfig"))
+        if not config.get("enabled"):
+            self._send_json(400, {"ok": False, "error": "MoviePilot 尚未启用，请先在 AI 配置中完成连接设置。"})
+            return
+        _, error = _validate_moviepilot_config(config)
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        try:
+            started = time.time()
+            result = MoviePilotServiceAdapter(config).get_recommendations(source, media_type=media_type, page=page)
+            items = MoviePilotServiceAdapter.normalize_search_results(result.get("result"))
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(level="info", module="moviepilot", action="moviepilot_explore_completed", message="MoviePilot 探索内容读取完成。", status=200, detail={"source": source, "mediaType": media_type, "page": page, "transport": result.get("transport"), "resultCount": len(items), "elapsedMs": elapsed_ms})
+        self._send_json(200, {"ok": True, "source": source, "mediaType": media_type, "page": page, "transport": result.get("transport"), "hasMore": len(items) >= 30, "items": items, "elapsedMs": elapsed_ms})
+
+    def _handle_moviepilot_detail(self) -> None:
+        """Read a single MoviePilot media record; no resource or subscription calls."""
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        tmdb_id = str(payload.get("tmdbId") or payload.get("tmdb_id") or "").strip()
+        media_type = str(payload.get("mediaType") or payload.get("media_type") or "").strip().lower()
+        if not tmdb_id.isdigit() or media_type not in {"movie", "tv", "anime"}:
+            self._send_json(400, {"ok": False, "error": "影视详情参数无效。"})
+            return
+        with STORE_LOCK:
+            config = _apply_moviepilot_env_overrides(_read_store_unlocked().get("moviePilotConfig"))
+        if not config.get("enabled"):
+            self._send_json(400, {"ok": False, "error": "MoviePilot 尚未启用，请先在 AI 配置中完成连接设置。"})
+            return
+        _, error = _validate_moviepilot_config(config)
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        query_type = "tv" if media_type == "anime" else media_type
+        fallback = {"tmdbId": tmdb_id, "mediaType": media_type, "title": str(payload.get("title") or "")}
+        try:
+            started = time.time()
+            adapter = MoviePilotServiceAdapter(config)
+            detail_result = adapter.query_named_read_tool("query_media_detail", {"tmdb_id": int(tmdb_id), "media_type": query_type})
+            library_result = adapter.query_named_read_tool("query_library_exists", {"tmdb_id": int(tmdb_id), "media_type": query_type})
+            detail = MoviePilotServiceAdapter.normalize_media_detail(detail_result.get("result"), fallback)
+            tmdb_payload = self._moviepilot_tmdb_detail(tmdb_id, query_type)
+            if tmdb_payload:
+                tmdb_detail = MoviePilotServiceAdapter.normalize_tmdb_media_detail(tmdb_payload, media_type=query_type)
+                detail = MoviePilotServiceAdapter.merge_media_details(detail, tmdb_detail)
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._log_event(level="warning", module="moviepilot", action="moviepilot_detail_failed", message="MoviePilot 媒体详情读取失败。", status=502, detail={"error": str(err)})
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(level="info", module="moviepilot", action="moviepilot_detail_completed", message="MoviePilot 媒体详情读取完成。", status=200, detail={"tmdbId": tmdb_id, "mediaType": query_type, "detailTool": detail_result.get("tool"), "libraryTool": library_result.get("tool") if library_result.get("ok") else "", "tmdbEnriched": bool(tmdb_payload), "elapsedMs": elapsed_ms})
+        self._send_json(200, {"ok": True, "readOnly": True, "detail": detail, "libraryChecked": bool(library_result.get("ok")), "tmdbEnriched": bool(tmdb_payload), "elapsedMs": elapsed_ms})
+
+    def _moviepilot_tmdb_detail(self, tmdb_id: str, media_type: str) -> dict[str, Any] | None:
+        """Fetch configured TMDB metadata for the in-app MoviePilot detail view.
+
+        Metadata enrichment is intentionally best-effort: a transient TMDB
+        failure never prevents MoviePilot details or download actions.
+        """
+        with STORE_LOCK:
+            config = _apply_emby_env_overrides(_read_store_unlocked().get("embyConfig"))
+        token = str(config.get("tmdbToken") or "").strip()
+        if not bool(config.get("tmdbEnabled")) or not token:
+            return None
+        endpoint = "tv" if media_type == "tv" else "movie"
+        params = urllib.parse.urlencode({
+            "language": str(config.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN",
+            "append_to_response": "credits,external_ids",
+        })
+        request = urllib.request.Request(
+            f"https://api.themoviedb.org/3/{endpoint}/{int(tmdb_id)}?{params}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                data = json.loads(response.read().decode("utf-8", errors="replace"))
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as exc:
+            self._log_event(level="warning", module="moviepilot", action="moviepilot_tmdb_detail_failed", message="TMDB 详情补全失败，已保留 MoviePilot 数据。", status=502, detail={"tmdbId": tmdb_id, "error": str(exc)[:180]})
+            return None
+        return data if isinstance(data, dict) else None
 
     def _build_emby_cover_service(self, config: dict[str, Any]) -> EmbyCoverService:
         return _build_cover_emby_service(config)
@@ -3741,14 +4322,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         return self._pick_first_value(
             payload,
             [
-                ("ItemId",),
-                ("itemId",),
-                ("Item", "Id"),
-                ("item", "id"),
                 ("NowPlayingItem", "Id"),
                 ("nowPlayingItem", "id"),
                 ("Session", "NowPlayingItem", "Id"),
                 ("session", "nowPlayingItem", "id"),
+                ("Item", "Id"),
+                ("item", "id"),
+                ("ItemId",),
+                ("itemId",),
             ],
         )
 

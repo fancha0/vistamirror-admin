@@ -24,7 +24,6 @@ from backend_modules.cover_studio_service import (
 from backend_modules.cover_studio_scheduler import CoverStudioScheduler, cron_matches
 from backend_modules.cover_studio_template_specs import (
     get_cinematic_showcase_variant,
-    get_fan_spread_layout,
     get_primary_layout_variant,
 )
 
@@ -192,12 +191,14 @@ class CoverStudioServiceTests(unittest.TestCase):
     def test_cover_studio_modes_include_new_showcase_templates(self) -> None:
         keys = {mode["key"] for mode in cover_studio_modes()}
 
-        self.assertIn("fan_spread", keys)
+        self.assertNotIn("fan_spread", keys)
+        self.assertNotIn("fan_poster_cover", keys)
         self.assertIn("banner_showcase", keys)
         self.assertIn("hero_showcase", keys)
         self.assertIn("gallery_wall_showcase", keys)
         self.assertIn("immersive_stage", keys)
         self.assertIn("bookshelf_gallery", keys)
+        self.assertIn("bookshelf_gallery_2", keys)
         self.assertIn("honeycomb_hex", keys)
         self.assertIn("panorama_gallery", keys)
         self.assertNotIn("stack_classic", keys)
@@ -209,6 +210,7 @@ class CoverStudioServiceTests(unittest.TestCase):
     def test_primary_layout_templates_are_primary_only_and_renderable(self) -> None:
         expected_variants = {
             "bookshelf_gallery": "bookshelf",
+            "bookshelf_gallery_2": "bookshelf_two",
             "honeycomb_hex": "honeycomb",
             "panorama_gallery": "panorama",
         }
@@ -239,6 +241,37 @@ class CoverStudioServiceTests(unittest.TestCase):
                 )
                 self.assertEqual(canvas.size, (1600, 900))
 
+    def test_panoramic_gallery_slots_are_mirrored_and_keep_a_center_focus(self) -> None:
+        slots = CoverStudioService._panoramic_gallery_slots(count=7)
+
+        self.assertEqual([slot["rotation"] for slot in slots], [0.0] * 7)
+        self.assertEqual([slot["scale"] for slot in slots], [0.88, 0.92, 0.98, 1.18, 0.98, 0.92, 0.88])
+        self.assertTrue(slots[3]["is_focus"])
+        self.assertEqual(len(CoverStudioService._panoramic_gallery_slots(count=3)), 3)
+
+    def test_bookshelf_primary_layout_uses_walnut_collection_scene(self) -> None:
+        service = CoverStudioService(data_dir=pathlib.Path(tempfile.gettempdir()))
+        images = [Image.new("RGB", (420, 630), (36 + index * 20, 74, 142)) for index in range(7)]
+
+        canvas = service._render_primary_layout_cover(
+            images=images,
+            tone={"accent": (202, 145, 74), "glow": (90, 138, 194), "soft": (210, 190, 160)},
+            variant="bookshelf",
+        )
+
+        # The bottom shelf is opaque walnut wood, not the old perforated rail.
+        self.assertGreater(canvas.getpixel((800, 772))[0], canvas.getpixel((800, 772))[2])
+        self.assertGreater(canvas.getpixel((800, 772))[3], 200)
+        self.assertEqual(service._bookshelf_poster_rotations(count=7), [0.0] * 7)
+
+    def test_bookshelf_two_splits_seven_posters_across_two_walnut_shelves(self) -> None:
+        slots = CoverStudioService._bookshelf_two_slots(top_count=4, bottom_count=3, canvas_size=(1600, 900))
+
+        self.assertEqual(len(slots), 7)
+        self.assertEqual(len({slot["origin"][1] for slot in slots[:4]}), 2)
+        self.assertTrue(all(slot["origin"][1] < 500 for slot in slots[:4]))
+        self.assertTrue(all(slot["origin"][1] > 500 for slot in slots[4:]))
+
     def test_banner_showcase_exposes_its_fixed_layout_constraints(self) -> None:
         banner = next(mode for mode in cover_studio_modes() if mode["key"] == "banner_showcase")
         config = normalize_cover_studio_config(
@@ -256,55 +289,30 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertEqual(config["draft"]["posterCount"], 5)
         self.assertEqual(config["draft"]["posterRotation"], 0)
 
-    def test_fan_spread_primary_uses_the_cinematic_center_stage_layout(self) -> None:
-        layout = get_fan_spread_layout()
-        for count in (3, 5, 7):
-            poster_specs = CoverStudioService._build_fan_spread_poster_specs(
-                canvas_size=(1600, 900),
-                count=count,
-                layout=layout,
-            )
-            focus = max(poster_specs, key=lambda spec: int(spec["elevation"]))
+    def test_cover_poster_source_falls_back_from_primary_to_thumb(self) -> None:
+        class _ThumbFallbackEmby:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
 
-            self.assertEqual(len(poster_specs), count)
-            self.assertEqual(focus["rotation"], 0.0)
-            self.assertGreater(focus["size"][0] / poster_specs[0]["size"][0], 1.07)
-            self.assertLessEqual(focus["size"][0] / poster_specs[0]["size"][0], 1.12)
-            self.assertEqual(focus["origin"][1], min(int(spec["origin"][1]) for spec in poster_specs))
-            self.assertEqual(
-                [int(spec["origin"][1]) for spec in poster_specs],
-                list(reversed([int(spec["origin"][1]) for spec in poster_specs])),
-            )
-            self.assertEqual(
-                [float(spec["rotation"]) for spec in poster_specs],
-                [-float(spec["rotation"]) for spec in reversed(poster_specs)],
-            )
-            if count == 7:
-                self.assertEqual(
-                    [float(spec["rotation"]) for spec in poster_specs],
-                    [-12.0, -8.0, -4.0, 0.0, 4.0, 8.0, 12.0],
-                )
-            rendered_sizes = [
-                CoverStudioService._fan_spread_rendered_card_size(
-                    tuple(spec["size"]),
-                    float(spec["rotation"]),
-                )
-                for spec in poster_specs
-            ]
-            for left_index in range(count // 2):
-                right_index = count - 1 - left_index
-                left_center = int(poster_specs[left_index]["origin"][0]) + rendered_sizes[left_index][0] / 2
-                right_center = int(poster_specs[right_index]["origin"][0]) + rendered_sizes[right_index][0] / 2
-                self.assertAlmostEqual(left_center + right_center, 1600, delta=1)
-            if count % 2:
-                center = count // 2
-                self.assertAlmostEqual(
-                    int(poster_specs[center]["origin"][0]) + rendered_sizes[center][0] / 2,
-                    800,
-                    delta=1,
-                )
-        self.assertGreater(layout["reflection_opacity"], 0.05)
-        self.assertGreater(layout["shelf_alpha"], 30)
+            def fetch_primary_image_bytes(self, **_kwargs) -> bytes:
+                self.calls.append("primary")
+                raise RuntimeError("primary unavailable")
+
+            def fetch_item_image_bytes(self, **_kwargs) -> bytes:
+                self.calls.append("thumb")
+                image = Image.new("RGB", (420, 630), (42, 96, 184))
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                return buffer.getvalue()
+
+        emby = _ThumbFallbackEmby()
+        image = CoverStudioService._load_item_poster_image(
+            emby_service=emby,
+            item={"id": "item-1", "imageItemId": "item-1", "thumbImageItemId": "item-1"},
+        )
+
+        self.assertIsNotNone(image)
+        self.assertEqual(emby.calls, ["primary", "thumb"])
 
     def test_normalize_cover_studio_config_clamps_sizes(self) -> None:
         config = normalize_cover_studio_config(
@@ -333,6 +341,23 @@ class CoverStudioServiceTests(unittest.TestCase):
 
         self.assertEqual(config["draft"]["viewIds"], ["view-1", "view-2"])
         self.assertEqual(config["draft"]["viewId"], "view-1")
+
+    def test_normalize_cover_studio_config_corrects_legacy_western_movies_subtitle(self) -> None:
+        config = normalize_cover_studio_config(
+            {
+                "draft": {"subtitleText": "Western Movies"},
+                "schedules": [
+                    {
+                        "id": "western-library",
+                        "viewId": "view-western",
+                        "template": {"subtitleText": "Western Movies"},
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(config["draft"]["subtitleText"], "Western Cinema")
+        self.assertEqual(config["schedules"][0]["template"]["subtitleText"], "Western Cinema")
 
     def test_cover_studio_schedule_accepts_five_minute_cron(self) -> None:
         config = normalize_cover_studio_config(
@@ -391,7 +416,7 @@ class CoverStudioServiceTests(unittest.TestCase):
                         "enabled": True,
                         "cron": "*/5 * * * *",
                         "template": {
-                            "templateKey": "fan_spread",
+                            "templateKey": "banner_showcase",
                             "pickMode": "recent",
                             "posterCount": 7,
                             "posterRotation": 0,
@@ -459,7 +484,7 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertEqual(changed["results"][0]["status"], "success")
         self.assertEqual(cover.generated, 1)
         self.assertEqual(cover.applied, 1)
-        self.assertEqual(cover.preview_kwargs["poster_count"], 7)
+        self.assertEqual(cover.preview_kwargs["poster_count"], 5)
         self.assertEqual(cover.preview_kwargs["poster_rotation"], 0)
         self.assertEqual(cover.preview_kwargs["title_y_offset"], -48)
 
@@ -474,7 +499,7 @@ class CoverStudioServiceTests(unittest.TestCase):
                     {"id": "3", "imageItemId": "3", "primaryTag": "c", "name": "C"},
                     {"id": "4", "imageItemId": "4", "primaryTag": "d", "name": "D"},
                 ],
-                template_key="fan_spread",
+                template_key="banner_showcase",
                 font_key="hiragino",
                 title_text="国产动漫",
                 subtitle_text="Chinese Animation",
@@ -492,7 +517,7 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertTrue(preview.primary_image_data_url.startswith("data:image/png;base64,"))
         self.assertEqual(preview.primary_width, 1600)
         self.assertEqual(preview.primary_height, 900)
-        self.assertEqual(preview.template_key, "fan_spread")
+        self.assertEqual(preview.template_key, "banner_showcase")
         self.assertEqual(len(preview.selected_items), 4)
 
     def test_generate_preview_supports_new_showcase_template(self) -> None:
@@ -510,7 +535,7 @@ class CoverStudioServiceTests(unittest.TestCase):
                 template_key="banner_showcase",
                 font_key="hiragino",
                 title_text="欧美电影",
-                subtitle_text="Western Movies",
+                subtitle_text="Western Cinema",
                 title_font_size=108,
                 subtitle_font_size=44,
                 title_align="left",
@@ -631,9 +656,13 @@ class CoverStudioServiceTests(unittest.TestCase):
         self.assertEqual(emby.deletes, [])
         self.assertIn("view-2", config["backups"])
 
-    def test_unknown_template_key_falls_back_to_fan_spread(self) -> None:
+    def test_removed_and_unknown_template_keys_fall_back_to_banner_showcase(self) -> None:
         config = normalize_cover_studio_config({"draft": {"templateKey": "unknown-mode"}})
-        self.assertEqual(config["draft"]["templateKey"], "fan_spread")
+        self.assertEqual(config["draft"]["templateKey"], "banner_showcase")
+        migrated = normalize_cover_studio_config({"draft": {"templateKey": "fan_spread"}})
+        self.assertEqual(migrated["draft"]["templateKey"], "banner_showcase")
+        migrated = normalize_cover_studio_config({"draft": {"templateKey": "fan_poster_cover"}})
+        self.assertEqual(migrated["draft"]["templateKey"], "banner_showcase")
 
     def test_fetch_user_views_falls_back_to_virtual_folders(self) -> None:
         service = _ViewFallbackEmbyCoverService()

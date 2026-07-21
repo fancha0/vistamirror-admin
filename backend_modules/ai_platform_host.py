@@ -37,6 +37,9 @@ class AIPlatformHost:
     def load_ai_config(self, *, chat_id: str = "") -> dict[str, Any]:
         return self._runtime.load_ai_config(chat_id=chat_id)
 
+    def load_moviepilot_config(self) -> dict[str, Any]:
+        return self._runtime.load_moviepilot_config()
+
     def build_library_stats_context(self) -> str:
         return self._runtime.build_library_stats_context()
 

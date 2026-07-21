@@ -63,6 +63,9 @@ class AIPlatformRuntime(Protocol):
     def load_ai_config(self, *, chat_id: str = "") -> dict[str, Any]:
         ...
 
+    def load_moviepilot_config(self) -> dict[str, Any]:
+        ...
+
     def build_library_stats_context(self) -> str:
         ...
 

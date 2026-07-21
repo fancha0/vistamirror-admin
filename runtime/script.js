@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
   botConfig: "embyPulseBotConfig",
   notificationConfig: "vistamirrorNotificationConfig",
   aiConfig: "vistamirrorAiConfig",
+  moviePilotConfig: "vistamirrorMoviePilotConfig",
   coverStudioConfig: "vistamirrorCoverStudioConfig",
   libraryDirectoryConfig: "vistamirrorLibraryDirectoryConfig",
   drive115Config: "vistamirrorDrive115Config",
@@ -167,6 +168,14 @@ const DEFAULT_AI_CONFIG = {
   contextTokensK: 64
 };
 
+const DEFAULT_MOVIEPILOT_CONFIG = {
+  enabled: false,
+  baseUrl: "",
+  apiToken: "",
+  hasApiToken: false,
+  timeoutSeconds: 12
+};
+
 const DEFAULT_DRIVE115_CONFIG = {
   enabled: false,
   cookie: "",
@@ -195,7 +204,7 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
   draft: {
     viewId: "",
     viewIds: [],
-    templateKey: "fan_spread",
+    templateKey: "banner_showcase",
     pickMode: "random",
     titleText: "",
     subtitleText: "",
@@ -212,7 +221,7 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
     lockedItemIds: []
   },
   scheduleDraft: {
-    templateKey: "fan_spread",
+    templateKey: "banner_showcase",
     pickMode: "random",
     titleText: "",
     subtitleText: "",
@@ -229,7 +238,7 @@ const DEFAULT_COVER_STUDIO_CONFIG = {
     {
       id: "default",
       name: "默认封面",
-      templateKey: "fan_spread",
+      templateKey: "banner_showcase",
       pickMode: "random",
       titleText: "",
       subtitleText: "",
@@ -265,7 +274,7 @@ const COVER_STUDIO_LIBRARY_SUBTITLES = [
   ["动漫剧集", "Anime Series"],
   ["华语电影", "Chinese Movies"],
   ["华语剧集", "Chinese Series"],
-  ["欧美电影", "Western Movies"],
+  ["欧美电影", "Western Cinema"],
   ["欧美剧集", "Western Series"],
   ["亚洲电影", "Asian Movies"],
   ["亚洲剧集", "Asian Series"],
@@ -280,14 +289,6 @@ const COVER_STUDIO_LIBRARY_SUBTITLES = [
 ];
 
 const DEFAULT_COVER_STUDIO_MODES = [
-  {
-    key: "fan_spread",
-    label: "扇形展开",
-    description: "多张海报像扇面一样展开，适合动画和剧集类视图。",
-    supports: ["titleAlign", "posterCount", "accentTone", "posterRotation", "titleYOffset"],
-    maxPosterCount: 8,
-    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 6, accentTone: "gold", posterRotation: 68, titleYOffset: -12 }
-  },
   {
     key: "banner_showcase",
     label: "横幅橱窗",
@@ -329,6 +330,14 @@ const DEFAULT_COVER_STUDIO_MODES = [
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 7, accentTone: "gold", posterRotation: 0, titleYOffset: 0 }
   },
   {
+    key: "bookshelf_gallery_2",
+    label: "书架陈列 2",
+    description: "双层胡桃木书架与收藏版海报陈列，上层四张、下层三张。",
+    supports: ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+    maxPosterCount: 7,
+    defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 7, accentTone: "gold", posterRotation: 0, titleYOffset: 0 }
+  },
+  {
     key: "honeycomb_hex",
     label: "蜂巢六边形",
     description: "以六边形影像网格聚焦内容，适合动画、动作和科幻类媒体库。",
@@ -345,6 +354,27 @@ const DEFAULT_COVER_STUDIO_MODES = [
     defaults: { titleAlign: "left", overlayStrength: 0, posterCount: 7, accentTone: "gold", posterRotation: 0, titleYOffset: 0 }
   }
 ];
+
+function getAvailableCoverStudioModes() {
+  const runtimeModes = Array.isArray(appState?.coverStudioModes)
+    ? appState.coverStudioModes.filter((mode) => mode && typeof mode === "object" && String(mode.key || "").trim())
+    : [];
+  if (!runtimeModes.length) {
+    return DEFAULT_COVER_STUDIO_MODES;
+  }
+  const runtimeModeByKey = new Map(runtimeModes.map((mode) => [String(mode.key).trim(), mode]));
+  const mergedModes = DEFAULT_COVER_STUDIO_MODES.map((fallbackMode) =>
+    runtimeModeByKey.get(fallbackMode.key) || fallbackMode
+  );
+  const knownKeys = new Set(mergedModes.map((mode) => mode.key));
+  runtimeModes.forEach((mode) => {
+    const key = String(mode.key).trim();
+    if (!knownKeys.has(key)) {
+      mergedModes.push(mode);
+    }
+  });
+  return mergedModes;
+}
 
 const DEFAULT_COVER_STUDIO_ACCENT_TONES = [
   { key: "blue", label: "海蓝" },
@@ -420,6 +450,7 @@ const appState = {
   botConfig: loadJson(STORAGE_KEYS.botConfig, DEFAULT_BOT_CONFIG),
   notificationConfig: loadJson(STORAGE_KEYS.notificationConfig, DEFAULT_NOTIFICATION_CONFIG),
   aiConfig: loadJson(STORAGE_KEYS.aiConfig, DEFAULT_AI_CONFIG),
+  moviePilotConfig: loadJson(STORAGE_KEYS.moviePilotConfig, DEFAULT_MOVIEPILOT_CONFIG),
   coverStudioConfig: loadJson(STORAGE_KEYS.coverStudioConfig, DEFAULT_COVER_STUDIO_CONFIG),
   coverStudioMode: localStorage.getItem(STORAGE_KEYS.coverStudioMode) === "auto" ? "auto" : "manual",
   coverStudioScheduleDraft: null,
@@ -432,6 +463,8 @@ const appState = {
   hdhiveResources: [],
   hdhiveIdentity: null,
   hdhiveRecords: [],
+  moviePilotSearch: { query: "", filter: "all", source: "tmdb_trending", mode: "explore", items: [], loading: false, searched: false, exploreLoaded: false, explorePage: 0, exploreHasMore: true, error: "", requestId: 0, debounceTimer: null },
+  moviePilotWorkspace: { loaded: false, loading: false, tools: [], group: "all", filter: "", selected: "", output: null },
   drive115Records: [],
   drive115LastParse: null,
   drive115QrSessionId: "",
@@ -490,7 +523,10 @@ const appState = {
     scannedAt: ""
   },
   missingWarnings: [],
+  // Old scan caches are deliberately hidden until the strict shared scan runs.
+  missingStale: false,
   missingLoading: false,
+  missingScanStatus: null,
   missingScannedOnce: false,
   projectLogs: [],
   projectLogTotal: 0,
@@ -526,6 +562,7 @@ const appState = {
     embyConfig: [],
     botConfig: [],
     aiConfig: [],
+    moviePilotConfig: [],
     adminAuth: []
   },
   adminCredentialMeta: {
@@ -891,6 +928,21 @@ function normalizeAiConfig(rawConfig) {
   };
 }
 
+function normalizeMoviePilotConfig(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  let timeoutSeconds = Number.parseInt(String(config.timeoutSeconds ?? DEFAULT_MOVIEPILOT_CONFIG.timeoutSeconds), 10);
+  if (!Number.isFinite(timeoutSeconds)) {
+    timeoutSeconds = DEFAULT_MOVIEPILOT_CONFIG.timeoutSeconds;
+  }
+  return {
+    enabled: Boolean(config.enabled ?? DEFAULT_MOVIEPILOT_CONFIG.enabled),
+    baseUrl: String(config.baseUrl || "").trim().replace(/\/+$/, ""),
+    apiToken: String(config.apiToken || "").trim(),
+    hasApiToken: Boolean(config.hasApiToken || String(config.apiToken || "").trim()),
+    timeoutSeconds: Math.max(3, Math.min(60, timeoutSeconds))
+  };
+}
+
 function normalizeDrive115Config(rawConfig) {
   const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
   return {
@@ -911,13 +963,14 @@ function normalizeCoverStudioConfig(rawConfig) {
     }
     return Math.max(minimum, Math.min(maximum, parsed));
   };
-  const validModes = new Set(DEFAULT_COVER_STUDIO_MODES.map((mode) => mode.key));
+  const availableModes = getAvailableCoverStudioModes();
+  const validModes = new Set(availableModes.map((mode) => mode.key));
   const validAligns = new Set(DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS.map((item) => item.key));
   const validTones = new Set(DEFAULT_COVER_STUDIO_ACCENT_TONES.map((item) => item.key));
   const resolveModeDefaults = (templateKey) =>
-    DEFAULT_COVER_STUDIO_MODES.find((mode) => mode.key === templateKey)?.defaults || DEFAULT_COVER_STUDIO_MODES[0].defaults;
+    availableModes.find((mode) => mode.key === templateKey)?.defaults || availableModes[0].defaults;
   const resolveMode = (templateKey) =>
-    DEFAULT_COVER_STUDIO_MODES.find((mode) => mode.key === templateKey) || DEFAULT_COVER_STUDIO_MODES[0];
+    availableModes.find((mode) => mode.key === templateKey) || availableModes[0];
   const resolvePosterLimit = (templateKey) => clampInt(resolveMode(templateKey).maxPosterCount, 8, 2, 8);
   const normalizePosterRotation = (value, templateKey, fallback) =>
     (resolveMode(templateKey).supports || []).includes("posterRotation")
@@ -925,7 +978,7 @@ function normalizeCoverStudioConfig(rawConfig) {
       : 0;
   const normalizeTemplateKey = (value) => {
     const key = String(value || "").trim();
-    return validModes.has(key) ? key : DEFAULT_COVER_STUDIO_MODES[0].key;
+    return validModes.has(key) ? key : availableModes[0].key;
   };
   const draftSource = config.draft && typeof config.draft === "object" ? config.draft : {};
   const draftTemplateKey = normalizeTemplateKey(draftSource.templateKey);
@@ -1151,6 +1204,7 @@ function normalizeEnvControlledFields(raw) {
     botConfig: normalizeList(source.botConfig),
     notificationConfig: normalizeList(source.notificationConfig),
     aiConfig: normalizeList(source.aiConfig),
+    moviePilotConfig: normalizeList(source.moviePilotConfig),
     drive115Config: normalizeList(source.drive115Config),
     hdhiveConfig: normalizeList(source.hdhiveConfig),
     adminAuth: normalizeList(source.adminAuth)
@@ -1165,7 +1219,7 @@ function mergeEnvControlledFields(raw, groupHint = "") {
       : [];
 
   if (Array.isArray(raw)) {
-    if (["embyConfig", "botConfig", "notificationConfig", "aiConfig", "drive115Config", "hdhiveConfig", "adminAuth"].includes(groupHint)) {
+    if (["embyConfig", "botConfig", "notificationConfig", "aiConfig", "moviePilotConfig", "drive115Config", "hdhiveConfig", "adminAuth"].includes(groupHint)) {
       current[groupHint] = normalizeList(raw);
     }
     return current;
@@ -1183,6 +1237,9 @@ function mergeEnvControlledFields(raw, groupHint = "") {
     }
     if (Object.prototype.hasOwnProperty.call(raw, "aiConfig")) {
       current.aiConfig = normalizeList(raw.aiConfig);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "moviePilotConfig")) {
+      current.moviePilotConfig = normalizeList(raw.moviePilotConfig);
     }
     if (Object.prototype.hasOwnProperty.call(raw, "drive115Config")) {
       current.drive115Config = normalizeList(raw.drive115Config);
@@ -1216,6 +1273,7 @@ function renderEnvControlledState() {
   const botManaged = appState?.envControlledFields?.botConfig || [];
   const notificationManaged = appState?.envControlledFields?.notificationConfig || [];
   const aiManaged = appState?.envControlledFields?.aiConfig || [];
+  const moviePilotManaged = appState?.envControlledFields?.moviePilotConfig || [];
   const drive115Managed = appState?.envControlledFields?.drive115Config || [];
   const hdhiveManaged = appState?.envControlledFields?.hdhiveConfig || [];
   const activeServerType = getActiveMediaServerType();
@@ -1246,6 +1304,13 @@ function renderEnvControlledState() {
   if (elements.aiApiKeyToggle) {
     elements.aiApiKeyToggle.disabled = aiManaged.includes("apiKey");
   }
+  setFieldEnvControlled(elements.moviePilotEnabled, moviePilotManaged.includes("enabled"));
+  setFieldEnvControlled(elements.moviePilotBaseUrl, moviePilotManaged.includes("baseUrl"));
+  setFieldEnvControlled(elements.moviePilotApiToken, moviePilotManaged.includes("apiToken"));
+  setFieldEnvControlled(elements.moviePilotTimeoutSeconds, moviePilotManaged.includes("timeoutSeconds"));
+  if (elements.moviePilotApiTokenToggle) {
+    elements.moviePilotApiTokenToggle.disabled = moviePilotManaged.includes("apiToken");
+  }
   setFieldEnvControlled(elements.drive115Cookie, drive115Managed.includes("cookie"));
   setFieldEnvControlled(elements.drive115DefaultCid, drive115Managed.includes("defaultCid"));
   if (document.getElementById("drive115-cookie-toggle")) {
@@ -1267,6 +1332,7 @@ appState.config = normalizeAppConfig(appState.config);
 appState.botConfig = normalizeBotConfig({ ...DEFAULT_BOT_CONFIG, ...appState.botConfig });
 appState.notificationConfig = normalizeNotificationConfig({ ...DEFAULT_NOTIFICATION_CONFIG, ...appState.notificationConfig }, appState.botConfig);
 appState.aiConfig = normalizeAiConfig({ ...DEFAULT_AI_CONFIG, ...appState.aiConfig });
+appState.moviePilotConfig = normalizeMoviePilotConfig({ ...DEFAULT_MOVIEPILOT_CONFIG, ...appState.moviePilotConfig });
 appState.coverStudioConfig = normalizeCoverStudioConfig({ ...DEFAULT_COVER_STUDIO_CONFIG, ...appState.coverStudioConfig });
 appState.libraryDirectoryConfig = normalizeLibraryDirectoryConfig({ ...DEFAULT_LIBRARY_DIRECTORY_CONFIG, ...appState.libraryDirectoryConfig });
 appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...appState.drive115Config });
@@ -1336,6 +1402,35 @@ const elements = {
   aiContextTokensK: document.getElementById("ai-context-tokens-k"),
   aiTestBtn: document.getElementById("ai-test-btn"),
   aiFeedback: document.getElementById("ai-feedback"),
+  moviePilotEnabled: document.getElementById("moviepilot-enabled"),
+  moviePilotBaseUrl: document.getElementById("moviepilot-base-url"),
+  moviePilotApiToken: document.getElementById("moviepilot-api-token"),
+  moviePilotApiTokenToggle: document.getElementById("moviepilot-api-token-toggle"),
+  moviePilotTimeoutSeconds: document.getElementById("moviepilot-timeout-seconds"),
+  moviePilotTestBtn: document.getElementById("moviepilot-test-btn"),
+  moviePilotFeedback: document.getElementById("moviepilot-feedback"),
+  moviePilotSearchForm: document.getElementById("moviepilot-search-form"),
+  moviePilotSearchInput: document.getElementById("moviepilot-search-input"),
+  moviePilotSearchSubmit: document.getElementById("moviepilot-search-submit"),
+  moviePilotSearchTabs: document.getElementById("moviepilot-search-tabs"),
+  moviePilotSearchStatus: document.getElementById("moviepilot-search-status"),
+  moviePilotSearchResults: document.getElementById("moviepilot-search-results"),
+  moviePilotExploreSources: document.getElementById("moviepilot-explore-sources"),
+  moviePilotExploreFilters: document.getElementById("moviepilot-explore-filters"),
+  moviePilotWorkspace: document.getElementById("moviepilot-workspace"),
+  moviePilotWorkspaceBtn: document.getElementById("moviepilot-workspace-btn"),
+  moviePilotWorkspaceClose: document.getElementById("moviepilot-workspace-close"),
+  moviePilotWorkspaceSummary: document.getElementById("moviepilot-workspace-summary"),
+  moviePilotToolFilter: document.getElementById("moviepilot-tool-filter"),
+  moviePilotToolGroups: document.getElementById("moviepilot-tool-groups"),
+  moviePilotToolList: document.getElementById("moviepilot-tool-list"),
+  moviePilotToolDetail: document.getElementById("moviepilot-tool-detail"),
+  moviePilotToolForm: document.getElementById("moviepilot-tool-form"),
+  moviePilotToolFields: document.getElementById("moviepilot-tool-fields"),
+  moviePilotToolRun: document.getElementById("moviepilot-tool-run"),
+  moviePilotToolSafety: document.getElementById("moviepilot-tool-safety"),
+  moviePilotToolOutput: document.getElementById("moviepilot-tool-output"),
+  moviePilotToolResultClear: document.getElementById("moviepilot-tool-result-clear"),
   libraryDirectoryRootPath: document.getElementById("library-directory-root-path"),
   libraryDirectoryRootName: document.getElementById("library-directory-root-name"),
   libraryDirectoryMaxDepth: document.getElementById("library-directory-max-depth"),
@@ -1757,6 +1852,11 @@ const VIEW_META = {
     icon: "🪺",
     title: "影巢搜索",
     subtitle: "通过 HDHive OpenAPI 搜索资源并确认转存到 115"
+  },
+  "moviepilot-search": {
+    icon: "🔎",
+    title: "MoviePilot 搜索",
+    subtitle: "通过 MoviePilot MCP 发现影视并管理订阅、下载与服务"
   },
   invites: {
     icon: "🔗",
@@ -7069,6 +7169,7 @@ function renderMissing() {
   const summary = appState.missingSummary && typeof appState.missingSummary === "object" ? appState.missingSummary : {};
   const rows = Array.isArray(appState.missingRows) ? appState.missingRows : [];
   const warnings = Array.isArray(appState.missingWarnings) ? appState.missingWarnings : [];
+  const stale = Boolean(appState.missingStale);
 
   if (elements.missingStatScannedSeries) {
     elements.missingStatScannedSeries.textContent = String(summary.scannedSeries || 0);
@@ -7084,8 +7185,14 @@ function renderMissing() {
   }
 
   const scannedAt = summary.scannedAt ? formatDate(summary.scannedAt) : "尚未巡检";
+  const scanProgress = appState.missingScanStatus?.progress && typeof appState.missingScanStatus.progress === "object"
+    ? appState.missingScanStatus.progress
+    : {};
+  const completed = Number(scanProgress.completed || 0);
+  const total = Number(scanProgress.total || 0);
+  const currentTitle = String(scanProgress.currentTitle || "").trim();
   const statusText = appState.missingLoading
-    ? "正在执行缺集巡检，请稍候..."
+    ? `正在巡检 ${total ? `${completed}/${total}` : "准备中"}${currentTitle ? `：${currentTitle}` : ""}...`
     : `最近巡检：${scannedAt}。`;
   const warningText = warnings.length ? `警告：${warnings[0]}` : "";
   if (elements.missingFeedback) {
@@ -7093,38 +7200,110 @@ function renderMissing() {
   }
 
   if (!rows.length) {
-    elements.missingList.innerHTML = `<tr><td colspan="7">暂无缺集结果。请点击“立即巡检”开始扫描。</td></tr>`;
+    elements.missingList.innerHTML = `
+      <div class="missing-empty-state">
+        <strong>${stale ? "旧版巡检结果需要更新" : appState.missingScannedOnce ? "未发现需要处理的缺集" : "尚未开始缺集巡检"}</strong>
+        <span>${stale ? "为避免旧算法误报未来未播集，请点击“立即巡检”生成严格结果。" : appState.missingScannedOnce ? "已确认作品不会显示未来未播集。" : "点击“立即巡检”，将只对 TMDB 已播出集进行核对。"}</span>
+      </div>
+    `;
     return;
   }
 
   elements.missingList.innerHTML = rows
     .map((row) => {
       const seriesName = escapeHtml(String(row?.seriesName || "未命名剧集"));
-      const seasonNoRaw = Number(row?.seasonNo || 0);
-      const seasonText = seasonNoRaw > 0 ? `第 ${seasonNoRaw} 季` : "-";
-      const missingEpisodes = Array.isArray(row?.missingEpisodes) ? row.missingEpisodes : [];
-      const missingText = missingEpisodes.length ? missingEpisodes.map((item) => `E${item}`).join(", ") : "-";
-      const completeness = escapeHtml(String(row?.completeness || "-"));
       const status = String(row?.status || "");
-      const reasonText =
-        status === "missing"
-          ? "-"
-          : String(row?.reason || "").trim() || "未返回明确原因（可能是 TMDB 匹配失败）";
+      const year = escapeHtml(String(row?.year || ""));
+      const posterItemId = String(row?.posterItemId || row?.embySeriesId || "").trim();
+      const posterTag = String(row?.posterImageTag || "").trim();
+      const posterUrl = posterItemId ? buildEmbyPrimaryPosterUrl(posterItemId, { maxWidth: 360, quality: 88, imageTag: posterTag }) : "";
+      const missingLabels = Array.isArray(row?.missingLabels)
+        ? row.missingLabels
+        : Array.isArray(row?.missingEpisodes)
+          ? row.missingEpisodes.map((item) => `E${item}`)
+          : [];
+      const futureLabels = Array.isArray(row?.futureLabels) ? row.futureLabels : [];
+      const referenceLabels = Array.isArray(row?.referenceMissingLabels) ? row.referenceMissingLabels : [];
+      const seasonRows = Array.isArray(row?.seasonRows) ? row.seasonRows : [];
+      const mappingConfidence = String(row?.mappingConfidence || "").toLowerCase();
+      const reasonText = String(row?.reason || row?.mappingWarning || "").trim();
       const scannedAtText = row?.scannedAt ? formatDate(row.scannedAt) : scannedAt;
       const statusBadge =
         status === "missing"
           ? `<span class="badge badge-danger">缺失中</span>`
-          : `<span class="badge badge-warning">匹配失败</span>`;
+          : status === "review"
+            ? `<span class="badge badge-warning">需确认</span>`
+            : `<span class="badge badge-warning">身份未确认</span>`;
+      const confidenceText =
+        mappingConfidence === "high" ? "集号映射可靠" : mappingConfidence === "medium" ? "按 Emby 条目继续" : "集号映射需确认";
+      const posterMarkup = posterUrl
+        ? `<img class="missing-poster" src="${escapeHtml(posterUrl)}" alt="${seriesName} 海报" loading="lazy" onerror="this.closest('.missing-poster-wrap').classList.add('is-empty');this.remove()">`
+        : "";
+      const labelsMarkup = (labels, className, emptyText, maxItems = 18) => {
+        if (!labels.length) {
+          return `<span class="${className} is-empty">${escapeHtml(emptyText)}</span>`;
+        }
+        const shown = labels.slice(0, maxItems).map((label) => `<span class="${className}">${escapeHtml(String(label))}</span>`).join("");
+        const more = labels.length > maxItems ? `<span class="${className} is-more">+${labels.length - maxItems}</span>` : "";
+        return `${shown}${more}`;
+      };
+      const primarySeason = seasonRows.find((season) => Array.isArray(season?.missingEpisodes) && season.missingEpisodes.length) || seasonRows[0] || {};
+      const primaryExisting = Number(primarySeason?.existingCount ?? (Array.isArray(primarySeason?.existingEpisodes) ? primarySeason.existingEpisodes.length : 0));
+      const primaryAired = Number(primarySeason?.airedCount ?? (Array.isArray(primarySeason?.airedEpisodes) ? primarySeason.airedEpisodes.length : 0));
+      const primarySeasonNo = Number(primarySeason?.seasonNo || 0);
+      const compactSummary = status === "missing"
+        ? `缺 ${missingLabels.length} 集`
+        : status === "review"
+          ? "需要复核"
+          : "身份未确认";
+      const seasonMarkup = seasonRows.length
+        ? seasonRows
+            .map((season) => {
+              const seasonNo = Number(season?.seasonNo || 0);
+              const existing = Number(season?.existingCount ?? (Array.isArray(season?.existingEpisodes) ? season.existingEpisodes.length : 0));
+              const aired = Number(season?.airedCount ?? (Array.isArray(season?.airedEpisodes) ? season.airedEpisodes.length : 0));
+              const future = Array.isArray(season?.futureEpisodes) ? season.futureEpisodes.length : 0;
+              const missing = Array.isArray(season?.missingEpisodes) ? season.missingEpisodes.length : 0;
+              return `
+                <div class="missing-season-row">
+                  <strong>S${String(seasonNo || 0).padStart(2, "0")}</strong>
+                  <span>本地 ${existing} / 已播 ${aired}</span>
+                  ${missing ? `<em>缺 ${missing} 集</em>` : `<em class="is-complete">已播完整</em>`}
+                  ${future ? `<small>未来 ${future} 集</small>` : ""}
+                </div>
+              `;
+            })
+            .join("")
+        : `<div class="missing-season-row is-empty">暂无可核对的季数据</div>`;
       return `
-        <tr>
-          <td class="missing-cell-series"><strong>${seriesName}</strong></td>
-          <td class="missing-cell-season" data-label="季">${escapeHtml(seasonText)}</td>
-          <td class="missing-cell-episodes" data-label="缺失集号"><span class="missing-episodes">${escapeHtml(missingText)}</span></td>
-          <td class="missing-cell-completeness" data-label="已播出完整度">${completeness}</td>
-          <td class="missing-cell-status" data-label="状态">${statusBadge}</td>
-          <td class="missing-cell-reason" data-label="失败原因"><span class="missing-reason">${escapeHtml(reasonText)}</span></td>
-          <td class="missing-cell-scanned" data-label="最后巡检">${escapeHtml(scannedAtText)}</td>
-        </tr>
+        <article class="missing-media-card ${status === "missing" ? "is-missing" : "is-review"}">
+          <div class="missing-poster-wrap">${posterMarkup}<span class="missing-poster-fallback">无海报</span></div>
+          <div class="missing-card-main">
+            <div class="missing-card-heading">
+              <div>
+                <div class="missing-card-title-line"><h3>${seriesName}</h3>${year ? `<span>${year}</span>` : ""}</div>
+                <p>${primarySeasonNo ? `S${String(primarySeasonNo).padStart(2, "0")} · ` : ""}本地 ${primaryExisting} / 已播 ${primaryAired}</p>
+              </div>
+              ${statusBadge}
+            </div>
+            <div class="missing-card-summary">${escapeHtml(compactSummary)}</div>
+            ${missingLabels.length ? `<div class="missing-card-chips">${labelsMarkup(missingLabels, "missing-episode-chip", "无", 7)}</div>` : ""}
+            <details class="missing-card-details">
+              <summary>查看详情</summary>
+              <div class="missing-season-list">${seasonMarkup}</div>
+              <div class="missing-card-groups">
+              <div class="missing-episode-group">
+                <span>确认缺失</span>
+                <div>${labelsMarkup(missingLabels, "missing-episode-chip", "无")}</div>
+              </div>
+              ${futureLabels.length ? `<div class="missing-episode-group is-future"><span>未来未播</span><div>${labelsMarkup(futureLabels, "missing-episode-chip", "")}</div></div>` : ""}
+              ${referenceLabels.length ? `<div class="missing-episode-group is-reference"><span>参考差集</span><div>${labelsMarkup(referenceLabels, "missing-episode-chip", "")}</div></div>` : ""}
+              </div>
+              ${reasonText ? `<p class="missing-card-warning">${escapeHtml(reasonText)}</p>` : ""}
+              <footer>TMDB ${escapeHtml(String(row?.tmdbId || "未确认"))} · ${escapeHtml(confidenceText)}<br>巡检：${escapeHtml(scannedAtText)}</footer>
+            </details>
+          </div>
+        </article>
       `;
     })
     .join("");
@@ -7148,6 +7327,7 @@ async function loadMissingList(options = {}) {
     appState.missingRows = Array.isArray(payload?.rows) ? payload.rows : [];
     appState.missingSummary = payload?.summary && typeof payload.summary === "object" ? payload.summary : appState.missingSummary;
     appState.missingWarnings = Array.isArray(payload?.warnings) ? payload.warnings : [];
+    appState.missingStale = Boolean(payload?.stale);
     appState.missingScannedOnce = Boolean(summaryHasScanData(appState.missingSummary));
     renderMissing();
     return appState.missingRows;
@@ -7194,7 +7374,7 @@ async function scanMissingEpisodes() {
   }
 
   try {
-    await inviteApiFetch("/api/missing/scan", {
+    const started = await inviteApiFetch("/api/missing/scan", {
       method: "POST",
       body: JSON.stringify({
         tmdbToken,
@@ -7203,24 +7383,78 @@ async function scanMissingEpisodes() {
         scanLimit: 2000,
       }),
     });
-    await loadMissingList({ quiet: true });
-    appState.missingScannedOnce = true;
-    if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = "巡检完成，已更新缺集结果。";
-    }
-    addSyncEvent("缺集巡检完成", "缺集管理已完成全库巡检并刷新结果。", "success");
+    appState.missingScanStatus = started?.status || null;
+    await pollMissingScanStatus();
   } catch (error) {
-    if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = `缺集巡检失败：${error.message || "未知错误"}`;
-    }
-    addSyncEvent("缺集巡检失败", String(error?.message || "未知错误"), "danger");
-  } finally {
     appState.missingLoading = false;
     if (elements.missingScanBtn) {
       elements.missingScanBtn.disabled = false;
       elements.missingScanBtn.textContent = "立即巡检";
     }
+    if (elements.missingFeedback) {
+      elements.missingFeedback.textContent = `缺集巡检失败：${error.message || "未知错误"}`;
+    }
+    addSyncEvent("缺集巡检失败", String(error?.message || "未知错误"), "danger");
     renderMissing();
+  }
+}
+
+async function pollMissingScanStatus() {
+  const timeoutAt = Date.now() + 20 * 60 * 1000;
+  while (Date.now() < timeoutAt) {
+    const payload = await inviteApiFetch("/api/missing/scan/status");
+    const status = payload?.status && typeof payload.status === "object" ? payload.status : {};
+    appState.missingScanStatus = status;
+    appState.missingLoading = Boolean(status.running);
+    renderMissing();
+
+    if (!status.running) {
+      if (status.error) {
+        if (elements.missingFeedback) {
+          elements.missingFeedback.textContent = String(status.error);
+        }
+        addSyncEvent("缺集巡检失败", String(status.error), "danger");
+      } else {
+        await loadMissingList({ quiet: true });
+        appState.missingScannedOnce = true;
+        appState.missingStale = false;
+        if (elements.missingFeedback) {
+          elements.missingFeedback.textContent = "巡检完成，已更新缺集结果。";
+        }
+        addSyncEvent("缺集巡检完成", "缺集管理已完成全库巡检并刷新结果。", "success");
+      }
+      break;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+  }
+
+  if (appState.missingLoading && Date.now() >= timeoutAt) {
+    if (elements.missingFeedback) {
+      elements.missingFeedback.textContent = "巡检仍在后台运行，已停止本页等待；稍后刷新结果即可。";
+    }
+  }
+
+  appState.missingLoading = false;
+  if (elements.missingScanBtn) {
+    elements.missingScanBtn.disabled = false;
+    elements.missingScanBtn.textContent = "立即巡检";
+  }
+  renderMissing();
+}
+
+async function resumeMissingScanIfRunning() {
+  if (appState.missingLoading) return;
+  try {
+    const payload = await inviteApiFetch("/api/missing/scan/status");
+    const status = payload?.status && typeof payload.status === "object" ? payload.status : {};
+    appState.missingScanStatus = status;
+    if (!status.running) return;
+
+    appState.missingLoading = true;
+    renderMissing();
+    await pollMissingScanStatus();
+  } catch (_) {
+    // The list remains usable if the optional scan-status request fails.
   }
 }
 
@@ -7231,6 +7465,7 @@ function persistLocalState() {
   saveJson(STORAGE_KEYS.botConfig, appState.botConfig);
   saveJson(STORAGE_KEYS.notificationConfig, appState.notificationConfig);
   saveJson(STORAGE_KEYS.aiConfig, appState.aiConfig);
+  saveJson(STORAGE_KEYS.moviePilotConfig, appState.moviePilotConfig);
   saveJson(STORAGE_KEYS.coverStudioConfig, appState.coverStudioConfig);
   saveJson(STORAGE_KEYS.libraryDirectoryConfig, appState.libraryDirectoryConfig);
   saveJson(STORAGE_KEYS.drive115Config, appState.drive115Config);
@@ -7391,7 +7626,7 @@ function readCoverStudioDraftFromInputs() {
       ...(appState.coverStudioConfig?.draft || {}),
       viewId: viewIds[0] || "",
       viewIds,
-      templateKey: String(elements.coverStudioTemplateKey?.value || "fan_spread").trim() || "fan_spread",
+      templateKey: String(elements.coverStudioTemplateKey?.value || "banner_showcase").trim() || "banner_showcase",
       pickMode: String(elements.coverStudioPickMode?.value || "random").trim(),
       titleText: String(elements.coverStudioTitleText?.value || "").trim(),
       subtitleText: String(elements.coverStudioSubtitleText?.value || "").trim(),
@@ -7427,9 +7662,7 @@ function getSelectedCoverStudioViewIds() {
 }
 
 function getCoverStudioModeMeta(templateKey) {
-  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
-    ? appState.coverStudioModes
-    : DEFAULT_COVER_STUDIO_MODES;
+  const modes = getAvailableCoverStudioModes();
   return modes.find((mode) => String(mode?.key || "") === String(templateKey || "")) || modes[0];
 }
 
@@ -7476,9 +7709,7 @@ function renderCoverStudioModes() {
   if (!elements.coverStudioTemplateKey) {
     return;
   }
-  const modes = Array.isArray(appState.coverStudioModes) && appState.coverStudioModes.length
-    ? appState.coverStudioModes
-    : DEFAULT_COVER_STUDIO_MODES;
+  const modes = getAvailableCoverStudioModes();
   elements.coverStudioTemplateKey.innerHTML = modes
     .map((mode) => `<option value="${escapeHtml(mode.key)}">${escapeHtml(mode.label)}</option>`)
     .join("");
@@ -7708,7 +7939,7 @@ function renderCoverStudioStatus() {
 }
 
 function buildCoverStudioScheduleTemplate(draft) {
-  const templateKey = String(draft.templateKey || "fan_spread");
+  const templateKey = String(draft.templateKey || "banner_showcase");
   const { supports, posterLimit } = getCoverStudioModeCapabilities(templateKey);
   const posterCount = Number(draft.posterCount ?? 5);
   const posterRotation = Number(draft.posterRotation ?? 42);
@@ -7916,7 +8147,7 @@ function renderCoverStudioScheduleEditor(plan) {
   const alignments = Array.isArray(appState.coverStudioTitleAlignOptions) && appState.coverStudioTitleAlignOptions.length
     ? appState.coverStudioTitleAlignOptions
     : DEFAULT_COVER_STUDIO_TITLE_ALIGN_OPTIONS;
-  const selectedTemplate = String(template.templateKey || "fan_spread");
+  const selectedTemplate = String(template.templateKey || "banner_showcase");
   const { supports, posterLimit } = getCoverStudioModeCapabilities(selectedTemplate);
   const optionsFor = (items, selected) => items
     .map((item) => `<option value="${escapeHtml(item.key)}"${item.key === selected ? " selected" : ""}>${escapeHtml(item.label)}</option>`)
@@ -7959,7 +8190,7 @@ function openCoverStudioScheduleEditor(planId) {
 
 function syncCoverStudioScheduleEditorCapabilities() {
   const form = elements.coverStudioScheduleEditForm;
-  const templateKey = String(form?.querySelector('[data-schedule-modal-field="templateKey"]')?.value || "fan_spread");
+  const templateKey = String(form?.querySelector('[data-schedule-modal-field="templateKey"]')?.value || "banner_showcase");
   const { supports, posterLimit } = getCoverStudioModeCapabilities(templateKey);
   const posterCount = form?.querySelector('[data-schedule-modal-field="posterCount"]');
   const posterRotation = form?.querySelector('[data-schedule-modal-field="posterRotation"]');
@@ -8083,7 +8314,7 @@ function renderCoverStudioSettings() {
     elements.coverStudioPickMode.value = draft.pickMode || "random";
   }
   if (elements.coverStudioTemplateKey) {
-    elements.coverStudioTemplateKey.value = draft.templateKey || "fan_spread";
+    elements.coverStudioTemplateKey.value = draft.templateKey || "banner_showcase";
   }
   if (elements.coverStudioTitleText) {
     elements.coverStudioTitleText.value = draft.titleText || "";
@@ -8109,11 +8340,11 @@ async function loadCoverStudioConfigFromServer(options = {}) {
   const { silent = false } = options;
   try {
     const result = await inviteApiFetch("/api/cover-studio/config");
-    appState.coverStudioConfig = normalizeCoverStudioConfig(result?.config || {});
     appState.coverStudioFonts = Array.isArray(result?.fonts) ? result.fonts : [];
     appState.coverStudioModes = Array.isArray(result?.modes) ? result.modes : [];
     appState.coverStudioAccentTones = Array.isArray(result?.accentTones) ? result.accentTones : [];
     appState.coverStudioTitleAlignOptions = Array.isArray(result?.titleAlignOptions) ? result.titleAlignOptions : [];
+    appState.coverStudioConfig = normalizeCoverStudioConfig(result?.config || {});
     persistLocalState();
     renderCoverStudioSettings();
   } catch (error) {
@@ -8515,8 +8746,10 @@ async function saveAiConfig() {
   }
 
   const aiConfig = readAiConfigFromInputs();
+  const moviePilotConfig = readMoviePilotConfigFromInputs();
   const libraryDirectoryConfig = readLibraryDirectoryConfigFromInputs();
   appState.aiConfig = aiConfig;
+  appState.moviePilotConfig = moviePilotConfig;
   appState.libraryDirectoryConfig = libraryDirectoryConfig;
   persistLocalState();
   addSyncEvent("AI 配置已保存", "AI 服务接入参数与本地目录分类已更新。", "success");
@@ -8524,11 +8757,18 @@ async function saveAiConfig() {
 
   try {
     await pushAiConfigToServer(aiConfig, { silent: true });
-    await loadAiConfigFromServer({ silent: true });
+    await pushMoviePilotConfigToServer(moviePilotConfig, { silent: true });
+    await Promise.all([
+      loadAiConfigFromServer({ silent: true }),
+      loadMoviePilotConfigFromServer({ silent: true })
+    ]);
     showToast("AI 配置已保存", 1200);
   } catch (error) {
     if (elements.aiFeedback) {
       elements.aiFeedback.textContent = `AI 配置未保存：${error.message || "未知错误"}`;
+    }
+    if (elements.moviePilotFeedback) {
+      elements.moviePilotFeedback.textContent = `MoviePilot 配置未保存：${error.message || "未知错误"}`;
     }
     showToast("AI 配置未保存", 1200);
   }
@@ -8554,6 +8794,61 @@ function readAiConfigFromInputs() {
     maxTokens: elements.aiMaxTokens?.value || DEFAULT_AI_CONFIG.maxTokens,
     contextTokensK: elements.aiContextTokensK?.value || DEFAULT_AI_CONFIG.contextTokensK
   });
+}
+
+function readMoviePilotConfigFromInputs() {
+  const current = normalizeMoviePilotConfig({ ...DEFAULT_MOVIEPILOT_CONFIG, ...appState.moviePilotConfig });
+  return normalizeMoviePilotConfig({
+    enabled: Boolean(elements.moviePilotEnabled?.checked),
+    baseUrl: elements.moviePilotBaseUrl?.value.trim() || "",
+    apiToken: elements.moviePilotApiToken?.value.trim() || "",
+    hasApiToken: current.hasApiToken,
+    timeoutSeconds: elements.moviePilotTimeoutSeconds?.value || DEFAULT_MOVIEPILOT_CONFIG.timeoutSeconds
+  });
+}
+
+function renderMoviePilotSettings() {
+  const config = normalizeMoviePilotConfig({ ...DEFAULT_MOVIEPILOT_CONFIG, ...appState.moviePilotConfig });
+  if (elements.moviePilotEnabled) {
+    elements.moviePilotEnabled.checked = Boolean(config.enabled);
+  }
+  if (elements.moviePilotBaseUrl) {
+    elements.moviePilotBaseUrl.value = config.baseUrl || "";
+  }
+  if (elements.moviePilotApiToken) {
+    elements.moviePilotApiToken.value = "";
+    elements.moviePilotApiToken.placeholder = config.hasApiToken
+      ? "已保存 Token，留空可保持不变"
+      : "输入 MoviePilot API Token";
+  }
+  if (elements.moviePilotTimeoutSeconds) {
+    elements.moviePilotTimeoutSeconds.value = String(config.timeoutSeconds ?? DEFAULT_MOVIEPILOT_CONFIG.timeoutSeconds);
+  }
+  updateMoviePilotFeedback({ saved: true });
+}
+
+function updateMoviePilotFeedback(options = {}) {
+  if (!elements.moviePilotFeedback) {
+    return;
+  }
+  const { saved = false, message = "" } = options;
+  if (message) {
+    elements.moviePilotFeedback.textContent = message;
+    return;
+  }
+  const formConfig = readMoviePilotConfigFromInputs();
+  const hasApiToken = Boolean(formConfig.apiToken || appState.moviePilotConfig?.hasApiToken);
+  if (!formConfig.enabled) {
+    elements.moviePilotFeedback.textContent = "MoviePilot 未启用，AI 不会调用其工具。";
+    return;
+  }
+  if (!formConfig.baseUrl || !hasApiToken) {
+    elements.moviePilotFeedback.textContent = "MoviePilot 已开启，请填写地址和 API Token 后保存。";
+    return;
+  }
+  elements.moviePilotFeedback.textContent = saved
+    ? "MoviePilot 已启用，可调用当前实例开放的 MCP 功能。"
+    : "MoviePilot 已填写，点击保存后 AI Runtime 生效。";
 }
 
 function renderAiSettings() {
@@ -8668,6 +8963,91 @@ async function pushAiConfigToServer(nextConfig, options = {}) {
       elements.aiFeedback.textContent = `保存 AI 配置失败：${error.message || "未知错误"}`;
     }
     throw error;
+  }
+}
+
+async function loadMoviePilotConfigFromServer(options = {}) {
+  const { silent = false } = options;
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/config");
+    appState.moviePilotConfig = normalizeMoviePilotConfig({
+      ...DEFAULT_MOVIEPILOT_CONFIG,
+      ...(result?.moviePilotConfig || {})
+    });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "moviePilotConfig");
+    persistLocalState();
+    renderMoviePilotSettings();
+    renderEnvControlledState();
+    return true;
+  } catch (error) {
+    if (!silent && elements.moviePilotFeedback) {
+      elements.moviePilotFeedback.textContent = "读取 MoviePilot 配置失败：" + (error.message || "未知错误");
+    }
+    return false;
+  }
+}
+
+async function pushMoviePilotConfigToServer(nextConfig, options = {}) {
+  const { silent = false } = options;
+  const payloadConfig = { ...nextConfig };
+  delete payloadConfig.hasApiToken;
+  if (!payloadConfig.apiToken) {
+    delete payloadConfig.apiToken;
+  }
+  const managed = appState?.envControlledFields?.moviePilotConfig || [];
+  ["enabled", "baseUrl", "apiToken", "timeoutSeconds"].forEach((field) => {
+    if (managed.includes(field)) {
+      delete payloadConfig[field];
+    }
+  });
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/config", {
+      method: "POST",
+      body: JSON.stringify({ moviePilotConfig: payloadConfig })
+    });
+    appState.moviePilotConfig = normalizeMoviePilotConfig({
+      ...DEFAULT_MOVIEPILOT_CONFIG,
+      ...(result?.moviePilotConfig || nextConfig)
+    });
+    appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "moviePilotConfig");
+    persistLocalState();
+    renderMoviePilotSettings();
+    renderEnvControlledState();
+    return appState.moviePilotConfig;
+  } catch (error) {
+    if (!silent && elements.moviePilotFeedback) {
+      elements.moviePilotFeedback.textContent = "保存 MoviePilot 配置失败：" + (error.message || "未知错误");
+    }
+    throw error;
+  }
+}
+
+async function testMoviePilotConfig() {
+  if (!elements.moviePilotTestBtn || elements.moviePilotTestBtn.disabled) {
+    return;
+  }
+  const config = readMoviePilotConfigFromInputs();
+  const original = elements.moviePilotTestBtn.textContent || "测试连接";
+  elements.moviePilotTestBtn.disabled = true;
+  elements.moviePilotTestBtn.textContent = "测试中";
+  updateMoviePilotFeedback({ message: "正在连接 MoviePilot MCP..." });
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/test", {
+      method: "POST",
+      body: JSON.stringify({ moviePilotConfig: config })
+    });
+    const toolCount = Number(result?.toolCount || 0);
+    const readToolCount = Number(result?.readToolCount || 0);
+    updateMoviePilotFeedback({
+      message: "连接成功：发现 " + toolCount + " 个 MoviePilot MCP 工具。"
+    });
+    showToast("MoviePilot 连接测试成功", 1200);
+  } catch (error) {
+    updateMoviePilotFeedback({ message: "MoviePilot 连接测试失败：" + (error.message || "未知错误") });
+    showToast("MoviePilot 连接测试失败", 1400);
+  } finally {
+    elements.moviePilotTestBtn.disabled = false;
+    elements.moviePilotTestBtn.textContent = original;
   }
 }
 
@@ -9186,6 +9566,505 @@ function renderHDHiveResults() {
       </div>
     </article>`;
   }).join("");
+}
+
+function moviePilotTypeLabel(type) {
+  return ({ movie: "电影", tv: "电视剧", anime: "动漫", other: "影视" })[String(type || "")] || "影视";
+}
+
+function moviePilotToolGroup(tool) {
+  const name = String(tool?.name || "").toLowerCase();
+  if (/(subscribe|filter_rule|rule_group)/.test(name)) return "订阅与规则";
+  if (/(torrent|download|transfer|directory)/.test(name)) return "资源与下载";
+  if (/(site|downloader|library)/.test(name)) return "站点与媒体库";
+  if (/(plugin|slash)/.test(name)) return "插件与命令";
+  if (/(scheduler|workflow|persona|doctor|system)/.test(name)) return "系统与自动化";
+  if (/(media|person|episode|recommend)/.test(name)) return "影视信息";
+  return "其他功能";
+}
+
+function moviePilotSelectedTool() {
+  return appState.moviePilotWorkspace.tools.find((tool) => tool.name === appState.moviePilotWorkspace.selected) || null;
+}
+
+function moviePilotToolInput(tool, name, schema, required) {
+  const title = String(schema?.title || schema?.description || name);
+  const description = String(schema?.description || "");
+  const type = String(schema?.type || "string");
+  const enums = Array.isArray(schema?.enum) ? schema.enum : [];
+  const requiredMark = required ? `<em>必填</em>` : "";
+  let control = "";
+  if (type === "boolean") control = `<label class="moviepilot-tool-check"><input name="${escapeHtml(name)}" type="checkbox"> 启用</label>`;
+  else if (enums.length) control = `<select name="${escapeHtml(name)}"><option value="">${required ? "请选择" : "保持默认"}</option>${enums.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select>`;
+  else if (type === "object" || type === "array") control = `<textarea name="${escapeHtml(name)}" rows="3" placeholder='输入 JSON，例如 ${type === "array" ? "[]" : "{}"}'></textarea>`;
+  else control = `<input name="${escapeHtml(name)}" type="${type === "integer" || type === "number" ? "number" : "text"}" ${type === "integer" || type === "number" ? "step=\"any\"" : ""} placeholder="${escapeHtml(title)}">`;
+  return `<label class="field moviepilot-tool-field"><span>${escapeHtml(title)}${requiredMark}</span>${control}${description ? `<small>${escapeHtml(description)}</small>` : ""}</label>`;
+}
+
+function renderMoviePilotWorkspace() {
+  const state = appState.moviePilotWorkspace;
+  const workspace = elements.moviePilotWorkspace;
+  if (!workspace) return;
+  const tools = Array.isArray(state.tools) ? state.tools : [];
+  if (elements.moviePilotWorkspaceSummary) elements.moviePilotWorkspaceSummary.textContent = state.loading ? "正在同步 MCP 功能…" : tools.length ? `已接入 ${tools.length} 项 MCP 功能` : "尚未读取功能";
+  const groups = ["all", ...Array.from(new Set(tools.map(moviePilotToolGroup)))];
+  if (elements.moviePilotToolGroups) elements.moviePilotToolGroups.innerHTML = groups.map((group) => `<button class="${state.group === group ? "is-active" : ""}" type="button" data-moviepilot-tool-group="${escapeHtml(group)}">${group === "all" ? "全部功能" : escapeHtml(group)} <small>${group === "all" ? tools.length : tools.filter((tool) => moviePilotToolGroup(tool) === group).length}</small></button>`).join("");
+  const keyword = String(state.filter || "").trim().toLowerCase();
+  const visible = tools.filter((tool) => (state.group === "all" || moviePilotToolGroup(tool) === state.group) && (!keyword || `${tool.name} ${tool.description || ""}`.toLowerCase().includes(keyword)));
+  if (elements.moviePilotToolList) elements.moviePilotToolList.innerHTML = state.loading ? `<div class="empty-state">正在读取 MoviePilot MCP 功能…</div>` : visible.length ? visible.map((tool) => `<button type="button" class="${state.selected === tool.name ? "is-active" : ""}" data-moviepilot-tool="${escapeHtml(tool.name)}"><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(moviePilotToolGroup(tool))}</span><i>MP</i></button>`).join("") : `<div class="empty-state">没有匹配的 MoviePilot 功能。</div>`;
+  const selected = moviePilotSelectedTool();
+  if (!selected) {
+    if (elements.moviePilotToolDetail) elements.moviePilotToolDetail.innerHTML = `<div class="empty-state">${tools.length ? "从左侧选择功能以查看参数和说明。" : "MoviePilot 未返回 MCP 功能。"}</div>`;
+    if (elements.moviePilotToolForm) elements.moviePilotToolForm.hidden = true;
+  } else {
+    const schema = selected.inputSchema && typeof selected.inputSchema === "object" ? selected.inputSchema : {};
+    const properties = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+    const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+    if (elements.moviePilotToolDetail) elements.moviePilotToolDetail.innerHTML = `<p class="section-label">${escapeHtml(moviePilotToolGroup(selected))}</p><h3>${escapeHtml(selected.name)}</h3><p>${escapeHtml(selected.description || "MoviePilot MCP 功能")}</p><div class="moviepilot-tool-badges"><span>MoviePilot MCP</span><span>${Object.keys(properties).length} 个参数</span></div>`;
+    if (elements.moviePilotToolFields) elements.moviePilotToolFields.innerHTML = Object.entries(properties).map(([name, definition]) => moviePilotToolInput(selected, name, definition, required.includes(name))).join("") || `<p class="moviepilot-tool-no-fields">此功能无需参数。</p>`;
+    if (elements.moviePilotToolForm) elements.moviePilotToolForm.hidden = false;
+    if (elements.moviePilotToolRun) elements.moviePilotToolRun.textContent = "执行";
+    if (elements.moviePilotToolSafety) elements.moviePilotToolSafety.textContent = "";
+  }
+  if (elements.moviePilotToolOutput) elements.moviePilotToolOutput.textContent = state.output == null ? "尚未执行功能。" : JSON.stringify(state.output, null, 2);
+}
+
+async function loadMoviePilotWorkspace(force = false) {
+  const state = appState.moviePilotWorkspace;
+  if (state.loading || (state.loaded && !force)) return;
+  state.loading = true;
+  renderMoviePilotWorkspace();
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/capabilities");
+    state.tools = Array.isArray(result?.tools) ? result.tools : [];
+    state.loaded = true;
+    if (!moviePilotSelectedTool() && state.tools.length) state.selected = state.tools[0].name;
+  } catch (error) {
+    state.tools = [];
+    state.output = { error: error?.message || "读取 MoviePilot 功能失败。" };
+  } finally {
+    state.loading = false;
+    renderMoviePilotWorkspace();
+  }
+}
+
+function openMoviePilotWorkspace(toolName = "", preset = {}) {
+  if (!elements.moviePilotWorkspace) return;
+  elements.moviePilotWorkspace.hidden = false;
+  if (toolName) appState.moviePilotWorkspace.selected = toolName;
+  renderMoviePilotWorkspace();
+  loadMoviePilotWorkspace().then(() => {
+    if (!toolName || !elements.moviePilotToolForm) return;
+    Object.entries(preset || {}).forEach(([name, value]) => {
+      const input = elements.moviePilotToolForm.elements.namedItem(name);
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement) input.value = typeof value === "object" ? JSON.stringify(value) : String(value);
+    });
+  });
+}
+
+function closeMoviePilotWorkspace() { if (elements.moviePilotWorkspace) elements.moviePilotWorkspace.hidden = true; }
+
+async function runMoviePilotTool(event) {
+  event.preventDefault();
+  const tool = moviePilotSelectedTool();
+  if (!tool || !elements.moviePilotToolForm) return;
+  const fields = new FormData(elements.moviePilotToolForm);
+  const argumentsObject = {};
+  for (const [name, raw] of fields.entries()) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    const field = tool.inputSchema?.properties?.[name] || {};
+    try {
+      argumentsObject[name] = field.type === "object" || field.type === "array" ? JSON.parse(value) : field.type === "integer" || field.type === "number" ? Number(value) : value;
+    } catch (_) { showToast(`${name} 需要有效 JSON。`, 1800); return; }
+  }
+  for (const checkbox of elements.moviePilotToolForm.querySelectorAll('input[type="checkbox"]')) argumentsObject[checkbox.name] = checkbox.checked;
+  if (elements.moviePilotToolRun) elements.moviePilotToolRun.disabled = true;
+  appState.moviePilotWorkspace.output = { status: "正在执行…", tool: tool.name, arguments: argumentsObject };
+  renderMoviePilotWorkspace();
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/tool", { method: "POST", body: JSON.stringify({ tool: tool.name, arguments: argumentsObject }) });
+    appState.moviePilotWorkspace.output = result;
+    showToast("MoviePilot 操作完成", 1500);
+  } catch (error) {
+    appState.moviePilotWorkspace.output = { error: error?.message || "MoviePilot 操作失败。" };
+    showToast("MoviePilot 操作失败", 1800);
+  } finally {
+    if (elements.moviePilotToolRun) elements.moviePilotToolRun.disabled = false;
+    renderMoviePilotWorkspace();
+  }
+}
+
+function moviePilotVisibleResults() {
+  const state = appState.moviePilotSearch;
+  return (state.items || []).filter((item) => state.filter === "all" || item.mediaType === state.filter);
+}
+
+const MOVIEPILOT_EXPLORE_SOURCE_META = {
+  tmdb_trending: { label: "TheMovieDb 流行趋势", filters: ["all", "movie", "tv"], defaultFilter: "all" },
+  douban_movies: { label: "豆瓣电影", filters: ["all", "movie"], defaultFilter: "movie" },
+  douban_tv_animation: { label: "豆瓣动漫", filters: ["tv"], defaultFilter: "tv" },
+  bangumi_calendar: { label: "Bangumi 每日放送", filters: ["tv"], defaultFilter: "tv" },
+  douban_showing: { label: "豆瓣正在热映", filters: ["movie"], defaultFilter: "movie" },
+};
+
+function moviePilotExploreSourceMeta(source = appState.moviePilotSearch.source) {
+  return MOVIEPILOT_EXPLORE_SOURCE_META[source] || MOVIEPILOT_EXPLORE_SOURCE_META.tmdb_trending;
+}
+
+function renderMoviePilotSearch() {
+  const state = appState.moviePilotSearch;
+  const host = elements.moviePilotSearchResults;
+  if (!host || !elements.moviePilotSearchStatus) return;
+  const sourceMeta = moviePilotExploreSourceMeta();
+  elements.moviePilotExploreSources?.querySelectorAll("[data-moviepilot-source]").forEach((button) => button.classList.toggle("is-active", button.dataset.moviepilotSource === state.source));
+  elements.moviePilotExploreFilters?.querySelectorAll("[data-moviepilot-explore-type]").forEach((button) => {
+    button.hidden = !sourceMeta.filters.includes(button.dataset.moviepilotExploreType || "");
+  });
+  const visible = moviePilotVisibleResults();
+  elements.moviePilotSearchTabs?.querySelectorAll("[data-moviepilot-filter]").forEach((button) => {
+    const active = button.dataset.moviepilotFilter === state.filter;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  if (state.loading && !(state.mode === "explore" && state.items.length)) {
+    elements.moviePilotSearchStatus.textContent = "正在从 MoviePilot 读取搜索结果…";
+    host.innerHTML = `<div class="moviepilot-empty-state is-loading"><strong>◌</strong><span>正在搜索影视信息…</span></div>`;
+    return;
+  }
+  if (state.error) {
+    elements.moviePilotSearchStatus.textContent = "搜索未完成";
+    host.innerHTML = `<div class="moviepilot-empty-state is-error"><strong>!</strong><span>${escapeHtml(state.error)}</span></div>`;
+    return;
+  }
+  if (!state.searched) {
+    elements.moviePilotSearchStatus.textContent = state.mode === "explore" ? `正在浏览 ${sourceMeta.label} · ${state.items.length} 项${state.exploreHasMore ? " · 向下滚动加载更多" : " · 已加载全部"}。` : "输入名称后开始搜索。";
+    if (state.mode === "explore" && state.items.length) {
+      host.innerHTML = state.items.map((item) => {
+        const index = state.items.indexOf(item);
+        const poster = item.posterUrl ? `<img src="${escapeHtml(item.posterUrl)}" alt="${escapeHtml(item.title)}" loading="lazy">` : "";
+        const rating = Number.isFinite(Number(item.rating)) ? `<span class="moviepilot-card-rating">${escapeHtml(item.rating)}</span>` : "";
+        return `<button class="moviepilot-result-card${poster ? "" : " no-poster"}" type="button" data-moviepilot-result-index="${index}"><span class="moviepilot-card-poster">${poster}<i>MEDIA</i></span><span class="moviepilot-card-type">${escapeHtml(moviePilotTypeLabel(item.mediaType))}</span>${rating}<span class="moviepilot-card-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.year, item.originalTitle].filter(Boolean).join(" · ") || "暂无年份")}</small></span></button>`;
+      }).join("");
+      host.querySelectorAll("img").forEach((image) => image.addEventListener("error", () => image.closest(".moviepilot-result-card")?.classList.add("no-poster"), { once: true }));
+      return;
+    }
+    host.innerHTML = `<div class="moviepilot-empty-state"><strong>⌕</strong><span>搜索 MoviePilot 中的电影、剧集和动漫。</span></div>`;
+    return;
+  }
+  elements.moviePilotSearchStatus.textContent = visible.length
+    ? `“${state.query}”找到 ${state.items.length} 项 · 当前显示 ${visible.length} 项`
+    : state.items.length ? "当前分类没有匹配结果。" : `没有找到与“${state.query}”相关的结果。`;
+  if (!visible.length) {
+    host.innerHTML = `<div class="moviepilot-empty-state"><strong>⌕</strong><span>${state.items.length ? "试试切换到其他分类。" : "换个更准确的片名再试一次。"}</span></div>`;
+    return;
+  }
+  host.innerHTML = visible.map((item) => {
+    const index = state.items.indexOf(item);
+    const poster = item.posterUrl ? `<img src="${escapeHtml(item.posterUrl)}" alt="${escapeHtml(item.title)}" loading="lazy">` : "";
+    const rating = Number.isFinite(Number(item.rating)) ? `<span class="moviepilot-card-rating">${escapeHtml(item.rating)}</span>` : "";
+    return `<button class="moviepilot-result-card${poster ? "" : " no-poster"}" type="button" data-moviepilot-result-index="${index}">
+      <span class="moviepilot-card-poster">${poster}<i>MEDIA</i></span>
+      <span class="moviepilot-card-type">${escapeHtml(moviePilotTypeLabel(item.mediaType))}</span>${rating}
+      <span class="moviepilot-card-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.year, item.originalTitle].filter(Boolean).join(" · ") || "暂无年份")}</small></span>
+    </button>`;
+  }).join("");
+  host.querySelectorAll("img").forEach((image) => image.addEventListener("error", () => image.closest(".moviepilot-result-card")?.classList.add("no-poster"), { once: true }));
+}
+
+async function searchMoviePilot(query = elements.moviePilotSearchInput?.value || "") {
+  const value = String(query || "").trim();
+  const state = appState.moviePilotSearch;
+  if (!value) {
+    state.error = "请输入电影、剧集或动漫名称。";
+    state.searched = false;
+    renderMoviePilotSearch();
+    return;
+  }
+  state.query = value;
+  state.mode = "search";
+  state.loading = true;
+  state.error = "";
+  state.searched = true;
+  const requestId = ++state.requestId;
+  if (elements.moviePilotSearchSubmit) elements.moviePilotSearchSubmit.disabled = true;
+  renderMoviePilotSearch();
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/search", { method: "POST", body: JSON.stringify({ query: value }) });
+    if (requestId !== state.requestId) return;
+    state.items = Array.isArray(result?.items) ? result.items : [];
+  } catch (error) {
+    if (requestId !== state.requestId) return;
+    state.items = [];
+    state.error = error?.message || "MoviePilot 搜索失败，请稍后重试。";
+  } finally {
+    if (requestId === state.requestId) {
+      state.loading = false;
+      if (elements.moviePilotSearchSubmit) elements.moviePilotSearchSubmit.disabled = false;
+      renderMoviePilotSearch();
+    }
+  }
+}
+
+async function loadMoviePilotExplore(options = {}) {
+  const { append = false } = options;
+  const state = appState.moviePilotSearch;
+  if (append && (!state.exploreLoaded || state.loading || !state.exploreHasMore)) return;
+  state.mode = "explore";
+  state.searched = false;
+  state.loading = true;
+  state.error = "";
+  const page = append ? state.explorePage + 1 : 1;
+  if (!append) {
+    state.items = [];
+    state.explorePage = 0;
+    state.exploreHasMore = true;
+  }
+  const requestId = ++state.requestId;
+  renderMoviePilotSearch();
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/explore", { method: "POST", body: JSON.stringify({ source: state.source, mediaType: state.filter, page }) });
+    if (requestId !== state.requestId) return;
+    const incoming = Array.isArray(result?.items) ? result.items : [];
+    const existing = append ? state.items : [];
+    const known = new Set(existing.map((item) => item.tmdbId || item.imdbId || `${item.title}|${item.year}|${item.mediaType}`));
+    state.items = [...existing, ...incoming.filter((item) => {
+      const key = item.tmdbId || item.imdbId || `${item.title}|${item.year}|${item.mediaType}`;
+      if (known.has(key)) return false;
+      known.add(key);
+      return true;
+    })];
+    state.explorePage = Number(result?.page || page);
+    state.exploreHasMore = Boolean(result?.hasMore) && incoming.length > 0;
+    state.exploreLoaded = true;
+  } catch (error) {
+    if (requestId !== state.requestId) return;
+    if (!append) state.items = [];
+    state.error = error?.message || "MoviePilot 探索内容读取失败。";
+  } finally {
+    if (requestId === state.requestId) { state.loading = false; renderMoviePilotSearch(); }
+  }
+}
+
+function maybeLoadMoreMoviePilotExplore() {
+  const state = appState.moviePilotSearch;
+  const host = elements.mainContent;
+  if (appState.activeView !== "moviepilot-search" || state.mode !== "explore" || state.loading || !state.exploreHasMore || !host) return;
+  if (host.scrollTop + host.clientHeight >= host.scrollHeight - 520) loadMoviePilotExplore({ append: true });
+}
+
+function ensureMoviePilotExploreLoaded() {
+  const state = appState.moviePilotSearch;
+  if (appState.activeView === "moviepilot-search" && isAdminReady() && !state.exploreLoaded && !state.loading) {
+    loadMoviePilotExplore();
+  }
+}
+
+function scheduleMoviePilotSearch() {
+  const state = appState.moviePilotSearch;
+  window.clearTimeout(state.debounceTimer);
+  const value = String(elements.moviePilotSearchInput?.value || "").trim();
+  if (value.length < 2) return;
+  state.debounceTimer = window.setTimeout(() => searchMoviePilot(value), 420);
+}
+
+async function findMoviePilotInEmby(item) {
+  if (!appState.config.serverUrl || !appState.config.apiKey) return null;
+  const params = new URLSearchParams({ Recursive: "true", IncludeItemTypes: "Movie,Series", Fields: "Name,Type,ProviderIds", Limit: "5" });
+  if (item.tmdbId) params.set("AnyProviderIdEquals", `tmdb.${item.tmdbId}`);
+  else params.set("SearchTerm", item.title || "");
+  try {
+    const result = await embyFetch(`/Items?${params.toString()}`);
+    return Array.isArray(result?.Items) ? result.Items[0] || null : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeMoviePilotTmdbDetail(payload, mediaType = "") {
+  const row = payload && typeof payload === "object" ? payload : {};
+  const isTv = ["tv", "anime", "series"].includes(String(mediaType || "").toLowerCase());
+  const releaseDate = String(isTv ? (row.first_air_date || row.release_date || "") : (row.release_date || row.first_air_date || ""));
+  const crew = Array.isArray(row.credits?.crew) ? row.credits.crew : [];
+  const namedCrew = (job) => crew.filter((person) => person?.job === job && person?.name).map((person) => String(person.name));
+  const list = (rows) => Array.isArray(rows) ? rows.map((entry) => typeof entry === "string" ? entry : String(entry?.name || "")).filter(Boolean) : [];
+  const rating = Number(row.vote_average);
+  return {
+    title: String(row.name || row.title || ""),
+    originalTitle: String(row.original_name || row.original_title || ""),
+    year: releaseDate.match(/(?:19|20)\d{2}/)?.[0] || "",
+    mediaType: isTv ? "tv" : "movie",
+    rating: Number.isFinite(rating) ? Math.round(rating * 10) / 10 : null,
+    overview: String(row.overview || ""),
+    tagline: String(row.tagline || ""),
+    posterUrl: buildTmdbImageUrl(row.poster_path, "original"),
+    backdropUrl: buildTmdbImageUrl(row.backdrop_path, "original"),
+    tmdbId: String(row.id || ""),
+    imdbId: String(row.external_ids?.imdb_id || ""),
+    genres: list(row.genres),
+    status: String(row.status || ""),
+    releaseDate,
+    originalLanguage: String(row.original_language || ""),
+    countries: list(row.production_countries).length ? list(row.production_countries) : list(row.origin_country),
+    productionCompanies: list(row.production_companies),
+    credits: {
+      directors: namedCrew("Director"),
+      writers: dedupeStringList([...namedCrew("Writer"), ...namedCrew("Screenplay")]),
+      creators: list(row.created_by),
+      cast: list(row.credits?.cast),
+    },
+    seasons: Array.isArray(row.seasons) ? row.seasons.map((season) => ({ number: String(season?.season_number || ""), name: String(season?.name || ""), episodeCount: String(season?.episode_count || "") })).filter((season) => season.number || season.name) : [],
+  };
+}
+
+function mergeMoviePilotDetail(base, preferred) {
+  const merged = { ...(base || {}) };
+  Object.entries(preferred || {}).forEach(([key, value]) => {
+    if (key === "credits") {
+      merged.credits = { ...(merged.credits || {}) };
+      Object.entries(value || {}).forEach(([creditKey, people]) => {
+        if (Array.isArray(people) && people.length) merged.credits[creditKey] = people;
+      });
+    } else if (value !== null && value !== undefined && value !== "" && (!Array.isArray(value) || value.length) && (typeof value !== "object" || Array.isArray(value))) {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
+async function fetchMoviePilotTmdbDetail(item) {
+  if (!item?.tmdbId || !isTmdbFallbackEnabled()) return null;
+  const mediaType = item.mediaType === "anime" ? "tv" : item.mediaType;
+  if (!["movie", "tv"].includes(mediaType)) return null;
+  try {
+    const payload = await tmdbFetchJson(`/3/${mediaType}/${encodeURIComponent(item.tmdbId)}`, {
+      language: appState.config.tmdbLanguage || "zh-CN",
+      append_to_response: "credits,external_ids",
+    });
+    return normalizeMoviePilotTmdbDetail(payload, mediaType);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function openMoviePilotDetail(index) {
+  const item = appState.moviePilotSearch.items[index];
+  if (!item) return;
+  document.getElementById("moviepilot-detail-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "moviepilot-detail-modal";
+  modal.className = "moviepilot-detail-modal";
+  modal.innerHTML = `<section class="moviepilot-detail-panel" role="dialog" aria-modal="true" aria-label="影视详情"><button class="moviepilot-detail-close" type="button" aria-label="关闭">×</button><div class="moviepilot-detail-loading"><strong>◌</strong><span>正在从 MoviePilot 读取影视详情…</span></div></section>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (event) => { if (event.target === modal || event.target.closest(".moviepilot-detail-close")) modal.remove(); });
+  const detailPromise = item.tmdbId ? inviteApiFetch("/api/moviepilot/detail", { method: "POST", body: JSON.stringify({ tmdbId: item.tmdbId, mediaType: item.mediaType, title: item.title }) }) : Promise.resolve({ detail: item });
+  const [detailResult, libraryResult, tmdbResult] = await Promise.allSettled([detailPromise, findMoviePilotInEmby(item), fetchMoviePilotTmdbDetail(item)]);
+  if (!modal.isConnected) return;
+  let detail = detailResult.status === "fulfilled" ? { ...item, ...(detailResult.value?.detail || {}) } : item;
+  if (tmdbResult.status === "fulfilled" && tmdbResult.value) detail = mergeMoviePilotDetail(detail, tmdbResult.value);
+  const library = libraryResult.status === "fulfilled" ? libraryResult.value : null;
+  const poster = detail.posterUrl ? `<img src="${escapeHtml(detail.posterUrl)}" alt="${escapeHtml(detail.title)}">` : `<div class="moviepilot-detail-fallback">MEDIA</div>`;
+  const heroImage = detail.backdropUrl || detail.posterUrl || item.backdropUrl || item.posterUrl || "";
+  const backdrop = heroImage ? ` style="background-image:url('${escapeHtml(heroImage)}')"` : "";
+  const credits = detail.credits || {};
+  const credit = (label, people) => Array.isArray(people) && people.length ? `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(people.slice(0, 12).join("、"))}</span></div>` : "";
+  const facts = [["评分", detail.rating != null ? `${detail.rating} / 10` : "暂无"], ["TMDB ID", detail.tmdbId || item.tmdbId || "暂无"], ["原始标题", detail.originalTitle || "暂无"], ["状态", detail.status || "暂无"], ["上映日期", detail.releaseDate || detail.year || "暂无"], ["数字发行", detail.digitalReleaseDate || "暂无"], ["原始语言", detail.originalLanguage || "暂无"], ["出品国家", detail.countries?.join("、") || "暂无"], ["制作公司", detail.productionCompanies?.join("、") || "暂无"]].map(([label, value]) => `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></div>`).join("");
+  const embyAction = library ? (() => { const base = String(appState.config.serverUrl || "").replace(/\/emby$/i, "").replace(/\/$/, ""); return `<span class="moviepilot-library-status is-ready">已入库</span><a class="moviepilot-detail-link" href="${escapeHtml(`${base}/web/index.html#!/item?id=${encodeURIComponent(library.Id)}`)}" target="_blank" rel="noopener noreferrer">在 Emby 打开</a>`; })() : `<span class="moviepilot-library-status">未入库</span>`;
+  modal.querySelector(".moviepilot-detail-panel").innerHTML = `<button class="moviepilot-detail-close" type="button" aria-label="关闭">×</button><div class="moviepilot-detail-hero"${backdrop}><div class="moviepilot-detail-hero-wash"></div><div class="moviepilot-detail-poster">${poster}</div><div class="moviepilot-detail-title"><p class="moviepilot-detail-kicker">${escapeHtml(moviePilotTypeLabel(detail.mediaType || item.mediaType))}</p><h3>${escapeHtml(detail.title || item.title)}</h3>${detail.originalTitle ? `<p class="moviepilot-detail-original">${escapeHtml(detail.originalTitle)}</p>` : ""}<div class="moviepilot-detail-meta">${escapeHtml([detail.year, moviePilotTypeLabel(detail.mediaType || item.mediaType), detail.tmdbId || item.tmdbId ? `TMDB ID ${detail.tmdbId || item.tmdbId}` : "", detail.rating != null ? `评分 ${detail.rating}` : ""].filter(Boolean).join("　"))}</div><div class="moviepilot-detail-genres">${escapeHtml((detail.genres || []).join("　") || "影视详情")}</div><div class="moviepilot-detail-library">${embyAction}${detail.tmdbId || item.tmdbId ? `<span>TMDB</span>` : ""}${detail.imdbId ? `<span>IMDb</span>` : ""}</div></div><div class="moviepilot-detail-actions">${detail.tmdbId || item.tmdbId ? `<button class="moviepilot-action-button" type="button" data-moviepilot-detail-action="torrents">⌕ 搜索资源</button>` : ""}<button class="moviepilot-action-button is-subscribe" type="button" data-moviepilot-detail-action="subscribe">♧ MP订阅</button></div></div><div class="moviepilot-detail-body"><article class="moviepilot-detail-copy">${detail.tagline ? `<p class="moviepilot-detail-tagline">${escapeHtml(detail.tagline)}</p>` : ""}<h4>剧情简介</h4><p>${escapeHtml(detail.overview || "MoviePilot 未提供作品简介。")}</p><div class="moviepilot-detail-credits">${credit("导演", credits.directors)}${credit("编剧", credits.writers)}${credit("主创", credits.creators)}${credit("主演", credits.cast)}</div>${detail.seasons?.length ? `<h4>季集信息</h4><div class="moviepilot-detail-seasons">${detail.seasons.map((season) => `<span>${escapeHtml([season.name || (season.number ? `第 ${season.number} 季` : "季"), season.episodeCount ? `${season.episodeCount} 集` : ""].filter(Boolean).join(" · "))}</span>`).join("")}</div>` : ""}</article><aside class="moviepilot-detail-facts">${facts}</aside></div>`;
+  modal.querySelectorAll("img").forEach((image) => image.addEventListener("error", () => image.closest(".moviepilot-detail-poster")?.classList.add("no-poster"), { once: true }));
+  if (detailResult.status === "rejected") modal.querySelector(".moviepilot-detail-copy")?.insertAdjacentHTML("afterbegin", `<p class="moviepilot-detail-read-error">详情读取失败：已显示当前卡片信息。</p>`);
+  modal.querySelectorAll("[data-moviepilot-detail-action]").forEach((button) => button.addEventListener("click", () => {
+    const action = button.dataset.moviepilotDetailAction;
+    modal.remove();
+    if (action === "torrents") openMoviePilotResources(detail, item);
+    if (action === "subscribe") openMoviePilotWorkspace("add_subscribe", { title: detail.title || item.title, year: detail.year || item.year, media_type: detail.mediaType === "anime" ? "tv" : detail.mediaType, tmdb_id: detail.tmdbId || item.tmdbId });
+  }));
+}
+
+function moviePilotResourceFilters(filters = {}) {
+  return [
+    ["site", "站点", filters.site || []],
+    ["freeState", "优惠", filters.freeState || []],
+    ["resolution", "分辨率", filters.resolution || []],
+    ["edition", "版本", filters.edition || []],
+  ];
+}
+
+function renderMoviePilotResources(state) {
+  const modal = document.getElementById("moviepilot-resource-modal");
+  if (!modal) return;
+  const rows = state.items || [];
+  const selectedCount = state.selected.size;
+  const filters = moviePilotResourceFilters(state.filters);
+  const controls = filters.map(([key, label, values]) => `<label><span>${label}</span><select data-moviepilot-resource-filter="${key}"><option value="">全部</option>${values.map((value) => `<option value="${escapeHtml(value)}" ${state.activeFilters[key] === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>`).join("");
+  const tableRows = rows.length ? rows.map((row) => `<tr><td><input type="checkbox" data-moviepilot-resource-ref="${escapeHtml(row.reference)}" ${state.selected.has(row.reference) ? "checked" : ""}></td><td><a href="${escapeHtml(row.pageUrl || "#")}" target="_blank" rel="noopener noreferrer" class="moviepilot-resource-title">${escapeHtml(row.title)}</a><small>${escapeHtml([row.edition, row.videoCodec, row.releaseGroup].filter(Boolean).join(" · "))}</small></td><td>${escapeHtml(row.site || "-")}</td><td>${escapeHtml(row.size || "-")}</td><td><b>${escapeHtml(row.seeders || "0")}</b><small> / ${escapeHtml(row.peers || "0")}</small></td><td>${escapeHtml(row.freeState || "-")}${row.freeUntil ? `<small>${escapeHtml(row.freeUntil)}</small>` : ""}</td><td>${escapeHtml(row.resolution || "-")}</td></tr>`).join("") : `<tr><td colspan="7" class="moviepilot-resource-empty">${state.loading ? "正在读取 MoviePilot PT 资源…" : "没有匹配的资源。"}</td></tr>`;
+  modal.innerHTML = `<section class="moviepilot-resource-panel" role="dialog" aria-modal="true" aria-label="MoviePilot 资源搜索"><button class="moviepilot-resource-close" type="button" aria-label="关闭">×</button><header><div><p class="section-label">MOVIEPILOT · PT 资源</p><h3>${escapeHtml(state.title)}</h3><p>${state.loading ? "正在搜索已配置的 PT 站点…" : `找到 ${state.totalCount || rows.length} 条资源 · 第 ${state.page}/${state.totalPages}`}</p></div><div class="moviepilot-resource-actions"><button class="ghost-btn" type="button" data-moviepilot-resource-refresh>重新搜索</button><button class="primary-btn" type="button" data-moviepilot-resource-download ${selectedCount ? "" : "disabled"}>下载已选 (${selectedCount})</button></div></header>${state.searchError ? `<p class="moviepilot-resource-warning">重新搜索失败：${escapeHtml(state.searchError)}；正在展示 MoviePilot 缓存结果。</p>` : ""}<div class="moviepilot-resource-filters">${controls}</div><div class="moviepilot-resource-table-wrap"><table class="moviepilot-resource-table"><thead><tr><th><input type="checkbox" data-moviepilot-resource-select-all ${rows.length && selectedCount === rows.length ? "checked" : ""}></th><th>资源</th><th>站点</th><th>大小</th><th>做种</th><th>优惠</th><th>清晰度</th></tr></thead><tbody>${tableRows}</tbody></table></div><footer><button class="ghost-btn" type="button" data-moviepilot-resource-page="prev" ${state.page <= 1 ? "disabled" : ""}>上一页</button><span>${state.page}/${state.totalPages}</span><button class="ghost-btn" type="button" data-moviepilot-resource-page="next" ${state.page >= state.totalPages ? "disabled" : ""}>下一页</button></footer></section>`;
+}
+
+async function loadMoviePilotResources(state, page = 1) {
+  state.loading = true;
+  state.page = page;
+  renderMoviePilotResources(state);
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/resources/search", { method: "POST", body: JSON.stringify({ tmdbId: state.tmdbId, mediaType: state.mediaType, page, filters: state.activeFilters }) });
+    state.items = Array.isArray(result?.items) ? result.items : [];
+    state.filters = result?.filters || {};
+    state.totalCount = Number(result?.totalCount || state.items.length);
+    state.page = Number(result?.page || page);
+    state.totalPages = Math.max(1, Number(result?.totalPages || 1));
+    state.searchError = String(result?.searchError || "");
+    state.selected.clear();
+  } catch (error) {
+    state.items = [];
+    state.searchError = error?.message || "MoviePilot 资源搜索失败。";
+  } finally {
+    state.loading = false;
+    renderMoviePilotResources(state);
+  }
+}
+
+async function downloadMoviePilotResources(state) {
+  const references = [...state.selected];
+  if (!references.length) return;
+  const button = document.querySelector("[data-moviepilot-resource-download]");
+  if (button) button.disabled = true;
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/resources/download", { method: "POST", body: JSON.stringify({ references }) });
+    const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+    showToast(failed ? `已提交 ${result?.successCount || 0} 条，${failed} 条失败` : `已提交 ${result?.successCount || references.length} 个下载任务`, 2200);
+    state.selected.clear();
+    renderMoviePilotResources(state);
+  } catch (error) {
+    showToast(error?.message || "创建 MoviePilot 下载任务失败。", 2200);
+    if (button) button.disabled = false;
+  }
+}
+
+function openMoviePilotResources(detail, item) {
+  document.getElementById("moviepilot-resource-modal")?.remove();
+  const tmdbId = String(detail.tmdbId || item.tmdbId || "");
+  if (!tmdbId) { showToast("缺少 TMDB ID，无法在 MoviePilot 精准搜索资源。", 1800); return; }
+  const state = { title: detail.title || item.title || "影视资源", tmdbId, mediaType: detail.mediaType === "anime" ? "tv" : (detail.mediaType || item.mediaType), items: [], filters: {}, activeFilters: {}, selected: new Set(), totalCount: 0, page: 1, totalPages: 1, loading: true, searchError: "" };
+  const modal = document.createElement("div");
+  modal.id = "moviepilot-resource-modal";
+  modal.className = "moviepilot-resource-modal";
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal || event.target.closest(".moviepilot-resource-close")) { modal.remove(); return; }
+    const row = event.target instanceof Element ? event.target.closest("[data-moviepilot-resource-ref]") : null;
+    if (row instanceof HTMLInputElement) { row.checked ? state.selected.add(row.dataset.moviepilotResourceRef) : state.selected.delete(row.dataset.moviepilotResourceRef); renderMoviePilotResources(state); return; }
+    const all = event.target instanceof Element ? event.target.closest("[data-moviepilot-resource-select-all]") : null;
+    if (all instanceof HTMLInputElement) { state.items.forEach((item) => all.checked ? state.selected.add(item.reference) : state.selected.delete(item.reference)); renderMoviePilotResources(state); return; }
+    const pageButton = event.target instanceof Element ? event.target.closest("[data-moviepilot-resource-page]") : null;
+    if (pageButton) { loadMoviePilotResources(state, pageButton.dataset.moviepilotResourcePage === "next" ? state.page + 1 : state.page - 1); return; }
+    if (event.target instanceof Element && event.target.closest("[data-moviepilot-resource-refresh]")) { loadMoviePilotResources(state, 1); return; }
+    if (event.target instanceof Element && event.target.closest("[data-moviepilot-resource-download]")) downloadMoviePilotResources(state);
+  });
+  modal.addEventListener("change", (event) => {
+    const filter = event.target instanceof Element ? event.target.closest("[data-moviepilot-resource-filter]") : null;
+    if (filter instanceof HTMLSelectElement) { state.activeFilters[filter.dataset.moviepilotResourceFilter] = filter.value; loadMoviePilotResources(state, 1); }
+  });
+  loadMoviePilotResources(state);
 }
 
 async function loadHDHiveConfigFromServer(options = {}) {
@@ -10433,15 +11312,12 @@ function renderNotificationChannelCards(config) {
         const meta = getNotificationChannelMeta(channel);
         const configured = isNotificationChannelConfigured(channel, config);
         const enabled = Boolean(config?.channels?.[channel]?.enabled);
-        const statusText = getNotificationChannelStatusText(channel, config);
-        const routeCount = Object.values(config?.routes?.[channel] || {}).filter(Boolean).length;
         return `
           <article class="notify-channel-card ${configured ? "is-configured" : "is-draft"}" data-notify-channel-card-wrap="${escapeHtml(channel)}">
             <button class="notify-channel-card-main" type="button" data-notify-channel-open="${escapeHtml(channel)}">
               <span class="bot-channel-icon ${escapeHtml(meta.iconClass)}" aria-hidden="true"></span>
               <span class="notify-channel-card-copy">
                 <strong><span class="notify-channel-card-status ${enabled ? "is-online" : configured ? "is-idle" : "is-pending"}" aria-hidden="true"></span>${escapeHtml(meta.label)}</strong>
-                <small>${escapeHtml(statusText)} · 已开启 ${routeCount} 项事件</small>
               </span>
             </button>
             <button class="notify-channel-card-remove" type="button" aria-label="移除 ${escapeHtml(meta.label)}" data-notify-channel-remove="${escapeHtml(channel)}">×</button>
@@ -11190,6 +12066,7 @@ function renderAll() {
   renderHDHiveConfig();
   renderHDHiveResults();
   renderHDHiveRecords();
+  renderMoviePilotSearch();
 }
 
 function swapLogsActionBlocks(activeView) {
@@ -11317,16 +12194,23 @@ function switchView(view) {
   if (elements.topbarIcon) {
     elements.topbarIcon.textContent = meta.icon || "👥";
   }
-  if (targetView === "missing" && !appState.missingLoading && !appState.missingScannedOnce) {
-    loadMissingList({ quiet: true }).catch(() => {
-      // 初次进入缺集页读取失败时保持静默，避免打断主流程
-    });
+  if (targetView === "missing") {
+    if (!appState.missingLoading && !appState.missingScannedOnce) {
+      loadMissingList({ quiet: true }).catch(() => {
+        // 初次进入缺集页读取失败时保持静默，避免打断主流程
+      });
+    }
+    resumeMissingScanIfRunning();
   }
   if ((targetView === "media-config" || targetView === "workshop") && shouldUseLocalProxy()) {
     loadCoverStudioConfigFromServer({ silent: true });
     if (appState.config.serverUrl && appState.config.apiKey) {
       loadCoverStudioViews({ silent: true });
     }
+  }
+  if (targetView === "moviepilot-search") {
+    renderMoviePilotSearch();
+    if (!appState.moviePilotSearch.exploreLoaded && isAdminReady()) loadMoviePilotExplore();
   }
   if (elements.mainContent) {
     elements.mainContent.scrollTo({ top: 0, behavior: "smooth" });
@@ -13081,6 +13965,15 @@ function initEvents() {
     input?.addEventListener("change", () => updateAiFeedbackFromInputs({ saved: false }));
   });
   [
+    elements.moviePilotEnabled,
+    elements.moviePilotBaseUrl,
+    elements.moviePilotApiToken,
+    elements.moviePilotTimeoutSeconds
+  ].forEach((input) => {
+    input?.addEventListener("input", () => updateMoviePilotFeedback({ saved: false }));
+    input?.addEventListener("change", () => updateMoviePilotFeedback({ saved: false }));
+  });
+  [
     elements.libraryDirectoryRootPath,
     elements.libraryDirectoryRootName,
     elements.libraryDirectoryMaxDepth,
@@ -13091,7 +13984,6 @@ function initEvents() {
   });
   [
     elements.coverStudioViewSelect,
-    elements.coverStudioTemplateKey,
     elements.coverStudioPickMode,
     elements.coverStudioPresetName,
     elements.coverStudioTitleText,
@@ -13144,12 +14036,16 @@ function initEvents() {
     renderCoverStudioPreview();
   });
   elements.coverStudioTemplateKey?.addEventListener("change", () => {
-    const selectedMode = getCoverStudioModeMeta(elements.coverStudioTemplateKey?.value || "fan_spread");
+    const selectedTemplateKey = String(
+      elements.coverStudioTemplateKey?.value || "banner_showcase"
+    ).trim() || "banner_showcase";
+    const selectedMode = getCoverStudioModeMeta(selectedTemplateKey);
     const defaults = selectedMode?.defaults || {};
     appState.coverStudioConfig = normalizeCoverStudioConfig({
       ...appState.coverStudioConfig,
       draft: {
         ...readCoverStudioDraftFromInputs(),
+        templateKey: selectedTemplateKey,
         titleAlign: defaults.titleAlign,
         overlayStrength: defaults.overlayStrength,
         posterCount: defaults.posterCount,
@@ -13380,6 +14276,69 @@ function initEvents() {
     }
   });
   elements.aiTestBtn?.addEventListener("click", testAiConfig);
+  elements.moviePilotTestBtn?.addEventListener("click", testMoviePilotConfig);
+  elements.moviePilotSearchForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    searchMoviePilot();
+  });
+  elements.moviePilotSearchInput?.addEventListener("input", scheduleMoviePilotSearch);
+  elements.moviePilotWorkspaceBtn?.addEventListener("click", () => openMoviePilotWorkspace());
+  elements.moviePilotWorkspaceClose?.addEventListener("click", closeMoviePilotWorkspace);
+  elements.moviePilotToolFilter?.addEventListener("input", () => {
+    appState.moviePilotWorkspace.filter = String(elements.moviePilotToolFilter?.value || "");
+    renderMoviePilotWorkspace();
+  });
+  elements.moviePilotToolGroups?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-tool-group]") : null;
+    if (!button) return;
+    appState.moviePilotWorkspace.group = button.dataset.moviepilotToolGroup || "all";
+    renderMoviePilotWorkspace();
+  });
+  elements.moviePilotToolList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-tool]") : null;
+    if (!button) return;
+    appState.moviePilotWorkspace.selected = button.dataset.moviepilotTool || "";
+    renderMoviePilotWorkspace();
+  });
+  elements.moviePilotToolForm?.addEventListener("submit", runMoviePilotTool);
+  elements.moviePilotToolResultClear?.addEventListener("click", () => {
+    appState.moviePilotWorkspace.output = null;
+    renderMoviePilotWorkspace();
+  });
+  elements.moviePilotSearchTabs?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-filter]") : null;
+    if (!button) return;
+    appState.moviePilotSearch.filter = button.dataset.moviepilotFilter || "all";
+    renderMoviePilotSearch();
+  });
+  elements.moviePilotExploreSources?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-source]") : null;
+    if (!button) return;
+    appState.moviePilotSearch.source = button.dataset.moviepilotSource || "tmdb_trending";
+    const sourceMeta = moviePilotExploreSourceMeta(appState.moviePilotSearch.source);
+    appState.moviePilotSearch.filter = sourceMeta.defaultFilter;
+    elements.moviePilotExploreFilters?.querySelectorAll("[data-moviepilot-explore-type]").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.moviepilotExploreType === sourceMeta.defaultFilter));
+    appState.moviePilotSearch.exploreLoaded = false;
+    elements.moviePilotSearchInput.value = "";
+    loadMoviePilotExplore();
+  });
+  elements.moviePilotExploreFilters?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-explore-type]") : null;
+    if (!button) return;
+    appState.moviePilotSearch.filter = button.dataset.moviepilotExploreType || "all";
+    elements.moviePilotExploreFilters.querySelectorAll("[data-moviepilot-explore-type]").forEach((chip) => chip.classList.toggle("is-active", chip === button));
+    appState.moviePilotSearch.exploreLoaded = false;
+    elements.moviePilotSearchInput.value = "";
+    loadMoviePilotExplore();
+  });
+  elements.mainContent?.addEventListener("scroll", maybeLoadMoreMoviePilotExplore, { passive: true });
+  document.addEventListener("adaptive:viewchange", ensureMoviePilotExploreLoaded);
+  window.addEventListener("vistamirror:auth-ready", ensureMoviePilotExploreLoaded);
+  elements.moviePilotSearchResults?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-result-index]") : null;
+    if (!button) return;
+    openMoviePilotDetail(Number(button.dataset.moviepilotResultIndex));
+  });
   [
     elements.drive115Enabled,
     elements.drive115Cookie,
@@ -13816,6 +14775,7 @@ function hydrateInputs() {
   renderMediaServerSelector();
   refreshTmdbUiState();
   renderAiSettings();
+  renderMoviePilotSettings();
   renderCoverStudioSettings();
   renderLibraryDirectorySettings();
   renderEnvControlledState();
@@ -13845,6 +14805,7 @@ async function startPostAuthBootstrap() {
         refreshInviteSyncStatus({ silent: true });
         loadBotConfigFromServer({ silent: true });
         loadAiConfigFromServer({ silent: true });
+        loadMoviePilotConfigFromServer({ silent: true });
         loadCoverStudioConfigFromServer({ silent: true });
         loadDrive115ConfigFromServer({ silent: true });
         loadHDHiveConfigFromServer({ silent: true });
@@ -13855,6 +14816,22 @@ async function startPostAuthBootstrap() {
     if (appState.config.serverUrl && appState.config.apiKey) {
       await loadEmbyData();
       await loadCoverStudioViews({ silent: true });
+    }
+    // switchView() runs before admin authentication is ready on a fresh load.
+    // Restore the persisted strict scan here so the missing page does not stay
+    // empty after that early, intentionally quiet request was skipped.
+    if (appState.activeView === "missing") {
+      try {
+        await loadMissingList({ quiet: true });
+        await resumeMissingScanIfRunning();
+      } catch (_error) {
+        // The empty state keeps its existing retry action when the API is unavailable.
+      }
+    }
+    // The persisted MoviePilot page can be restored before authentication is
+    // ready. Load its default discovery feed only after protected APIs work.
+    if (appState.activeView === "moviepilot-search" && !appState.moviePilotSearch.exploreLoaded) {
+      await loadMoviePilotExplore();
     }
   })();
   return postAuthBootstrapPromise;
@@ -14107,6 +15084,7 @@ async function startPostAuthBootstrap() {
 
     const fragment = document.createDocumentFragment();
     let section = null;
+    let sectionAttached = false;
 
     Array.from(navRoot.children).forEach((node) => {
       if (!(node instanceof HTMLElement)) {
@@ -14121,7 +15099,7 @@ async function startPostAuthBootstrap() {
         heading.className = "mobile-menu-section-title";
         heading.textContent = node.textContent?.trim() || "菜单";
         section.appendChild(heading);
-        fragment.appendChild(section);
+        sectionAttached = false;
         return;
       }
 
@@ -14137,7 +15115,14 @@ async function startPostAuthBootstrap() {
       if (!section) {
         section = document.createElement("section");
         section.className = "mobile-menu-section";
+        sectionAttached = false;
+      }
+
+      // Only show a group once it has a visible menu item. This avoids empty
+      // headings when the primary views are represented by the compact toolbar.
+      if (!sectionAttached) {
         fragment.appendChild(section);
+        sectionAttached = true;
       }
 
       const menuButton = document.createElement("button");
@@ -15214,7 +16199,9 @@ async function startPostAuthBootstrap() {
   const state = {
     open: false,
     sessions: [],
-    timerId: null
+    timerId: null,
+    liveSessionOrder: new Map(),
+    nextLiveSessionOrder: 0
   };
   let suppressOutsideClickUntil = 0;
 
@@ -15275,6 +16262,88 @@ async function startPostAuthBootstrap() {
     return normalizeSessions(appState?.sessions);
   }
 
+  function getRadarSessionKey(session, index) {
+    const source = session && typeof session === "object" ? session : {};
+    const sessionId = String(source.Id || source.SessionId || "").trim();
+    if (sessionId) {
+      return `session:${sessionId}`;
+    }
+
+    // Device ID remains stable while the player is active and keeps concurrent
+    // sessions from the same user distinct. Fall back only for incomplete data.
+    const deviceId = String(source.DeviceId || source.Device?.Id || "").trim();
+    const userId = String(source.UserId || source.User?.Id || source.UserName || "").trim();
+    if (deviceId || userId) {
+      return `device:${deviceId || "unknown"}:user:${userId || "unknown"}`;
+    }
+    return `unknown:${index}`;
+  }
+
+  function stabilizeRadarSessions(rawSessions) {
+    const sessions = normalizeSessions(rawSessions);
+    const activeKeys = new Set();
+
+    const ordered = sessions.map((session, index) => {
+      const key = getRadarSessionKey(session, index);
+      activeKeys.add(key);
+      if (!state.liveSessionOrder.has(key)) {
+        state.liveSessionOrder.set(key, state.nextLiveSessionOrder);
+        state.nextLiveSessionOrder += 1;
+      }
+      return { session, order: state.liveSessionOrder.get(key), index };
+    });
+
+    // A stopped session must not keep its old position. If it starts playing
+    // again later, it is a new playback and will be appended to the bottom.
+    state.liveSessionOrder.forEach((_, key) => {
+      if (!activeKeys.has(key)) {
+        state.liveSessionOrder.delete(key);
+      }
+    });
+    if (!activeKeys.size) {
+      state.nextLiveSessionOrder = 0;
+    }
+
+    return ordered
+      .sort((left, right) => left.order - right.order || left.index - right.index)
+      .map(({ session }) => session);
+  }
+
+  function getStablePlayableSessions() {
+    return stabilizeRadarSessions(appState?.sessions);
+  }
+
+  function formatRadarPlaybackTitle(item) {
+    const source = item && typeof item === "object" ? item : {};
+    const seriesTitle = String(source.SeriesName || source.Album || "").trim();
+    const episodeTitle = String(source.Name || "未命名条目").trim();
+    const season = Number(source.ParentIndexNumber);
+    const episode = Number(source.IndexNumber);
+    const episodeParts = [];
+
+    if (Number.isFinite(season) && season > 0) {
+      episodeParts.push(`第 ${Math.floor(season)} 季`);
+    }
+    if (Number.isFinite(episode) && episode > 0) {
+      episodeParts.push(`第 ${Math.floor(episode)} 集`);
+    }
+
+    // A series episode needs its season and episode number at a glance. Films
+    // and other one-off media keep the concise title-only presentation.
+    if (!seriesTitle) {
+      return episodeTitle;
+    }
+
+    const parts = [seriesTitle];
+    if (episodeParts.length) {
+      parts.push(episodeParts.join(""));
+    }
+    if (episodeTitle && episodeTitle !== seriesTitle) {
+      parts.push(episodeTitle);
+    }
+    return parts.join(" · ");
+  }
+
   function renderEmpty() {
     if (!els.list) {
       return;
@@ -15283,7 +16352,7 @@ async function startPostAuthBootstrap() {
   }
 
   function renderPopover() {
-    const sessions = state.sessions.length > 0 ? state.sessions : getSharedPlayableSessions();
+    const sessions = state.sessions.length > 0 ? state.sessions : getStablePlayableSessions();
     const onlineCount = sessions.length;
 
     if (els.meta) {
@@ -15304,9 +16373,7 @@ async function startPostAuthBootstrap() {
     els.list.innerHTML = sessions.map((session) => {
       const item = session?.NowPlayingItem || {};
       const username = String(session?.UserName || session?.User?.Name || "未知用户");
-      const seriesTitle = String(item?.SeriesName || item?.Album || "").trim();
-      const episodeTitle = String(item?.Name || "未命名条目").trim();
-      const displayTitle = seriesTitle ? `${seriesTitle} - ${episodeTitle}` : episodeTitle;
+      const displayTitle = formatRadarPlaybackTitle(item);
 
       const currentSec = toSecondsFromTicks(session?.PlayState?.PositionTicks);
       const totalSec = toSecondsFromTicks(item?.RunTimeTicks);
@@ -15367,7 +16434,7 @@ async function startPostAuthBootstrap() {
     setBackdropOpen(state.open);
     noticeBtn.setAttribute("aria-expanded", state.open ? "true" : "false");
     if (state.open) {
-      state.sessions = getSharedPlayableSessions();
+      state.sessions = getStablePlayableSessions();
       placePopover();
       renderPopover();
     }
@@ -15380,9 +16447,9 @@ async function startPostAuthBootstrap() {
       return;
     }
     ensureLiveSessionsPolling();
-    state.sessions = getSharedPlayableSessions();
+    state.sessions = getStablePlayableSessions();
     if (!state.sessions.length) {
-      state.sessions = getSharedPlayableSessions();
+      state.sessions = getStablePlayableSessions();
     }
     renderPopover();
     if (state.open) {
@@ -15467,7 +16534,7 @@ async function startPostAuthBootstrap() {
   window.addEventListener("vistamirror:auth-ready", startTicker);
   window.addEventListener("vistamirror:auth-lock", stopTicker);
   window.addEventListener("vistamirror:sessions-updated", () => {
-    state.sessions = getSharedPlayableSessions();
+    state.sessions = getStablePlayableSessions();
     renderPopover();
     if (state.open) {
       placePopover();

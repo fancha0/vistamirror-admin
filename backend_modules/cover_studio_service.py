@@ -21,14 +21,14 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from backend_modules.cover_studio_template_specs import (
     get_cinematic_showcase_variant,
-    get_fan_spread_layout,
     get_primary_layout_variant,
 )
 
 
 DEFAULT_CANVAS_SIZE = (1600, 900)
 PREVIEW_TTL_SECONDS = 60 * 60 * 6
-DEFAULT_TEMPLATE_KEY = "fan_spread"
+DEFAULT_TEMPLATE_KEY = "banner_showcase"
+REMOVED_TEMPLATE_KEYS = frozenset({"fan_spread", "fan_poster_cover"})
 DEFAULT_COVER_STUDIO_CRON = "0 */6 * * *"
 DEFAULT_COVER_FONT_KEY = "heiti"
 REMOVED_COVER_FONT_KEYS = frozenset(
@@ -54,21 +54,6 @@ CUSTOM_COVER_FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
 
 def cover_studio_modes() -> list[dict[str, Any]]:
     return [
-        {
-            "key": "fan_spread",
-            "label": "扇形展开",
-            "description": "多张影视海报轻扇形陈列，中间主卡突出，适合动画和剧集类视图。",
-            "supports": list(ALL_TEMPLATE_SUPPORTS),
-            "maxPosterCount": 8,
-            "defaults": {
-                "titleAlign": "left",
-                "overlayStrength": 0,
-                "posterCount": 7,
-                "accentTone": "gold",
-                "posterRotation": 34,
-                "titleYOffset": 0,
-                },
-        },
         {
             "key": "banner_showcase",
             "label": "横幅橱窗",
@@ -157,6 +142,23 @@ def cover_studio_modes() -> list[dict[str, Any]]:
             },
         },
         {
+            "key": "bookshelf_gallery_2",
+            "label": "书架陈列 2",
+            "description": "双层胡桃木书架与收藏版海报陈列，上层四张、下层三张。",
+            "supports": ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
+            "maxPosterCount": 7,
+            "family": "primary_layout",
+            "variant": "bookshelf_two",
+            "defaults": {
+                "titleAlign": "left",
+                "overlayStrength": 0,
+                "posterCount": 7,
+                "accentTone": "gold",
+                "posterRotation": 0,
+                "titleYOffset": 0,
+            },
+        },
+        {
             "key": "honeycomb_hex",
             "label": "蜂巢六边形",
             "description": "以六边形影像网格聚焦内容，适合动画、动作和科幻类媒体库。",
@@ -176,7 +178,7 @@ def cover_studio_modes() -> list[dict[str, Any]]:
         {
             "key": "panorama_gallery",
             "label": "全景画廊",
-            "description": "弧形展墙配合地面倒影，适合做沉浸式电影与剧集分类封面。",
+            "description": "沉浸式数字展厅与灯箱展屏，适合电影、剧集和动漫分类封面。",
             "supports": ["titleAlign", "posterCount", "accentTone", "titleYOffset"],
             "maxPosterCount": 7,
             "family": "primary_layout",
@@ -299,7 +301,7 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
         "templateKey": draft_template_key,
         "pickMode": "recent" if str(draft_source.get("pickMode") or "").strip().lower() == "recent" else "random",
         "titleText": str(draft_source.get("titleText") or "").strip(),
-        "subtitleText": str(draft_source.get("subtitleText") or "").strip(),
+        "subtitleText": _normalize_cover_studio_subtitle(draft_source.get("subtitleText")),
         "fontKey": normalize_cover_studio_font_key(draft_source.get("fontKey")),
         "titleFontSize": _clamp_int(draft_source.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
         "subtitleFontSize": _clamp_int(draft_source.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
@@ -336,7 +338,7 @@ def normalize_cover_studio_config(raw: Any) -> dict[str, Any]:
                 "templateKey": preset_template_key,
                 "pickMode": "recent" if str(item.get("pickMode") or "").strip().lower() == "recent" else "random",
                 "titleText": str(item.get("titleText") or "").strip(),
-                "subtitleText": str(item.get("subtitleText") or "").strip(),
+                "subtitleText": _normalize_cover_studio_subtitle(item.get("subtitleText")),
                 "fontKey": normalize_cover_studio_font_key(item.get("fontKey")),
                 "titleFontSize": _clamp_int(item.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
                 "subtitleFontSize": _clamp_int(item.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
@@ -462,7 +464,7 @@ def _normalize_cover_studio_schedule_template(raw: Any, *, fallback: dict[str, A
         "templateKey": template_key,
         "pickMode": "recent" if str(source.get("pickMode") or "").strip().lower() == "recent" else "random",
         "titleText": str(source.get("titleText") or "").strip(),
-        "subtitleText": str(source.get("subtitleText") or "").strip(),
+        "subtitleText": _normalize_cover_studio_subtitle(source.get("subtitleText")),
         "fontKey": normalize_cover_studio_font_key(source.get("fontKey")),
         "titleFontSize": _clamp_int(source.get("titleFontSize"), fallback=108, minimum=56, maximum=180),
         "subtitleFontSize": _clamp_int(source.get("subtitleFontSize"), fallback=44, minimum=22, maximum=72),
@@ -525,6 +527,7 @@ def _is_valid_cron_field(field: str, minimum: int, maximum: int) -> bool:
 def available_cover_fonts() -> list[dict[str, str]]:
     candidates = [
         {"key": "heiti", "label": "华文黑体", "path": "/System/Library/Fonts/STHeiti Medium.ttc"},
+        {"key": "songti", "label": "宋体", "path": "/System/Library/Fonts/Supplemental/Songti.ttc"},
     ]
     rows: list[dict[str, str]] = []
     seen_keys: set[str] = set()
@@ -555,6 +558,12 @@ def normalize_cover_studio_font_key(value: Any) -> str:
     if not key or key in REMOVED_COVER_FONT_KEYS:
         return DEFAULT_COVER_FONT_KEY
     return key
+
+
+def _normalize_cover_studio_subtitle(value: Any) -> str:
+    """Correct legacy labels while preserving user-provided subtitles."""
+    text = str(value or "").strip()
+    return "Western Cinema" if text == "Western Movies" else text
 
 
 @dataclass
@@ -598,7 +607,7 @@ class EmbyCoverService:
             "ParentId": str(view_id or "").strip(),
             "Recursive": "true",
             "IncludeItemTypes": "Movie,Series",
-            "Fields": "Name,Type,DateCreated,ImageTags,BackdropImageTags,PrimaryImageItemId,BackdropImageItemId,SeriesId,ParentId,ProductionYear,PremiereDate",
+            "Fields": "Name,Type,DateCreated,ImageTags,BackdropImageTags,PrimaryImageItemId,ThumbImageItemId,BackdropImageItemId,SeriesId,ParentId,ProductionYear,PremiereDate",
             "Limit": str(max(8, min(limit, 60))),
             "SortBy": "DateCreated",
             "SortOrder": "Descending",
@@ -626,6 +635,8 @@ class EmbyCoverService:
                     "id": str(item.get("Id") or "").strip(),
                     "imageItemId": image_item_id,
                     "primaryTag": str(image_tags.get("Primary") or "").strip(),
+                    "thumbImageItemId": str(item.get("ThumbImageItemId") or item.get("Id") or "").strip(),
+                    "thumbTag": str(image_tags.get("Thumb") or "").strip(),
                     "backdropImageItemId": str(item.get("BackdropImageItemId") or item.get("Id") or "").strip(),
                     "backdropTag": backdrop_tag,
                     "name": str(item.get("Name") or "").strip(),
@@ -666,11 +677,29 @@ class EmbyCoverService:
         }
 
     def fetch_primary_image_bytes(self, *, item_id: str, image_tag: str = "", max_width: int = 700) -> bytes:
+        return self.fetch_item_image_bytes(
+            item_id=item_id,
+            image_type="Primary",
+            image_tag=image_tag,
+            max_width=max_width,
+        )
+
+    def fetch_item_image_bytes(
+        self,
+        *,
+        item_id: str,
+        image_type: str,
+        image_tag: str = "",
+        max_width: int = 700,
+    ) -> bytes:
+        """Read one Emby image type while retaining the item's image tag."""
         params = {"maxWidth": str(max(320, min(int(max_width or 700), 2000))), "quality": "92"}
         if str(image_tag or "").strip():
             params["tag"] = str(image_tag).strip()
         query = urllib.parse.urlencode(params)
-        return self._request_bytes(f"/Items/{urllib.parse.quote(str(item_id), safe='')}/Images/Primary?{query}")
+        safe_item_id = urllib.parse.quote(str(item_id or "").strip(), safe="")
+        safe_image_type = urllib.parse.quote(str(image_type or "Primary").strip() or "Primary", safe="")
+        return self._request_bytes(f"/Items/{safe_item_id}/Images/{safe_image_type}?{query}")
 
     def fetch_backdrop_image_bytes(self, *, item_id: str, image_tag: str = "", max_width: int = 1800) -> bytes:
         """Read an item's horizontal Emby backdrop for cinematic cover templates."""
@@ -940,13 +969,9 @@ class CoverStudioService:
         prepared: list[tuple[dict[str, Any], Image.Image]] = []
         for item in items[:8]:
             try:
-                content = emby_service.fetch_primary_image_bytes(
-                    item_id=str(item.get("imageItemId") or item.get("id") or "").strip(),
-                    image_tag=str(item.get("primaryTag") or "").strip(),
-                )
-                if not content:
+                image = self._load_item_poster_image(emby_service=emby_service, item=item)
+                if image is None:
                     continue
-                image = Image.open(BytesIO(content)).convert("RGB")
                 prepared.append((item, image))
             except Exception:
                 continue
@@ -1010,6 +1035,39 @@ class CoverStudioService:
             template_key=safe_template_key,
             selected_items=selected_items,
         )
+
+    @staticmethod
+    def _load_item_poster_image(*, emby_service: EmbyCoverService, item: dict[str, Any]) -> Image.Image | None:
+        """Prefer poster-shaped Primary art, then gracefully fall back to Thumb/Backdrop."""
+        primary_item_id = str(item.get("imageItemId") or item.get("id") or "").strip()
+        thumb_item_id = str(item.get("thumbImageItemId") or item.get("id") or "").strip()
+        backdrop_item_id = str(item.get("backdropImageItemId") or item.get("id") or "").strip()
+        candidates: list[tuple[str, str, str, str]] = [
+            ("primary", primary_item_id, str(item.get("primaryTag") or "").strip(), "Primary"),
+            ("thumb", thumb_item_id, str(item.get("thumbTag") or "").strip(), "Thumb"),
+            ("backdrop", backdrop_item_id, str(item.get("backdropTag") or "").strip(), "Backdrop"),
+        ]
+        for source_kind, item_id, image_tag, image_type in candidates:
+            if not item_id:
+                continue
+            try:
+                if source_kind == "primary":
+                    payload = emby_service.fetch_primary_image_bytes(item_id=item_id, image_tag=image_tag)
+                elif source_kind == "thumb":
+                    fetch_image = getattr(emby_service, "fetch_item_image_bytes", None)
+                    if not callable(fetch_image):
+                        continue
+                    payload = fetch_image(item_id=item_id, image_type=image_type, image_tag=image_tag)
+                else:
+                    fetch_backdrop = getattr(emby_service, "fetch_backdrop_image_bytes", None)
+                    if not callable(fetch_backdrop):
+                        continue
+                    payload = fetch_backdrop(item_id=item_id, image_tag=image_tag)
+                if payload:
+                    return Image.open(BytesIO(payload)).convert("RGB")
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _resolve_showcase_hero_image(
@@ -1156,9 +1214,18 @@ class CoverStudioService:
         foreground_count: int | None = None,
     ) -> Image.Image:
         tone = _tone_palette(accent_tone)
-        title_font = self._load_font(font_key, title_font_size)
-        subtitle_font = self._load_font(font_key, subtitle_font_size)
         mode = _mode_meta(template_key)
+        effective_font_key = font_key
+        # Full-width display headings in the panoramic gallery intentionally
+        # default to Songti. A user-selected custom face still takes priority.
+        if (
+            str(mode.get("family") or "").strip() == "primary_layout"
+            and str(mode.get("variant") or "").strip() in {"panorama", "bookshelf_two"}
+            and normalize_cover_studio_font_key(font_key) == DEFAULT_COVER_FONT_KEY
+        ):
+            effective_font_key = "songti"
+        title_font = self._load_font(effective_font_key, title_font_size)
+        subtitle_font = self._load_font(effective_font_key, subtitle_font_size)
         if str(mode.get("family") or "").strip() == "cinematic_showcase":
             canvas = self._render_cinematic_showcase_cover(
                 images=images,
@@ -1175,8 +1242,6 @@ class CoverStudioService:
                 variant=str(mode.get("variant") or "bookshelf").strip() or "bookshelf",
                 foreground_count=foreground_count,
             )
-        elif template_key == "fan_spread":
-            canvas = self._render_fan_spread_cover(images=images, tone=tone, overlay_strength=overlay_strength, poster_rotation=poster_rotation)
         elif template_key == "rotated_stack":
             canvas = self._render_rotated_stack_cover(images=images, tone=tone, overlay_strength=overlay_strength, poster_rotation=poster_rotation)
         elif template_key == "poster_wall":
@@ -1225,10 +1290,6 @@ class CoverStudioService:
                 decor=title_meta["decor"],
             )
             return canvas.convert("RGB")
-        if template_key == "fan_spread":
-            fan_layout = get_fan_spread_layout()
-            x_bounds = tuple(fan_layout["title"]["x_bounds"])
-            base_y = int(fan_layout["title"]["base_y"])
         draw = ImageDraw.Draw(canvas)
         self._draw_title_block(
             draw=draw,
@@ -1294,8 +1355,150 @@ class CoverStudioService:
                 foreground_count=foreground_count,
             )
         if safe_variant == "panorama":
-            return self._render_panorama_gallery_cover(images=images, tone=tone)
+            return self._render_panoramic_gallery_template(images=images, tone=tone)
+        if safe_variant == "bookshelf_two":
+            return self._render_bookshelf_two_gallery_cover(images=images, tone=tone)
         return self._render_bookshelf_gallery_cover(images=images, tone=tone)
+
+    def _render_bookshelf_two_gallery_cover(
+        self,
+        *,
+        images: list[Image.Image],
+        tone: dict[str, tuple[int, int, int]],
+    ) -> Image.Image:
+        """Render a two-level walnut display: four cases above, three below."""
+        width, height = DEFAULT_CANVAS_SIZE
+        canvas = self._build_bookshelf_two_collection_room(size=(width, height), tone=tone)
+        available = list(images[:7])
+        count = max(1, len(available))
+        top_count = min(4, (count + 1) // 2 if count < 7 else 4)
+        bottom_count = count - top_count
+        if count >= 5:
+            top_count = min(4, count - 3)
+            bottom_count = count - top_count
+
+        placements = self._bookshelf_two_slots(
+            top_count=top_count,
+            bottom_count=bottom_count,
+            canvas_size=(width, height),
+        )
+        for image, slot in zip(available, placements):
+            case = self._create_bookshelf_collection_case(
+                image,
+                size=tuple(slot["size"]),
+                rotation=0,
+                focus=bool(slot["focus"]),
+            )
+            self._alpha_paste(canvas, case, tuple(slot["origin"]))
+        return canvas
+
+    @staticmethod
+    def _bookshelf_two_slots(
+        *,
+        top_count: int,
+        bottom_count: int,
+        canvas_size: tuple[int, int],
+    ) -> list[dict[str, Any]]:
+        """Keep both shelves evenly distributed inside the right-hand cabinet."""
+        width, _height = canvas_size
+
+        def row_slots(*, count: int, bounds: tuple[int, int], base_y: int, card_height: int) -> list[dict[str, Any]]:
+            if count <= 0:
+                return []
+            card_width = int(card_height * 0.633)
+            left, right = bounds
+            total_width = card_width * count
+            gap = max(22, int((right - left - total_width) / max(1, count - 1))) if count > 1 else 0
+            if count > 1:
+                total_width = card_width * count + gap * (count - 1)
+                start_x = left + max(0, (right - left - total_width) // 2)
+            else:
+                start_x = left + (right - left - card_width) // 2
+            rows: list[dict[str, Any]] = []
+            for index in range(count):
+                is_focus = count > 2 and index == count // 2
+                scale = 1.06 if is_focus else 1.0
+                item_height = int(card_height * scale)
+                item_width = int(card_width * scale)
+                x = start_x + index * (card_width + gap) - (item_width - card_width) // 2
+                y = base_y - item_height + 13
+                rows.append({"origin": (x, y), "size": (item_width, item_height), "focus": is_focus})
+            return rows
+
+        top = row_slots(count=top_count, bounds=(612, width - 118), base_y=486, card_height=306)
+        bottom = row_slots(count=bottom_count, bounds=(674, width - 214), base_y=774, card_height=242)
+        return top + bottom
+
+    def _build_bookshelf_two_collection_room(
+        self,
+        *,
+        size: tuple[int, int],
+        tone: dict[str, tuple[int, int, int]],
+    ) -> Image.Image:
+        """Create the quiet two-level cabinet and the left-side title-safe void."""
+        width, height = size
+        room = Image.new("RGBA", size, (4, 8, 14, 255))
+        draw = ImageDraw.Draw(room)
+        for y in range(height):
+            progress = y / max(1, height - 1)
+            if progress < 0.62:
+                blend = progress / 0.62
+                color = tuple(int((5, 11, 20)[channel] * (1 - blend) + (16, 15, 18)[channel] * blend) for channel in range(3))
+            else:
+                blend = (progress - 0.62) / 0.38
+                color = tuple(int((16, 15, 18)[channel] * (1 - blend) + (45, 26, 14)[channel] * blend) for channel in range(3))
+            draw.line((0, y, width, y), fill=color + (255,))
+
+        cabinet = Image.new("RGBA", size, (0, 0, 0, 0))
+        cabinet_draw = ImageDraw.Draw(cabinet)
+        cabinet_draw.rectangle((568, 92, width - 60, 792), fill=(22, 13, 8, 164))
+        cabinet_draw.rectangle((width - 104, 90, width - 60, 792), fill=(73, 39, 17, 228))
+        cabinet_draw.line((width - 98, 106, width - 98, 774), fill=(229, 168, 88, 80), width=2)
+        cabinet_draw.line((580, 126, width - 120, 126), fill=(225, 170, 99, 32), width=1)
+        book_rng = random.Random(8411)
+        for row_top, row_bottom in ((110, 452), (510, 748)):
+            for x in range(586, width - 132, 22):
+                book_width = book_rng.randint(10, 20)
+                spine_top = book_rng.randint(row_top + 8, row_top + 70)
+                spine_color = book_rng.choice(((72, 42, 23), (78, 56, 39), (49, 45, 42), (92, 48, 22), (49, 30, 22)))
+                cabinet_draw.rounded_rectangle((x, spine_top, x + book_width, row_bottom - 8), radius=2, fill=spine_color + (book_rng.randint(54, 84),))
+                cabinet_draw.line((x + 2, spine_top + 5, x + 2, row_bottom - 13), fill=(220, 166, 92, 24), width=1)
+        room.alpha_composite(cabinet.filter(ImageFilter.GaussianBlur(radius=2.8)))
+
+        ambient = Image.new("RGBA", size, (0, 0, 0, 0))
+        ambient_draw = ImageDraw.Draw(ambient)
+        ambient_draw.ellipse((460, 72, width + 80, 600), fill=(210, 138, 62, 36))
+        ambient_draw.ellipse((640, 420, width + 100, height + 120), fill=tone["accent"] + (22,))
+        ambient_draw.ellipse((-180, 250, 550, height + 140), fill=(8, 29, 55, 52))
+        room.alpha_composite(ambient.filter(ImageFilter.GaussianBlur(radius=80)))
+
+        shelves = Image.new("RGBA", size, (0, 0, 0, 0))
+        shelf_draw = ImageDraw.Draw(shelves)
+        self._draw_walnut_shelf_board(shelf_draw, (582, 480, width - 104, 520), focus=False)
+        self._draw_walnut_shelf_board(shelf_draw, (582, 766, width - 104, 812), focus=True)
+        room.alpha_composite(shelves)
+
+        # Low-contrast ink-mountain trace keeps the left title lane warm and calm.
+        decor = Image.new("RGBA", size, (0, 0, 0, 0))
+        decor_draw = ImageDraw.Draw(decor)
+        decor_draw.line([(70, 708), (154, 672), (225, 708), (315, 650), (408, 700), (506, 678), (572, 718)], fill=(168, 128, 77, 28), width=2)
+        decor_draw.arc((62, 554, 310, 802), 186, 310, fill=(171, 130, 78, 22), width=2)
+        room.alpha_composite(decor.filter(ImageFilter.GaussianBlur(radius=0.8)))
+
+        lamp = Image.new("RGBA", size, (0, 0, 0, 0))
+        lamp_draw = ImageDraw.Draw(lamp)
+        lamp_draw.ellipse((1438, 642, 1574, 800), fill=(234, 159, 65, 30))
+        lamp_draw.polygon([(1482, 648), (1540, 648), (1554, 746), (1468, 746)], fill=(37, 22, 10, 238))
+        lamp_draw.rectangle((1490, 670, 1532, 730), fill=(232, 170, 78, 184))
+        lamp_draw.line((1490, 670, 1532, 670), fill=(255, 224, 152, 180), width=2)
+        lamp_draw.rectangle((1506, 746, 1517, 782), fill=(48, 28, 13, 242))
+        lamp_draw.ellipse((1480, 776, 1544, 792), fill=(44, 24, 11, 242))
+        room.alpha_composite(lamp.filter(ImageFilter.GaussianBlur(radius=0.5)))
+
+        frame = Image.new("RGBA", size, (0, 0, 0, 0))
+        ImageDraw.Draw(frame).rounded_rectangle((30, 30, width - 30, height - 30), radius=46, outline=(228, 188, 128, 104), width=2)
+        room.alpha_composite(frame)
+        return room
 
     @staticmethod
     def _build_primary_layout_canvas(
@@ -1334,50 +1537,219 @@ class CoverStudioService:
         images: list[Image.Image],
         tone: dict[str, tuple[int, int, int]],
     ) -> Image.Image:
-        canvas = self._build_primary_layout_canvas(tone=tone, base_color=(13, 8, 5))
-        width, height = canvas.size
+        width, height = DEFAULT_CANVAS_SIZE
+        canvas = self._build_bookshelf_collection_room(size=(width, height), tone=tone)
+        shelf_y = 748
         shelf = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
         shelf_draw = ImageDraw.Draw(shelf)
-        # Deep wood panels form a real shelf, not a transparent card behind the posters.
-        shelf_draw.rectangle((52, 236, width - 52, 798), fill=(40, 22, 12, 180))
-        for x in range(76, width - 52, 62):
-            shelf_draw.rectangle((x, 248, x + 12, 782), fill=(10, 7, 5, 82))
-            shelf_draw.line((x + 14, 248, x + 14, 782), fill=(154, 91, 36, 45), width=2)
-        for y in (268, 744, 790):
-            shelf_draw.rectangle((54, y, width - 54, y + 20), fill=(68, 37, 16, 232))
-            shelf_draw.line((56, y, width - 56, y), fill=(238, 174, 96, 94), width=2)
-        shelf = shelf.filter(ImageFilter.GaussianBlur(radius=0.6))
+        # These are solid walnut shelves with a visible front edge, replacing
+        # the former filmstrip rails and their perforation-like pattern.
+        self._draw_walnut_shelf_board(shelf_draw, (48, 264, width - 48, 294), focus=False)
+        self._draw_walnut_shelf_board(shelf_draw, (48, shelf_y, width - 48, shelf_y + 54), focus=True)
+        shelf_draw.rectangle((64, shelf_y - 8, width - 64, shelf_y + 4), fill=(19, 11, 7, 152))
+        shelf = shelf.filter(ImageFilter.GaussianBlur(radius=0.32))
         canvas.alpha_composite(shelf)
 
         count = max(2, min(len(images), 7))
-        # Align the actual poster artwork with the top shelf rail.  Five cards
-        # fit without overlap; seven retain their 2:3 ratio and use only the
-        # small overlap required by the fixed 1600px Primary canvas.
-        poster_top = 290
-        poster_bottom = 730
-        card_height = poster_bottom - poster_top
-        card_width = int(card_height * 0.633)
-        usable_width = 1370
-        if count <= 5:
-            step = int((usable_width - card_width) / max(1, count - 1))
-        else:
-            # Keep seven posters large and vertically aligned instead of
-            # shrinking them into a short row beneath the shelf opening.
-            step = int((usable_width - card_width) / (count - 1))
-        total_width = card_width + step * (count - 1)
-        start_x = (width - total_width) // 2
+        # Seven collector cases need enough breathing room to remain entirely
+        # inside the Primary frame.  Size them from the real outer case width,
+        # not just the artwork width, so edge cases never clip off-screen.
+        standard_height = 344 if count >= 6 else 424
+        standard_width = int(standard_height * 0.633)
+        center_index = (count - 1) // 2
+        focus_height = int(standard_height * 1.09)
+        focus_width = int(focus_height * 0.633)
+        rotations = self._bookshelf_poster_rotations(count=count)
+        unplaced_cards: list[tuple[int, Image.Image, bool]] = []
         for index, image in enumerate(images[:count]):
-            # A plain floating poster has a soft shadow but no white sheen,
-            # glow panel, or translucent frame behind the artwork.
-            card = self._create_poster_card(
-                image,
-                size=(card_width, card_height),
-                rotation=0,
-                radius=16,
+            is_focus = index == center_index
+            card_height = focus_height if is_focus else standard_height
+            card_width = focus_width if is_focus else standard_width
+            unplaced_cards.append(
+                (
+                    index,
+                    self._create_bookshelf_collection_case(
+                        image,
+                        size=(card_width, card_height),
+                        rotation=rotations[index],
+                        focus=is_focus,
+                    ),
+                    is_focus,
+                )
             )
-            origin = (start_x + index * step - 16, poster_top - 16)
+        overlap = 48 if count >= 6 else 28
+        total_width = sum(card.width for _, card, _ in unplaced_cards) - overlap * (count - 1)
+        start_x = max(30, int((width - total_width) / 2))
+        cards: list[tuple[int, Image.Image, tuple[int, int]]] = []
+        cursor_x = start_x
+        for index, card, is_focus in unplaced_cards:
+            # All cases rest on the same shelf, while the centre case comes a
+            # little forward through scale and draw order instead of a fan arc.
+            origin_x = cursor_x
+            origin_y = shelf_y - card.height + 19
+            if is_focus:
+                origin_y -= 5
+            cards.append((index, card, (origin_x, origin_y)))
+            cursor_x += card.width - overlap
+
+        # Outer cases sit farther back; the center case is drawn last so it
+        # reads as the selected collector's edition without hiding its neighbours.
+        for index, card, origin in sorted(cards, key=lambda row: (abs(row[0] - center_index), row[0]), reverse=True):
             self._alpha_paste(canvas, card, origin)
         return canvas
+
+    @staticmethod
+    def _bookshelf_poster_rotations(*, count: int) -> list[float]:
+        """A bookshelf collection keeps every case upright and within its frame."""
+        return [0.0] * max(0, int(count))
+
+    def _build_bookshelf_collection_room(
+        self,
+        *,
+        size: tuple[int, int],
+        tone: dict[str, tuple[int, int, int]],
+    ) -> Image.Image:
+        """Create a subdued private screening-room backdrop behind the collection."""
+        width, height = size
+        room = Image.new("RGBA", size, (0, 0, 0, 255))
+        draw = ImageDraw.Draw(room)
+        top = (7, 13, 24)
+        middle = (18, 19, 26)
+        bottom = (42, 24, 13)
+        for y in range(height):
+            progress = y / max(1, height - 1)
+            if progress < 0.58:
+                local = progress / 0.58
+                color = tuple(int(top[channel] * (1 - local) + middle[channel] * local) for channel in range(3))
+            else:
+                local = (progress - 0.58) / 0.42
+                color = tuple(int(middle[channel] * (1 - local) + bottom[channel] * local) for channel in range(3))
+            draw.line((0, y, width, y), fill=color + (255,))
+
+        ambience = Image.new("RGBA", size, (0, 0, 0, 0))
+        ambience_draw = ImageDraw.Draw(ambience)
+        ambience_draw.ellipse((-180, 98, 470, 760), fill=(226, 151, 71, 36))
+        ambience_draw.ellipse((width - 720, 30, width + 180, 690), fill=tone["glow"] + (30,))
+        ambience_draw.ellipse((int(width * 0.25), 536, int(width * 0.82), height + 130), fill=(213, 135, 58, 24))
+        room.alpha_composite(ambience.filter(ImageFilter.GaussianBlur(radius=70)))
+
+        background = Image.new("RGBA", size, (0, 0, 0, 0))
+        background_draw = ImageDraw.Draw(background)
+        # Defocused cabinetry and book spines create a real room without
+        # competing with the selected media covers.
+        background_draw.rectangle((48, 222, width - 48, 748), fill=(21, 13, 8, 118))
+        rng = random.Random(6817)
+        for x in range(70, width - 60, 25):
+            spine_width = rng.randint(11, 23)
+            spine_top = rng.randint(318, 450)
+            spine_color = rng.choice(((71, 41, 20), (85, 47, 22), (47, 42, 38), (44, 32, 24), (61, 51, 41)))
+            background_draw.rounded_rectangle(
+                (x, spine_top, x + spine_width, 734),
+                radius=2,
+                fill=spine_color + (rng.randint(32, 58),),
+            )
+            background_draw.line((x + 2, spine_top + 8, x + 2, 727), fill=(226, 168, 91, 22), width=1)
+        # A subdued table lamp on the left and a few collector pieces enrich
+        # the room while preserving a clear title-safe area above it.
+        background_draw.ellipse((90, 354, 220, 498), fill=(221, 151, 66, 23))
+        background_draw.polygon([(112, 476), (190, 476), (168, 532), (134, 532)], fill=(31, 18, 9, 132))
+        background_draw.rectangle((137, 528, 164, 618), fill=(44, 27, 14, 154))
+        background_draw.ellipse((110, 614, 192, 630), fill=(33, 20, 12, 184))
+        for x, y, radius in ((1335, 334, 28), (1410, 396, 19), (1280, 438, 17)):
+            background_draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=(192, 145, 89, 42), width=2)
+        room.alpha_composite(background.filter(ImageFilter.GaussianBlur(radius=1.5)))
+
+        dust = Image.new("RGBA", size, (0, 0, 0, 0))
+        dust_draw = ImageDraw.Draw(dust)
+        for _ in range(115):
+            x = rng.randrange(55, width - 55)
+            y = rng.randrange(84, 690)
+            radius = rng.choice((1, 1, 1, 2))
+            dust_draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(242, 210, 158, rng.choice((8, 10, 13, 17))))
+        room.alpha_composite(dust.filter(ImageFilter.GaussianBlur(radius=0.35)))
+
+        vignette = Image.new("RGBA", size, (0, 0, 0, 0))
+        vignette_draw = ImageDraw.Draw(vignette)
+        vignette_draw.rectangle((0, 0, width, height), outline=(0, 0, 0, 128), width=62)
+        room.alpha_composite(vignette.filter(ImageFilter.GaussianBlur(radius=30)))
+        frame = Image.new("RGBA", size, (0, 0, 0, 0))
+        ImageDraw.Draw(frame).rounded_rectangle(
+            (30, 30, width - 30, height - 30),
+            radius=42,
+            outline=(220, 183, 125, 82),
+            width=2,
+        )
+        room.alpha_composite(frame)
+        return room
+
+    @staticmethod
+    def _draw_walnut_shelf_board(
+        draw: ImageDraw.ImageDraw,
+        bounds: tuple[int, int, int, int],
+        *,
+        focus: bool,
+    ) -> None:
+        x1, y1, x2, y2 = bounds
+        height = max(1, y2 - y1)
+        draw.rounded_rectangle(bounds, radius=5, fill=(55, 29, 13, 246))
+        draw.rectangle((x1 + 2, y1 + 4, x2 - 2, y1 + max(7, height // 3)), fill=(103, 56, 25, 232))
+        draw.line((x1 + 4, y1 + 2, x2 - 4, y1 + 2), fill=(240, 182, 99, 150), width=2)
+        draw.line((x1 + 4, y1 + 7, x2 - 4, y1 + 7), fill=(135, 76, 35, 194), width=2)
+        draw.rectangle((x1 + 3, y2 - max(5, height // 4), x2 - 3, y2 - 2), fill=(29, 14, 7, 222))
+        grain = random.Random((x1 * 13) + (y1 * 17) + (31 if focus else 0))
+        for offset in range(18, max(19, x2 - x1 - 12), 46):
+            x = x1 + offset
+            drift = grain.randint(-5, 5)
+            draw.line((x, y1 + 10, x + 26, y1 + 12 + drift), fill=(189, 112, 52, 54), width=1)
+            draw.line((x + 8, y2 - 10, x + 38, y2 - 11 + drift), fill=(9, 5, 3, 82), width=1)
+
+    def _create_bookshelf_collection_case(
+        self,
+        image: Image.Image,
+        *,
+        size: tuple[int, int],
+        rotation: float,
+        focus: bool,
+    ) -> Image.Image:
+        """Render a poster as a thin Blu-ray or art-book case without a glass frame."""
+        width, height = size
+        padding = 16
+        depth = 8 if focus else 6
+        card = Image.new("RGBA", (width + padding * 2 + depth, height + padding * 2 + depth), (0, 0, 0, 0))
+        shadow = Image.new("RGBA", card.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow)
+        shadow_draw.rounded_rectangle(
+            (padding + depth + 3, padding + depth + 7, padding + depth + width + 3, padding + depth + height + 7),
+            radius=18,
+            fill=(0, 0, 0, 112 if focus else 84),
+        )
+        card.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(radius=11)))
+
+        case_draw = ImageDraw.Draw(card)
+        case_box = (padding + depth, padding + depth, padding + depth + width, padding + depth + height)
+        case_draw.rounded_rectangle(case_box, radius=17, fill=(24, 15, 11, 245))
+        case_draw.rounded_rectangle(
+            (padding, padding, padding + width, padding + height),
+            radius=16,
+            fill=(8, 10, 15, 255),
+        )
+        poster = ImageOps_fit(image, size)
+        poster_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+        poster_layer.paste(poster, (0, 0))
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, width, height), radius=15, fill=255)
+        rounded = Image.new("RGBA", size, (0, 0, 0, 0))
+        rounded.paste(poster_layer, (0, 0), mask)
+        card.alpha_composite(rounded, (padding, padding))
+        # A real case needs just a narrow spine and a warm edge highlight, not
+        # a translucent panel or a white outline around the poster.
+        case_draw = ImageDraw.Draw(card)
+        case_draw.rounded_rectangle((padding, padding, padding + 7, padding + height), radius=7, fill=(9, 13, 20, 168))
+        case_draw.line((padding + 4, padding + 10, padding + 4, padding + height - 10), fill=(230, 175, 95, 88), width=1)
+        case_draw.line((padding + 10, padding + 2, padding + width - 12, padding + 2), fill=(255, 218, 153, 66 if focus else 42), width=1)
+        if abs(rotation) > 0.1:
+            return card.rotate(rotation, resample=Image.Resampling.BICUBIC, expand=True)
+        return card
 
     def _render_honeycomb_hex_cover(
         self,
@@ -1588,45 +1960,226 @@ class CoverStudioService:
             )
         return wall
 
-    def _render_panorama_gallery_cover(
+    def _render_panoramic_gallery_template(
         self,
         *,
         images: list[Image.Image],
         tone: dict[str, tuple[int, int, int]],
     ) -> Image.Image:
-        canvas = self._build_primary_layout_canvas(tone=tone, base_color=(4, 7, 13))
-        width, height = canvas.size
-        stage = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        stage_draw = ImageDraw.Draw(stage)
-        stage_draw.rectangle((46, 604, width - 46, height - 46), fill=(0, 0, 0, 90))
-        for offset in range(0, 9):
-            x = 80 + offset * 182
-            stage_draw.line((x, 148, width // 2, 746), fill=(tone["accent"][0], tone["accent"][1], tone["accent"][2], 18), width=2)
-        stage = stage.filter(ImageFilter.GaussianBlur(radius=10))
-        canvas.alpha_composite(stage)
-
-        count = max(2, min(len(images), 7))
-        margin = 108
-        available_width = width - margin * 2
-        card_width = max(150, min(270, int((available_width - (count - 1) * 12) / count)))
-        card_height = int(card_width / 0.633)
-        step = 0 if count == 1 else (available_width - card_width) / (count - 1)
-        center_index = (count - 1) / 2
-        for index, image in enumerate(images[:count]):
-            distance = abs(index - center_index) / max(1, center_index)
-            card = self._create_showcase_poster_card(
+        """Render the reusable PanoramicGalleryTemplate for Emby Primary covers."""
+        canvas = self._build_panoramic_gallery_hall(size=DEFAULT_CANVAS_SIZE, tone=tone)
+        count = max(1, min(len(images), 7))
+        slots = self._panoramic_gallery_slots(count=count)
+        base_height = 380
+        base_width = int(base_height * 0.633)
+        lightboxes: list[tuple[dict[str, float], Image.Image, tuple[int, int]]] = []
+        for image, slot in zip(images[:count], slots):
+            scale = float(slot["scale"])
+            poster_size = (max(1, int(base_width * scale)), max(1, int(base_height * scale)))
+            is_focus = bool(slot["is_focus"])
+            lightbox = self._create_panoramic_lightbox(
                 image,
-                size=(card_width, card_height),
-                rotation=(index - center_index) * 3.2,
-                radius=18,
-                glow_color=tone["glow"] if distance < 0.2 else tone["accent"],
-                glow_alpha=86 if distance < 0.2 else 34,
+                size=poster_size,
+                rotation=float(slot["rotation"]),
+                tone=tone,
+                focus=is_focus,
             )
-            # The gallery rises toward the center to form one deliberate panoramic arc.
-            y = int(364 + 92 * distance * distance)
-            x = int(margin + index * step - (card.width - card_width) // 2)
-            self._paste_with_reflection(canvas, card, (x, y), opacity=0.11, blur_radius=12, scale=0.36)
+            origin = (
+                int(slot["center_x"] - lightbox.width / 2),
+                int(slot["baseline_y"] - lightbox.height + 15),
+            )
+            lightboxes.append((slot, lightbox, origin))
+
+        # Paint the outer gallery screens first so their low-intensity glow
+        # stays behind the inner screens and the central featured title.
+        for slot, lightbox, origin in sorted(lightboxes, key=lambda row: (abs(row[0]["order"]), row[0]["order"]), reverse=True):
+            self._paste_with_reflection(
+                canvas,
+                lightbox,
+                origin,
+                opacity=0.11 if slot["is_focus"] else 0.065,
+                blur_radius=10,
+                scale=0.28,
+            )
+        clipped = Image.new("RGBA", canvas.size, (0, 0, 0, 255))
+        clipped.paste(canvas, (0, 0), self._panoramic_gallery_scene_mask(size=canvas.size))
+        return clipped
+
+    @staticmethod
+    def _panoramic_gallery_slots(*, count: int) -> list[dict[str, float]]:
+        """Return centered, mirror-symmetric lightbox slots for one to seven posters."""
+        full = (
+            {"order": -3, "center_x": 635, "baseline_y": 704, "scale": 0.88, "rotation": 0.0, "is_focus": False},
+            {"order": -2, "center_x": 770, "baseline_y": 704, "scale": 0.92, "rotation": 0.0, "is_focus": False},
+            {"order": -1, "center_x": 905, "baseline_y": 704, "scale": 0.98, "rotation": 0.0, "is_focus": False},
+            {"order": 0, "center_x": 1040, "baseline_y": 704, "scale": 1.18, "rotation": 0.0, "is_focus": True},
+            {"order": 1, "center_x": 1175, "baseline_y": 704, "scale": 0.98, "rotation": 0.0, "is_focus": False},
+            {"order": 2, "center_x": 1310, "baseline_y": 704, "scale": 0.92, "rotation": 0.0, "is_focus": False},
+            {"order": 3, "center_x": 1445, "baseline_y": 704, "scale": 0.88, "rotation": 0.0, "is_focus": False},
+        )
+        safe_count = max(1, min(int(count), len(full)))
+        slot_indices = {
+            1: (3,),
+            2: (2, 4),
+            3: (2, 3, 4),
+            4: (1, 2, 4, 5),
+            5: (1, 2, 3, 4, 5),
+            6: (0, 1, 2, 4, 5, 6),
+            7: (0, 1, 2, 3, 4, 5, 6),
+        }[safe_count]
+        return [dict(full[index]) for index in slot_indices]
+
+    def _build_panoramic_gallery_hall(
+        self,
+        *,
+        size: tuple[int, int],
+        tone: dict[str, tuple[int, int, int]],
+    ) -> Image.Image:
+        """Create a dark digital gallery with a restrained stage and polished floor."""
+        width, height = size
+        canvas = Image.new("RGBA", size, (0, 0, 0, 255))
+        hall = Image.new("RGBA", size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(hall)
+        top = (4, 6, 10)
+        lower = (10, 14, 18)
+        for y in range(height):
+            progress = y / max(1, height - 1)
+            warm_lift = min(1.0, max(0.0, (progress - 0.22) * 1.4))
+            color = tuple(int(top[channel] * (1 - warm_lift) + lower[channel] * warm_lift) for channel in range(3))
+            draw.line((0, y, width, y), fill=color + (255,))
+
+        ambience = Image.new("RGBA", size, (0, 0, 0, 0))
+        ambience_draw = ImageDraw.Draw(ambience)
+        # A warm focus light supports the center lightbox; blue ambience keeps
+        # the surrounding screens in the background.
+        ambience_draw.ellipse((760, 138, 1320, 748), fill=(223, 163, 86, 56))
+        ambience_draw.ellipse((980, 36, width + 100, 650), fill=tone["glow"] + (42,))
+        ambience_draw.ellipse((-180, 440, 690, height + 160), fill=(16, 41, 70, 38))
+        ambience_draw.ellipse((410, 220, 910, 820), fill=(30, 56, 88, 24))
+        hall.alpha_composite(ambience.filter(ImageFilter.GaussianBlur(radius=82)))
+
+        architecture = Image.new("RGBA", size, (0, 0, 0, 0))
+        architecture_draw = ImageDraw.Draw(architecture)
+        # Back-wall bays, pillars and a shallow dome turn the dark backdrop
+        # into a gallery room without competing with the illuminated screens.
+        for left, right, alpha in ((60, 348, 30), (364, 630, 20), (646, 922, 24), (938, 1214, 28), (1230, 1530, 34)):
+            architecture_draw.rounded_rectangle(
+                (left, 178, right, 688),
+                radius=22,
+                fill=(16, 21, 29, alpha),
+                outline=(110, 125, 145, max(12, alpha // 2)),
+                width=1,
+            )
+            architecture_draw.line((left + 16, 202, right - 16, 202), fill=(212, 167, 101, max(10, alpha // 2)), width=1)
+        for x in (462, 650, 858, 1280, 1496):
+            architecture_draw.rounded_rectangle((x, 164, x + 42, 702), radius=15, fill=(72, 61, 48, 46))
+            architecture_draw.line((x + 7, 182, x + 7, 680), fill=(231, 183, 107, 52), width=2)
+            architecture_draw.line((x + 34, 184, x + 34, 678), fill=(102, 149, 194, 26), width=1)
+        for inset, alpha in ((34, 38), (94, 29), (166, 20), (238, 14)):
+            architecture_draw.arc(
+                (470 - inset, 112 - inset // 2, width + 80 + inset, 790 + inset // 2),
+                start=188,
+                end=352,
+                fill=(180, 149, 105, alpha),
+                width=2,
+            )
+        architecture_draw.ellipse((812, 174, 1268, 630), outline=(216, 165, 94, 36), width=2)
+        architecture_draw.ellipse((862, 224, 1218, 580), outline=tone["glow"] + (25,), width=1)
+        for x in range(516, 1524, 106):
+            architecture_draw.line((x, 680, x + 62, 690), fill=(214, 164, 90, 22), width=1)
+        architecture_draw.line((482, 690, width - 34, 690), fill=(224, 174, 98, 72), width=2)
+        # The title lane receives only an almost invisible mountain/cloud trace.
+        architecture_draw.line(
+            [(72, 708), (136, 687), (194, 698), (260, 660), (333, 694), (420, 679), (486, 708)],
+            fill=(154, 178, 201, 24),
+            width=2,
+        )
+        hall.alpha_composite(architecture.filter(ImageFilter.GaussianBlur(radius=1.1)))
+
+        floor = Image.new("RGBA", size, (0, 0, 0, 0))
+        floor_draw = ImageDraw.Draw(floor)
+        floor_draw.polygon([(474, 690), (width - 30, 690), (width, height), (332, height)], fill=(4, 7, 10, 198))
+        floor_draw.ellipse((640, 664, 1500, height + 176), fill=(215, 160, 91, 54))
+        floor_draw.ellipse((820, 706, 1420, height + 120), fill=tone["accent"] + (31,))
+        floor_draw.polygon([(510, 692), (1512, 692), (1446, 782), (580, 782)], outline=(220, 170, 98, 25), width=1)
+        for y, alpha in ((724, 24), (754, 20), (792, 14), (830, 10), (868, 8)):
+            floor_draw.line((420, y, width - 34, y), fill=(151, 180, 210, alpha), width=1)
+        hall.alpha_composite(floor.filter(ImageFilter.GaussianBlur(radius=10)))
+
+        frame = Image.new("RGBA", size, (0, 0, 0, 0))
+        ImageDraw.Draw(frame).rounded_rectangle(
+            (16, 156, width - 16, 784),
+            radius=54,
+            outline=(181, 178, 170, 78),
+            width=2,
+        )
+        hall.alpha_composite(frame)
+        canvas.paste(hall, (0, 0), self._panoramic_gallery_scene_mask(size=size))
         return canvas
+
+    @staticmethod
+    def _panoramic_gallery_scene_mask(*, size: tuple[int, int]) -> Image.Image:
+        width, _height = size
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((16, 156, width - 16, 784), radius=54, fill=255)
+        return mask
+
+    def _create_panoramic_lightbox(
+        self,
+        image: Image.Image,
+        *,
+        size: tuple[int, int],
+        rotation: float,
+        tone: dict[str, tuple[int, int, int]],
+        focus: bool,
+    ) -> Image.Image:
+        """Build one freestanding poster lightbox with a subtle illuminated base."""
+        width, height = size
+        padding = 12
+        base_height = 13
+        outer = Image.new("RGBA", (width + padding * 2, height + padding * 2 + base_height), (0, 0, 0, 0))
+        shadow = Image.new("RGBA", outer.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow)
+        shadow_draw.rounded_rectangle(
+            (padding + 4, padding + 7, padding + width + 4, padding + height + 9),
+            radius=18,
+            fill=(0, 0, 0, 126 if focus else 96),
+        )
+        outer.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(radius=13)))
+
+        poster = ImageOps_fit(image, size)
+        poster_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+        poster_layer.paste(poster, (0, 0))
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, width, height), radius=15, fill=255)
+        rounded = Image.new("RGBA", size, (0, 0, 0, 0))
+        rounded.paste(poster_layer, (0, 0), mask)
+        light_color = (228, 170, 92) if focus else tone["accent"]
+        glow = Image.new("RGBA", outer.size, light_color + (0,))
+        glow_mask = Image.new("L", outer.size, 0)
+        ImageDraw.Draw(glow_mask).rounded_rectangle((padding, padding, padding + width, padding + height), radius=17, fill=112 if focus else 54)
+        glow.putalpha(glow_mask.filter(ImageFilter.GaussianBlur(radius=18)))
+        outer.alpha_composite(glow)
+        frame_draw = ImageDraw.Draw(outer)
+        frame_draw.rounded_rectangle((padding - 2, padding - 2, padding + width + 2, padding + height + 2), radius=17, fill=(7, 11, 18, 248))
+        outer.alpha_composite(rounded, (padding, padding))
+        frame_draw = ImageDraw.Draw(outer)
+        frame_draw.rounded_rectangle(
+            (padding - 1, padding - 1, padding + width + 1, padding + height + 1),
+            radius=16,
+            outline=light_color + ((184 if focus else 98),),
+            width=2 if focus else 1,
+        )
+        base_y = padding + height + 4
+        frame_draw.rounded_rectangle(
+            (padding + 12, base_y, padding + width - 12, base_y + 5),
+            radius=2,
+            fill=light_color + ((178 if focus else 96),),
+        )
+        frame_draw.line((padding + 18, base_y + 6, padding + width - 18, base_y + 6), fill=(13, 17, 24, 220), width=2)
+        if abs(rotation) > 0.1:
+            return outer.rotate(rotation, resample=Image.Resampling.BICUBIC, expand=True)
+        return outer
 
     @staticmethod
     def _hexagon_points(
@@ -1826,302 +2379,6 @@ class CoverStudioService:
             )
             self._alpha_paste(canvas, poster, origin)
         return canvas
-
-    def _render_fan_spread_cover(
-        self,
-        *,
-        images: list[Image.Image],
-        tone: dict[str, tuple[int, int, int]],
-        overlay_strength: int,
-        poster_rotation: int,
-    ) -> Image.Image:
-        return self._render_fan_spread_scene(
-            images=images,
-            size=DEFAULT_CANVAS_SIZE,
-            tone=tone,
-            overlay_strength=overlay_strength,
-            poster_rotation=poster_rotation,
-        )
-
-    def _render_fan_spread_scene(
-        self,
-        *,
-        images: list[Image.Image],
-        size: tuple[int, int],
-        tone: dict[str, tuple[int, int, int]],
-        overlay_strength: int,
-        poster_rotation: int,
-    ) -> Image.Image:
-        layout = get_fan_spread_layout()
-        focus_image = images[min(len(images) - 1, len(images) // 2)]
-        canvas = self._build_fan_spread_background(
-            source_image=focus_image,
-            size=size,
-            tone=tone,
-            title_area_ratio=float(layout["title_area_ratio"]),
-        )
-        self._draw_fan_spread_shelf(canvas, layout=layout, tone=tone)
-        self._paste_fan_spread_posters(
-            canvas,
-            images=images,
-            layout=layout,
-            tone=tone,
-            poster_rotation=poster_rotation,
-        )
-        return canvas
-
-    def _build_fan_spread_background(
-        self,
-        *,
-        source_image: Image.Image,
-        size: tuple[int, int],
-        tone: dict[str, tuple[int, int, int]],
-        title_area_ratio: float,
-    ) -> Image.Image:
-        """Build the fan template's dark streaming panel without a global mask."""
-        width, height = size
-        inset = max(16, int(min(width, height) * 0.02))
-        radius = max(28, int(min(width, height) * 0.065))
-        inner_size = (width - inset * 2, height - inset * 2)
-        canvas = Image.new("RGBA", size, (2, 6, 12, 255))
-
-        scene = ImageOps_fit(source_image, inner_size).filter(ImageFilter.GaussianBlur(radius=max(12, int(min(inner_size) * 0.026))))
-        scene = Image.blend(scene, Image.new("RGB", inner_size, (8, 18, 36)), 0.76).convert("RGBA")
-        panel_mask = Image.new("L", size, 0)
-        ImageDraw.Draw(panel_mask).rounded_rectangle(
-            (inset, inset, width - inset, height - inset),
-            radius=radius,
-            fill=255,
-        )
-        panel = Image.new("RGBA", size, (0, 0, 0, 0))
-        panel.paste(scene, (inset, inset))
-        panel.putalpha(panel_mask)
-        canvas.alpha_composite(panel)
-
-        # Keep every fan cover in the same dark navy family even when a selected
-        # poster happens to be very bright or warm-colored.
-        color_grade = Image.new("RGBA", size, (3, 10, 22, 0))
-        color_grade.putalpha(panel_mask.point(lambda value: int(value * 0.68)))
-        canvas.alpha_composite(color_grade)
-
-        atmosphere = Image.new("RGBA", size, (0, 0, 0, 0))
-        atmosphere_draw = ImageDraw.Draw(atmosphere)
-        atmosphere_draw.ellipse(
-            (int(width * 0.34), int(height * 0.05), int(width * 1.08), int(height * 0.62)),
-            fill=(38, 84, 145, 68),
-        )
-        atmosphere_draw.ellipse(
-            (int(width * 0.52), int(height * 0.12), int(width * 1.04), int(height * 0.54)),
-            fill=(14, 38, 88, 82),
-        )
-        atmosphere = atmosphere.filter(ImageFilter.GaussianBlur(radius=54))
-        canvas.alpha_composite(atmosphere)
-
-        stars = Image.new("RGBA", size, (0, 0, 0, 0))
-        stars_draw = ImageDraw.Draw(stars)
-        star_random = random.Random(20260714)
-        for _ in range(74):
-            x = star_random.randint(int(width * 0.38), width - inset * 3)
-            y = star_random.randint(inset * 2, int(height * 0.52))
-            radius = 1 if star_random.random() < 0.84 else 2
-            alpha = star_random.randint(42, 118)
-            stars_draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(196, 221, 255, alpha))
-        canvas.alpha_composite(stars)
-
-        shade = Image.new("RGBA", size, (0, 0, 0, 0))
-        shade_draw = ImageDraw.Draw(shade)
-        title_width = int(width * title_area_ratio)
-        for x in range(inset, width - inset):
-            progress = max(0.0, min(1.0, (x - inset) / max(1, width - inset * 2)))
-            left_falloff = max(0.0, 1.0 - progress / max(0.01, title_area_ratio + 0.12))
-            alpha = int(34 + left_falloff * 148)
-            shade_draw.line((x, inset, x, height - inset), fill=(2, 7, 14, alpha))
-        shade_draw.ellipse(
-            (int(width * 0.62), -int(height * 0.18), width + int(width * 0.08), int(height * 0.68)),
-            fill=tone["glow"] + (36,),
-        )
-        shade_draw.ellipse(
-            (int(width * 0.38), int(height * 0.60), width + int(width * 0.12), height + int(height * 0.28)),
-            fill=tone["accent"] + (24,),
-        )
-        shade = shade.filter(ImageFilter.GaussianBlur(radius=max(12, int(min(size) * 0.035))))
-        shade.putalpha(Image.composite(shade.getchannel("A"), Image.new("L", size, 0), panel_mask))
-        canvas.alpha_composite(shade)
-
-        frame = Image.new("RGBA", size, (0, 0, 0, 0))
-        frame_draw = ImageDraw.Draw(frame)
-        frame_draw.rounded_rectangle(
-            (inset, inset, width - inset, height - inset),
-            radius=radius,
-            outline=tone["glow"] + (88,),
-            width=max(2, int(min(size) * 0.004)),
-        )
-        canvas.alpha_composite(frame)
-        return canvas
-
-    def _draw_fan_spread_shelf(
-        self,
-        canvas: Image.Image,
-        *,
-        layout: dict[str, Any],
-        tone: dict[str, tuple[int, int, int]],
-    ) -> None:
-        if int(layout.get("shelf_alpha", 0)) <= 0 and int(layout.get("shelf_border_alpha", 0)) <= 0:
-            return
-        shelf_box = tuple(layout["shelf_box"])
-        shelf = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        shelf_draw = ImageDraw.Draw(shelf)
-        shelf_draw.rounded_rectangle(
-            shelf_box,
-            radius=int(layout["shelf_radius"]),
-            fill=(3, 8, 16, int(layout["shelf_alpha"])),
-            outline=tone["glow"] + (int(layout["shelf_border_alpha"]),),
-            width=max(1, int(layout["shelf_radius"]) // 18),
-        )
-        shelf = shelf.filter(ImageFilter.GaussianBlur(radius=max(4, int(layout["shelf_radius"]) // 9)))
-        canvas.alpha_composite(shelf)
-
-    def _paste_fan_spread_posters(
-        self,
-        canvas: Image.Image,
-        *,
-        images: list[Image.Image],
-        layout: dict[str, Any],
-        tone: dict[str, tuple[int, int, int]],
-        poster_rotation: int,
-    ) -> None:
-        spec_count = min(len(images), int(layout["poster_limit"]))
-        if spec_count <= 0:
-            return
-        visible_specs = self._build_fan_spread_poster_specs(
-            canvas_size=canvas.size,
-            count=spec_count,
-            layout=layout,
-        )
-        visible_images = images[:spec_count]
-        # Treat the UI value as a fan-angle amplitude, rather than adding the
-        # same angle to every poster. Adding a shared angle makes the two
-        # halves drift apart; scaling preserves left/right mirror symmetry.
-        rotation_scale = 1.0 + (max(0, min(poster_rotation, 100)) - 34) * float(layout["rotation_tune_scale"])
-        ordering = sorted(range(spec_count), key=lambda idx: int(visible_specs[idx].get("elevation", 0)))
-        for idx in ordering:
-            spec = visible_specs[idx]
-            # Fan spread keeps the artwork direct on the stage: no white
-            # frame or glass card, only a soft shadow and a restrained floor
-            # reflection below the poster group.
-            card = self._create_poster_card(
-                visible_images[idx],
-                size=tuple(spec["size"]),
-                rotation=float(spec.get("rotation", 0.0)) * rotation_scale,
-                radius=int(spec.get("radius", 24)),
-            )
-            self._paste_with_reflection(
-                canvas,
-                card,
-                tuple(spec["origin"]),
-                opacity=float(layout.get("reflection_opacity", 0.0)),
-                blur_radius=12,
-                scale=float(layout.get("reflection_scale", 0.0)),
-            )
-
-    @staticmethod
-    def _build_fan_spread_poster_specs(
-        *,
-        canvas_size: tuple[int, int],
-        count: int,
-        layout: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """Build a mirrored fan around one focused center poster.
-
-        Cards are positioned from a shared center hinge and pasted from the
-        outer leaves inward. This deliberately avoids the "wave row" effect:
-        the central card is foremost, while every left/right pair keeps the
-        same distance, size, drop and opposing angle.
-        """
-        width, height = canvas_size
-        safe_count = max(1, min(int(count), int(layout.get("poster_limit", 7))))
-        inset = int(layout.get("horizontal_inset", 50))
-        aspect_ratio = float(layout.get("poster_aspect_ratio", 0.633))
-        min_height = int(layout.get("min_poster_height", 360))
-        max_height = int(layout.get("max_poster_height", 612))
-        overlap_ratio = max(0.08, min(0.12, float(layout.get("poster_overlap_ratio", 0.10))))
-        focus_scale = max(1.08, min(1.12, float(layout.get("focus_scale", 1.10))))
-        usable_width = max(1, width - inset * 2)
-
-        # Solve poster width from the available Primary span first. This keeps
-        # 3/5/7 selections visually full without forcing the cards to overlap
-        # beyond their outer edges.
-        span_units = safe_count - overlap_ratio * max(0, safe_count - 1)
-        if safe_count % 2:
-            span_units += focus_scale - 1.0
-        max_width_by_span = usable_width / max(1.0, span_units)
-        preferred_height_ratio = {1: 0.67, 3: 0.65, 5: 0.55, 7: 0.47}.get(safe_count, 0.47)
-        preferred_width = height * preferred_height_ratio * aspect_ratio
-        card_width = max(1, int(min(max_width_by_span, preferred_width)))
-        card_height = max(min_height, min(max_height, int(card_width / aspect_ratio)))
-        card_width = max(1, int(card_height * aspect_ratio))
-        center_index = safe_count // 2
-        card_widths = [card_width] * safe_count
-        if safe_count % 2:
-            card_widths[center_index] = int(round(card_width * focus_scale))
-        elif safe_count > 1:
-            card_widths[center_index - 1] = int(round(card_width * 1.04))
-            card_widths[center_index] = int(round(card_width * 1.04))
-
-        if safe_count == 7:
-            rotations = [-12.0, -8.0, -4.0, 0.0, 4.0, 8.0, 12.0]
-        else:
-            outer_angle = 8.0 if safe_count <= 3 else 10.0
-            rotations = [
-                round((0.0 if safe_count == 1 else (index / (safe_count - 1)) * 2.0 - 1.0) * outer_angle, 2)
-                for index in range(safe_count)
-            ]
-        card_sizes: list[tuple[int, int]] = []
-        for index, card_width_value in enumerate(card_widths):
-            is_focus = index == center_index if safe_count % 2 else index in {center_index - 1, center_index}
-            card_sizes.append((card_width_value, card_height if not is_focus else int(round(card_height * focus_scale))))
-
-        # Image.rotate(expand=True) grows the outer canvas. Position against that
-        # rendered size, rather than an unrotated poster width, so both halves
-        # are exact mirrors around the Primary canvas center.
-        rendered_sizes = [
-            CoverStudioService._fan_spread_rendered_card_size(size, rotation)
-            for size, rotation in zip(card_sizes, rotations)
-        ]
-        # Each leaf advances by only 90% of the regular card width. The result
-        # is an intentional 8-12% edge overlap, not a crowded card stack.
-        center_step = card_width * (1.0 - overlap_ratio)
-        center_y = int(height * 0.255)
-        fan_drop = int(height * float(layout.get("fan_drop_ratio", 0.095)))
-        half_span = max(1, safe_count // 2)
-
-        specs: list[dict[str, Any]] = []
-        for index, (card_size, rotation, rendered_size) in enumerate(zip(card_sizes, rotations, rendered_sizes)):
-            distance = abs(index - center_index)
-            normalized_distance = distance / half_span
-            card_y = int(round(center_y + fan_drop * normalized_distance**1.35))
-            is_focus = index == center_index if safe_count % 2 else index in {center_index - 1, center_index}
-            visual_center_x = width / 2 + (index - center_index) * center_step
-            specs.append(
-                {
-                    "origin": (int(round(visual_center_x - rendered_size[0] / 2)), card_y),
-                    "size": card_size,
-                    "rotation": rotation,
-                    "radius": 30 if is_focus else 27,
-                    "elevation": 8 if is_focus else max(1, half_span + 1 - distance),
-                }
-            )
-        return specs
-
-    @staticmethod
-    def _fan_spread_rendered_card_size(size: tuple[int, int], rotation: float) -> tuple[int, int]:
-        """Approximate the expanded image size used by the rotated poster card."""
-        source_width, source_height = size[0] + 32, size[1] + 32
-        radians = math.radians(abs(rotation))
-        return (
-            int(math.ceil(source_width * math.cos(radians) + source_height * math.sin(radians))),
-            int(math.ceil(source_width * math.sin(radians) + source_height * math.cos(radians))),
-        )
 
     def _render_rotated_stack_cover(
         self,
@@ -2437,14 +2694,21 @@ class CoverStudioService:
         title_x = _aligned_x(left, right, title_width, safe_align)
         title_y = base_y + title_y_offset
         title_height = title_box[3] - title_box[1]
-        self._draw_text_shadow(
-            draw,
-            (title_x, title_y),
-            title_text,
-            title_font,
-            fill=(255, 255, 255, 255),
-            shadow=(0, 0, 0, 168),
-        )
+        title_fill = tuple(decor.get("title_fill") or (255, 255, 255, 255))
+        subtitle_fill = tuple(decor.get("subtitle_fill") or (tone["soft"][0], tone["soft"][1], tone["soft"][2], 238))
+        line_fill = tuple(decor.get("line_fill") or (tone["accent"][0], tone["accent"][1], tone["accent"][2], 235))
+        if decor.get("soft_shadow"):
+            draw.text((title_x, title_y + 4), title_text, font=title_font, fill=(0, 0, 0, 106))
+            draw.text((title_x, title_y), title_text, font=title_font, fill=title_fill)
+        else:
+            self._draw_text_shadow(
+                draw,
+                (title_x, title_y),
+                title_text,
+                title_font,
+                fill=title_fill,
+                shadow=(0, 0, 0, 132),
+            )
         marker_style = str(decor.get("marker") or "").strip().lower()
         line_y = title_y + title_height + int(decor.get("line_gap", 18))
         line_height = int(decor.get("line_height", 5))
@@ -2462,26 +2726,33 @@ class CoverStudioService:
             subtitle_y = title_y + title_height + int(decor.get("subtitle_gap", 18))
         else:
             line_length = int(decor.get("line_length", 72))
-            line_radius = max(2, line_height // 2)
-            line_x = _aligned_x(left, right, line_length, safe_align)
-            draw.rounded_rectangle(
-                (line_x, line_y, line_x + line_length, line_y + line_height),
-                radius=line_radius,
-                fill=(tone["accent"][0], tone["accent"][1], tone["accent"][2], 235),
-            )
-            subtitle_y = line_y + line_height + int(decor.get("subtitle_gap", 18))
+            if line_length > 0:
+                line_radius = max(2, line_height // 2)
+                line_x = _aligned_x(left, right, line_length, safe_align)
+                draw.rounded_rectangle(
+                    (line_x, line_y, line_x + line_length, line_y + line_height),
+                    radius=line_radius,
+                    fill=line_fill,
+                )
+                subtitle_y = line_y + line_height + int(decor.get("subtitle_gap", 18))
+            else:
+                subtitle_y = title_y + title_height + int(decor.get("subtitle_gap", 18))
         if subtitle_text:
             subtitle_box = draw.textbbox((0, 0), subtitle_text, font=subtitle_font)
             subtitle_width = subtitle_box[2] - subtitle_box[0]
             subtitle_x = _aligned_x(left, right, subtitle_width, safe_align)
-            self._draw_text_shadow(
-                draw,
-                (subtitle_x, subtitle_y),
-                subtitle_text,
-                subtitle_font,
-                fill=(tone["soft"][0], tone["soft"][1], tone["soft"][2], 238),
-                shadow=(0, 0, 0, 144),
-            )
+            if decor.get("soft_shadow"):
+                draw.text((subtitle_x, subtitle_y + 3), subtitle_text, font=subtitle_font, fill=(0, 0, 0, 90))
+                draw.text((subtitle_x, subtitle_y), subtitle_text, font=subtitle_font, fill=subtitle_fill)
+            else:
+                self._draw_text_shadow(
+                    draw,
+                    (subtitle_x, subtitle_y),
+                    subtitle_text,
+                    subtitle_font,
+                    fill=subtitle_fill,
+                    shadow=(0, 0, 0, 104),
+                )
 
     def _build_background(
         self,
@@ -2866,6 +3137,8 @@ def _normalize_mode_poster_rotation(value: Any, *, template_key: str) -> int:
 def _normalize_template_key(value: Any) -> str:
     raw = str(value or "").strip()
     valid = {mode["key"] for mode in cover_studio_modes()}
+    if raw in REMOVED_TEMPLATE_KEYS:
+        return DEFAULT_TEMPLATE_KEY
     return raw if raw in valid else DEFAULT_TEMPLATE_KEY
 
 

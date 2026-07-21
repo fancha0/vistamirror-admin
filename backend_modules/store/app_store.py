@@ -6,11 +6,21 @@ import pathlib
 from typing import Any, Callable
 
 
+def _normalize_optional_mapping(raw: Any) -> dict[str, Any]:
+    """Keep older store callers compatible while optional integrations are absent."""
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _default_optional_mapping() -> dict[str, Any]:
+    return {}
+
+
 def default_store_payload(
     *,
     default_notification_config: Callable[[], dict[str, Any]],
     default_bot_config: Callable[[], dict[str, Any]],
     default_ai_config: Callable[[], dict[str, Any]],
+    default_moviepilot_config: Callable[[], dict[str, Any]] = _default_optional_mapping,
     default_cover_studio_config: Callable[[], dict[str, Any]],
     default_drive115_config: Callable[[], dict[str, Any]],
     default_hdhive_config: Callable[[], dict[str, Any]],
@@ -24,6 +34,7 @@ def default_store_payload(
         "botConfig": sync_notification_config_to_bot_config(notification_config, default_bot_config()),
         "notificationConfig": notification_config,
         "aiConfig": default_ai_config(),
+        "moviePilotConfig": default_moviepilot_config(),
         "coverStudioConfig": default_cover_studio_config(),
         "drive115Config": default_drive115_config(),
         "hdhiveConfig": default_hdhive_config(),
@@ -67,6 +78,7 @@ def read_store_unlocked(
     normalize_notification_config: Callable[..., dict[str, Any]],
     sync_notification_config_to_bot_config: Callable[[Any, Any], dict[str, Any]],
     normalize_ai_config: Callable[[Any], dict[str, Any]],
+    normalize_moviepilot_config: Callable[[Any], dict[str, Any]] = _normalize_optional_mapping,
     normalize_cover_studio_config: Callable[[Any], dict[str, Any]],
     normalize_drive115_config: Callable[[Any], dict[str, Any]],
     normalize_hdhive_config: Callable[[Any], dict[str, Any]],
@@ -91,6 +103,7 @@ def read_store_unlocked(
     )
     bot_config = sync_notification_config_to_bot_config(notification_config, bot_config)
     ai_config = data.get("aiConfig") if isinstance(data, dict) else {}
+    moviepilot_config = data.get("moviePilotConfig") if isinstance(data, dict) else {}
     cover_studio_config = data.get("coverStudioConfig") if isinstance(data, dict) else {}
     drive115_config = data.get("drive115Config") if isinstance(data, dict) else {}
     hdhive_config = data.get("hdhiveConfig") if isinstance(data, dict) else {}
@@ -105,6 +118,7 @@ def read_store_unlocked(
         "botConfig": normalize_bot_config(bot_config),
         "notificationConfig": notification_config,
         "aiConfig": normalize_ai_config(ai_config),
+        "moviePilotConfig": normalize_moviepilot_config(moviepilot_config),
         "coverStudioConfig": normalize_cover_studio_config(cover_studio_config),
         "drive115Config": normalize_drive115_config(drive115_config),
         "hdhiveConfig": normalize_hdhive_config(hdhive_config),

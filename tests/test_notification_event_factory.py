@@ -139,6 +139,83 @@ class PlaybackNotificationEventFactoryTests(unittest.TestCase):
         self.assertEqual(result["templatePayload"]["overview_line"], "📖 剧情简介：这一集的剧集简介")
         self.assertEqual(result["templatePayload"]["overview_block"], "📖 剧情简介：这一集的剧集简介")
 
+    def test_uses_payload_episode_overview_when_detail_has_none(self):
+        factory = PlaybackNotificationEventFactory(
+            fetch_session_detail=lambda **kwargs: {},
+            extract_item_id=lambda payload: "episode-18",
+            fetch_item_detail=lambda **kwargs: {"Type": "Episode", "Name": "陈异为保护苗靖"},
+            pick_first_value=lambda payload, paths: _pick_first_value(payload, paths),
+            safe_float=lambda value: float(value) if value not in (None, "") else None,
+            build_item_urls=lambda **kwargs: ("", ""),
+            format_hms=lambda seconds: f"{seconds // 60:02d}:{seconds % 60:02d}",
+            shorten_caption=lambda text: text,
+            shorten_overview=lambda text: text,
+        )
+
+        result = factory.build(
+            {
+                "SeriesName": "野狗骨头",
+                "Overview": "这是不应被当作单集简介的系列简介",
+                "Item": {
+                    "Id": "episode-18",
+                    "Type": "Episode",
+                    "Overview": "陈异为保护苗靖，决定独自面对危机。",
+                },
+            },
+            action="stop",
+            event_name="playback.stop",
+            emby_config={},
+            bot_config={"showIp": False, "showIpGeo": False, "showOverview": True},
+        )
+
+        self.assertEqual(result["templatePayload"]["overview_line"], "📖 剧情简介：陈异为保护苗靖，决定独自面对危机。")
+
+    def test_episode_does_not_use_ambiguous_top_level_overview(self):
+        factory = PlaybackNotificationEventFactory(
+            fetch_session_detail=lambda **kwargs: {},
+            extract_item_id=lambda payload: "episode-18",
+            fetch_item_detail=lambda **kwargs: {"Type": "Episode", "Name": "陈异为保护苗靖"},
+            pick_first_value=lambda payload, paths: _pick_first_value(payload, paths),
+            safe_float=lambda value: float(value) if value not in (None, "") else None,
+            build_item_urls=lambda **kwargs: ("", ""),
+            format_hms=lambda seconds: f"{seconds // 60:02d}:{seconds % 60:02d}",
+            shorten_caption=lambda text: text,
+            shorten_overview=lambda text: text,
+        )
+
+        result = factory.build(
+            {"SeriesName": "野狗骨头", "Overview": "系列简介", "Item": {"Id": "episode-18", "Type": "Episode"}},
+            action="stop",
+            event_name="playback.stop",
+            emby_config={},
+            bot_config={"showIp": False, "showIpGeo": False, "showOverview": True},
+        )
+
+        self.assertEqual(result["templatePayload"]["overview_line"], "📖 剧情简介：暂无简介")
+
+    def test_movie_uses_current_movie_overview(self):
+        factory = PlaybackNotificationEventFactory(
+            fetch_session_detail=lambda **kwargs: {},
+            extract_item_id=lambda payload: "movie-1",
+            fetch_item_detail=lambda **kwargs: {"Type": "Movie", "Name": "大军阀"},
+            pick_first_value=lambda payload, paths: _pick_first_value(payload, paths),
+            safe_float=lambda value: float(value) if value not in (None, "") else None,
+            build_item_urls=lambda **kwargs: ("", ""),
+            format_hms=lambda seconds: f"{seconds // 60:02d}:{seconds % 60:02d}",
+            shorten_caption=lambda text: text,
+            shorten_overview=lambda text: text,
+        )
+
+        result = factory.build(
+            {"Item": {"Id": "movie-1", "Type": "Movie", "Overview": "北洋时代军阀们鱼肉百姓的故事。"}},
+            action="stop",
+            event_name="playback.stop",
+            emby_config={},
+            bot_config={"showIp": False, "showIpGeo": False, "showOverview": True},
+        )
+
+        self.assertEqual(result["templatePayload"]["overview_line"], "📖 剧情简介：北洋时代军阀们鱼肉百姓的故事。")
+
     def test_episode_headline_uses_human_friendly_title_format(self):
         factory = PlaybackNotificationEventFactory(
             fetch_session_detail=lambda **kwargs: {},

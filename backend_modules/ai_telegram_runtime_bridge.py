@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .ai_assistant import apply_ai_env_overrides
+from .moviepilot_config import apply_moviepilot_env_overrides
 
 if TYPE_CHECKING:
     from .telegram_commands import TelegramCommandService
@@ -139,6 +140,10 @@ class TelegramAIPlatformRuntime:
     def load_ai_config(self, *, chat_id: str = "") -> dict[str, Any]:
         store = self.read_store()
         return apply_ai_env_overrides(store.get("aiConfig"))
+
+    def load_moviepilot_config(self) -> dict[str, Any]:
+        store = self.read_store()
+        return apply_moviepilot_env_overrides(store.get("moviePilotConfig"))
 
     def build_library_stats_context(self) -> str:
         from .ai_support_service import AISupportService

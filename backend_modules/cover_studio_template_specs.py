@@ -124,9 +124,36 @@ PRIMARY_LAYOUT_VARIANTS: dict[str, dict[str, Any]] = {
         "layout_style": "bookshelf",
         "poster_limit": 7,
         "title": {
-            "x_bounds": (72, 700),
-            "base_y": 72,
-            "decor": {"line_gap": 16, "line_length": 88, "line_height": 5, "subtitle_gap": 16},
+            "x_bounds": (72, 680),
+            "base_y": 70,
+            "decor": {
+                "line_gap": 16,
+                "line_length": 74,
+                "line_height": 4,
+                "subtitle_gap": 16,
+                "title_fill": (248, 241, 226, 255),
+                "subtitle_fill": (209, 190, 161, 228),
+                "line_fill": (218, 158, 82, 224),
+                "soft_shadow": True,
+            },
+        },
+    },
+    "bookshelf_two": {
+        "layout_style": "bookshelf_two",
+        "poster_limit": 7,
+        "title": {
+            "x_bounds": (78, 560),
+            "base_y": 350,
+            "decor": {
+                "line_gap": 18,
+                "line_length": 84,
+                "line_height": 4,
+                "subtitle_gap": 17,
+                "title_fill": (246, 242, 232, 255),
+                "subtitle_fill": (207, 191, 169, 226),
+                "line_fill": (213, 166, 98, 220),
+                "soft_shadow": True,
+            },
         },
     },
     "honeycomb": {
@@ -142,55 +169,21 @@ PRIMARY_LAYOUT_VARIANTS: dict[str, dict[str, Any]] = {
         "layout_style": "panorama_gallery",
         "poster_limit": 7,
         "title": {
-            "x_bounds": (74, 670),
-            "base_y": 74,
-            "decor": {"line_gap": 16, "line_length": 88, "line_height": 5, "subtitle_gap": 16},
+            "x_bounds": (102, 470),
+            "base_y": 370,
+            "decor": {
+                "line_gap": 18,
+                "line_length": 72,
+                "line_height": 4,
+                "subtitle_gap": 17,
+                "title_fill": (246, 244, 237, 255),
+                "subtitle_fill": (181, 193, 208, 218),
+                "line_fill": (205, 159, 92, 215),
+                "soft_shadow": True,
+            },
         },
     },
 }
-
-
-# The fan layout is a mirrored poster fan, not a wave or generic card row.
-# It is rendered on the Emby Primary canvas only.
-FAN_SPREAD_LAYOUT: dict[str, Any] = {
-    "title_area_ratio": 0.32,
-    "poster_limit": 7,
-    # The UI rotation control scales these fixed, mirrored fan angles instead
-    # of introducing a shared tilt that would break the two fan halves.
-    "rotation_tune_scale": 0.004,
-    "reflection_opacity": 0.065,
-    "reflection_scale": 0.20,
-    "horizontal_inset": 54,
-    "poster_aspect_ratio": 0.633,
-    "min_poster_height": 350,
-    "max_poster_height": 590,
-    "poster_overlap_ratio": 0.10,
-    "focus_scale": 1.10,
-    "fan_drop_ratio": 0.095,
-    "shelf_box": (132, 594, 1548, 838),
-    "shelf_radius": 52,
-    "shelf_alpha": 38,
-    "shelf_border_alpha": 0,
-    "title": {
-        "x_bounds": (78, 486),
-        "base_y": 108,
-    },
-    "poster_specs": [
-        # Seven cards orbit a shared lower pivot. Their angles are fixed mirror
-        # pairs so the visual reads as one fan with a clear center hinge.
-        {"rotation": -12.0, "elevation": 1},
-        {"rotation": -8.0, "elevation": 2},
-        {"rotation": -4.0, "elevation": 3},
-        {"rotation": 0.0, "elevation": 8},
-        {"rotation": 4.0, "elevation": 3},
-        {"rotation": 8.0, "elevation": 2},
-        {"rotation": 12.0, "elevation": 1},
-    ],
-}
-
-
-def get_fan_spread_layout() -> dict[str, Any]:
-    return FAN_SPREAD_LAYOUT
 
 
 def get_cinematic_showcase_variant(variant: str) -> dict[str, Any]:
