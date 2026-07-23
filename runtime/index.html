@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260717-mobile-user-dialogs-narrow-1">
+  <link rel="stylesheet" href="styles.css?v=20260723-moviepilot-hover-overlay-1">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -1333,7 +1333,10 @@
             <div id="moviepilot-explore-sources" class="moviepilot-explore-sources" role="tablist" aria-label="探索内容来源">
               <button class="is-active" type="button" data-moviepilot-source="tmdb_trending">TheMovieDb</button>
               <button type="button" data-moviepilot-source="douban_movies">豆瓣</button>
-              <button type="button" data-moviepilot-source="douban_tv_animation">动漫</button>
+              <button type="button" data-moviepilot-source="platform_iqiyi">爱奇艺</button>
+              <button type="button" data-moviepilot-source="platform_tencent">腾讯视频</button>
+              <button type="button" data-moviepilot-source="platform_youku">优酷</button>
+              <button type="button" data-moviepilot-source="platform_bilibili">B站</button>
               <button type="button" data-moviepilot-source="bangumi_calendar">Bangumi</button>
               <button type="button" data-moviepilot-source="douban_showing">正在热映</button>
             </div>
@@ -1351,13 +1354,7 @@
           </section>
 
           <section class="moviepilot-search-content panel">
-            <div id="moviepilot-explore-filters" class="moviepilot-explore-filters">
-              <div><b>种类</b><button class="is-active" type="button" data-moviepilot-explore-type="all">全部</button><button type="button" data-moviepilot-explore-type="tv">电视剧</button><button type="button" data-moviepilot-explore-type="movie">电影</button></div>
-              <div><b>排序</b><span class="is-static">最热</span><span>最新上架</span><span>高分好评</span></div>
-              <div><b>类型</b><span>爱情</span><span>都市</span><span>青春</span><span>奇幻</span><span>武侠</span><span>古装</span><span>科幻</span><span>悬疑</span><span>喜剧</span><span>犯罪</span><span>历史</span></div>
-              <div><b>年份</b><span>2026</span><span>2025</span><span>2024</span><span>2023</span><span>2022</span><span>更早</span></div>
-              <div class="moviepilot-hot-keywords"><b>热门</b><span>东方玄幻</span><span>都市奇幻</span><span>战争传奇</span><span>重来人生</span><span>家长里短</span><span>末世生存</span><span>甜虐爱情</span></div>
-            </div>
+            <div id="moviepilot-explore-filters" class="moviepilot-explore-filters" aria-label="MoviePilot 探索筛选"></div>
             <div class="moviepilot-search-toolbar">
               <div id="moviepilot-search-tabs" class="moviepilot-search-tabs" role="tablist" aria-label="搜索结果类型">
                 <button class="is-active" type="button" role="tab" aria-selected="true" data-moviepilot-filter="all">▦ 全部</button>
@@ -1365,7 +1362,6 @@
                 <button type="button" role="tab" aria-selected="false" data-moviepilot-filter="tv">▣ 电视剧</button>
                 <button type="button" role="tab" aria-selected="false" data-moviepilot-filter="anime">▤ 动漫</button>
               </div>
-              <p id="moviepilot-search-status" class="moviepilot-search-status" aria-live="polite">输入名称后开始搜索。</p>
             </div>
             <div id="moviepilot-search-results" class="moviepilot-result-grid">
               <div class="moviepilot-empty-state"><strong>⌕</strong><span>搜索 MoviePilot 中的电影、剧集和动漫。</span></div>
@@ -1728,7 +1724,7 @@
                     <div class="settings-card-head">
                       <div>
                         <h4>MoviePilot</h4>
-                        <p class="toggle-desc">接入 MoviePilot MCP，使用当前实例开放的全部功能。</p>
+                        <p class="toggle-desc">接入 MoviePilot MCP；第三方调用需使用 MoviePilot API Token。</p>
                       </div>
                       <button id="moviepilot-test-btn" class="ghost-btn" type="button">测试连接</button>
                     </div>
@@ -1748,7 +1744,7 @@
                         <input id="moviepilot-base-url" type="url" placeholder="例如 http://moviepilot:3001 或 https://moviepilot.example.com">
                       </label>
                       <label class="field field-span-2">
-                        <span>API Token</span>
+                        <span>MoviePilot API Token</span>
                         <div class="password-field">
                           <input id="moviepilot-api-token" type="password" placeholder="输入 MoviePilot API Token">
                           <button id="moviepilot-api-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 MoviePilot API Token" data-target="moviepilot-api-token" data-open="false">🙈</button>
@@ -2269,7 +2265,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260716-radar-stable-order-1"></script>
+  <script src="script.js?v=20260723-moviepilot-tmdb-discover-2"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

@@ -1,7 +1,9 @@
 import json
 import os
+import io
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import dev_server
 
@@ -15,6 +17,7 @@ from backend_modules.moviepilot_config import (
 )
 from backend_modules.moviepilot_service_adapter import (
     MoviePilotHttpError,
+    MoviePilotServiceError,
     MoviePilotServiceAdapter,
 )
 from backend_modules.ai_tools.moviepilot_tool import MoviePilotTool
@@ -286,6 +289,7 @@ class MoviePilotServiceAdapterTests(unittest.TestCase):
         self.assertEqual("tv", rows[0]["mediaType"])
         self.assertEqual("2023", rows[0]["year"])
         self.assertEqual(8.6, rows[0]["rating"])
+        self.assertEqual([], rows[0]["genres"])
         self.assertEqual("123", rows[0]["tmdbId"])
         self.assertEqual("", rows[0]["externalUrl"])
 
@@ -319,6 +323,47 @@ class MoviePilotServiceAdapterTests(unittest.TestCase):
         self.assertEqual("rest", result["transport"])
         self.assertEqual([{"title": "Bangumi 作品"}], result["result"])
         self.assertEqual(("GET", "https://mp.example/api/v1/recommend/bangumi_calendar?page=2&count=30", None), requests[0])
+
+    def test_discovery_plugin_source_is_resolved_server_side_by_name(self):
+        requests = []
+
+        def transport(method, url, headers, payload, timeout):
+            requests.append((method, url, payload))
+            if url.endswith("/discover/source"):
+                return [{"name": "腾讯视频", "api_path": "plugin/TencentVideoDiscover/tencentvideo_discover?apikey=private"}]
+            return [{"title": "腾讯作品"}]
+
+        result = self._adapter(transport).get_discovery_source(("腾讯视频", "腾讯"), page=2)
+
+        self.assertEqual("discover-plugin", result["transport"])
+        self.assertEqual([{"title": "腾讯作品"}], result["result"])
+        self.assertEqual(("GET", "https://mp.example/api/v1/plugin/TencentVideoDiscover/tencentvideo_discover?apikey=private&page=2&count=30", None), requests[1])
+
+    def test_discovery_plugin_source_does_not_call_unknown_external_path(self):
+        def transport(method, url, headers, payload, timeout):
+            return [{"name": "爱奇艺", "api_path": "https://example.com/unsafe"}]
+
+        with self.assertRaises(MoviePilotServiceError):
+            self._adapter(transport).get_discovery_source(("爱奇艺",))
+
+    def test_discover_feed_uses_moviepilot_native_douban_filters(self):
+        requests = []
+
+        def transport(method, url, _headers, _body, _timeout):
+            requests.append((method, url))
+            return []
+
+        result = self._adapter(transport).get_discover_feed(
+            "douban_movies",
+            page=2,
+            parameters={"sort": "U", "tags": "喜剧,华语,2025"},
+        )
+
+        self.assertEqual("discover-rest", result["transport"])
+        self.assertEqual(
+            [("GET", "https://mp.example/api/v1/discover/douban_movies?sort=U&tags=%E5%96%9C%E5%89%A7%2C%E5%8D%8E%E8%AF%AD%2C2025&page=2&count=30")],
+            requests,
+        )
 
     def test_full_tool_invoke_runs_write_tools_without_confirmation_gate(self):
         requests = []
@@ -526,6 +571,168 @@ class MoviePilotToolFormattingTests(unittest.TestCase):
 
 
 class MoviePilotSearchApiTests(unittest.TestCase):
+    def test_moviepilot_image_proxy_caches_only_allowlisted_tmdb_thumbnail(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler.send_response = lambda status: responses.append(("status", status))
+        handler.send_header = lambda key, value: responses.append((key, value))
+        handler.end_headers = lambda: None
+        handler.wfile = io.BytesIO()
+
+        class Response:
+            headers = {"Content-Type": "application/octet-stream", "Content-Length": "3"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b"\xff\xd8\xff"
+
+        with tempfile.TemporaryDirectory() as cache_dir, patch.object(dev_server, "MOVIEPILOT_IMAGE_CACHE_DIR", dev_server.pathlib.Path(cache_dir)), patch.object(
+            dev_server.urllib.request, "urlopen", return_value=Response()
+        ) as urlopen:
+            dev_server.AppHandler._handle_moviepilot_image(handler, "path=Aj0Uykxj0vhwVsyrRJka0aM3SP1.jpg&size=w342")
+            dev_server.AppHandler._handle_moviepilot_image(handler, "path=Aj0Uykxj0vhwVsyrRJka0aM3SP1.jpg&size=w342")
+
+        self.assertEqual(1, urlopen.call_count)
+        self.assertEqual(b"\xff\xd8\xff\xff\xd8\xff", handler.wfile.getvalue())
+        self.assertIn(("Cache-Control", "private, max-age=86400"), responses)
+
+    def test_moviepilot_image_proxy_rejects_non_tmdb_filename(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+
+        dev_server.AppHandler._handle_moviepilot_image(handler, "path=https%3A%2F%2Fexample.com%2Fposter.jpg&size=original")
+
+        self.assertEqual(400, responses[0][0])
+
+    def test_moviepilot_image_proxy_allows_known_platform_cdn_only(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler.send_response = lambda status: responses.append(("status", status))
+        handler.send_header = lambda key, value: responses.append((key, value))
+        handler.end_headers = lambda: None
+        handler.wfile = io.BytesIO()
+
+        class Response:
+            headers = {"Content-Type": "application/octet-stream", "Content-Length": "3"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b"\xff\xd8\xff"
+
+        with tempfile.TemporaryDirectory() as cache_dir, patch.object(dev_server, "MOVIEPILOT_IMAGE_CACHE_DIR", dev_server.pathlib.Path(cache_dir)), patch.object(
+            dev_server.urllib.request, "urlopen", return_value=Response()
+        ) as urlopen:
+            dev_server.AppHandler._handle_moviepilot_image(handler, "url=https%3A%2F%2Fvcover-vt-pic.puui.qpic.cn%2Fcover")
+
+        self.assertEqual(1, urlopen.call_count)
+        self.assertEqual(b"\xff\xd8\xff", handler.wfile.getvalue())
+
+    def test_tmdb_explore_uses_native_discover_endpoint_and_keeps_loading_after_a_20_item_page(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {
+            "source": "tmdb_trending", "mediaType": "movie",
+            "filters": {"sortBy": "popularity.desc", "genre": "科幻", "year": "2026"}, "page": 1,
+        }
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler._log_event = lambda **kwargs: None
+        items = [{"title": f"作品 {index}", "tmdbId": str(index)} for index in range(20)]
+        adapter = MagicMock()
+        adapter.get_discover_feed.return_value = {"result": {"items": items}, "transport": "discover-rest"}
+
+        with patch.object(dev_server, "_read_store_unlocked", return_value={"moviePilotConfig": {"enabled": True, "baseUrl": "https://mp.example", "apiToken": "token"}}), patch.object(
+            dev_server, "MoviePilotServiceAdapter", return_value=adapter
+        ) as adapter_class:
+            adapter_class.normalize_search_results.return_value = items
+            dev_server.AppHandler._handle_moviepilot_explore(handler)
+
+        self.assertEqual(200, responses[0][0])
+        self.assertTrue(responses[0][1]["hasMore"])
+        self.assertEqual(20, len(responses[0][1]["items"]))
+        adapter.get_discover_feed.assert_called_once_with(
+            "tmdb_movies", page=1,
+            parameters={"sort_by": "popularity.desc", "with_genres": "878", "release_date": "2026-01-01"},
+        )
+
+    def test_douban_explore_uses_native_discover_endpoint_and_mp_filters(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {
+            "source": "douban_movies",
+            "mediaType": "movie",
+            "filters": {"sort": "U", "tags": ["喜剧", "华语", "2025"]},
+            "page": 1,
+        }
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler._log_event = lambda **kwargs: None
+        adapter = MagicMock()
+        adapter.get_discover_feed.return_value = {"result": {"items": [{"title": "豆瓣作品"}]}, "transport": "discover-rest"}
+
+        with patch.object(dev_server, "_read_store_unlocked", return_value={"moviePilotConfig": {"enabled": True, "baseUrl": "https://mp.example", "apiToken": "token"}}), patch.object(
+            dev_server, "MoviePilotServiceAdapter", return_value=adapter
+        ) as adapter_class:
+            adapter_class.normalize_search_results.return_value = [{"title": "豆瓣作品"}]
+            dev_server.AppHandler._handle_moviepilot_explore(handler)
+
+        adapter.get_discover_feed.assert_called_once_with(
+            "douban_movies",
+            page=1,
+            parameters={"sort": "U", "tags": "喜剧,华语,2025"},
+        )
+        self.assertEqual("discover-rest", responses[0][1]["transport"])
+
+    def test_extract_subscribe_id_handles_nested_mcp_payloads(self):
+        self.assertEqual(42, dev_server._extract_moviepilot_subscribe_id({"result": {"subscribe_id": 42}}))
+        self.assertEqual(
+            43,
+            dev_server._extract_moviepilot_subscribe_id({"content": [{"text": '{"data":{"subscription":{"id":43}}}'}]}),
+        )
+
+    def test_subscribe_endpoint_creates_and_immediately_searches_after_confirmation(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {
+            "title": "痴迷",
+            "year": "2026",
+            "mediaType": "movie",
+            "tmdbId": "1339713",
+            "immediate": True,
+        }
+        handler._moviepilot_effective_config = lambda: ({"enabled": True}, "")
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler._log_event = lambda **kwargs: None
+        adapter = MagicMock()
+        adapter.invoke_named_tool.side_effect = [
+            {"ok": True, "result": {"subscribe_id": 88}},
+            {"ok": True, "result": {"accepted": True}},
+        ]
+
+        with patch.object(dev_server, "MoviePilotServiceAdapter", return_value=adapter):
+            dev_server.AppHandler._handle_moviepilot_subscribe(handler)
+
+        self.assertEqual(200, responses[0][0])
+        self.assertTrue(responses[0][1]["immediateSearchStarted"])
+        self.assertEqual(
+            [
+                ("add_subscribe", {"title": "痴迷", "year": "2026", "media_type": "movie", "tmdb_id": 1339713}),
+                ("search_subscribe", {"subscribe_id": 88, "manual": True}),
+            ],
+            [call.args for call in adapter.invoke_named_tool.call_args_list],
+        )
+
     def test_search_endpoint_rejects_disabled_connection_without_calling_moviepilot(self):
         responses = []
         handler = type("Handler", (), {})()

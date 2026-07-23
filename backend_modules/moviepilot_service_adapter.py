@@ -62,7 +62,6 @@ class MoviePilotServiceAdapter:
         "取消订阅",
         "搜索订阅",
     )
-
     def __init__(
         self,
         config: dict[str, Any],
@@ -125,6 +124,63 @@ class MoviePilotServiceAdapter:
         if not fallback.get("ok"):
             raise MoviePilotServiceError(str(fallback.get("message") or "MoviePilot 未返回探索内容。"))
         return {"result": fallback.get("result"), "transport": "mcp"}
+
+    def get_discover_feed(self, endpoint: str, *, page: int = 1, count: int = 30, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Read a built-in MoviePilot Explore feed with its native filters.
+
+        ``discover`` and ``recommend`` are intentionally separate MoviePilot
+        APIs.  In particular, the Douban Explore page uses ``sort`` and
+        ``tags`` on ``/discover/douban_*``; using the recommendation feed
+        produces a different list even when both screens are labelled 豆瓣.
+        """
+        allowed_endpoints = {"douban_movies", "douban_tvs", "tmdb_movies", "tmdb_tvs", "bangumi"}
+        endpoint_name = str(endpoint or "").strip().lower()
+        if endpoint_name not in allowed_endpoints:
+            raise MoviePilotServiceError("不支持的 MoviePilot 探索来源。")
+        query_params = {
+            key: str(value)
+            for key, value in dict(parameters or {}).items()
+            if value is not None and str(value).strip()
+        }
+        query_params["page"] = str(max(1, int(page or 1)))
+        query_params["count"] = str(max(1, min(100, int(count or 30))))
+        query = parse.urlencode(query_params)
+        return {
+            "result": self._request("GET", f"/discover/{endpoint_name}?{query}"),
+            "transport": "discover-rest",
+        }
+
+    def get_discovery_source(self, source_names: tuple[str, ...], *, page: int = 1, count: int = 30) -> dict[str, Any]:
+        """Read a configured MoviePilot discovery plugin without exposing its API path.
+
+        MoviePilot v2 plugins register discovery sources dynamically.  The
+        returned ``api_path`` can include a plugin key, so it stays server-side
+        and is selected by its human-readable source name only.
+        """
+        wanted = {str(name or "").strip().casefold() for name in source_names if str(name or "").strip()}
+        rows = self._extract_rows(self._request("GET", "/discover/source"))
+        selected: dict[str, Any] | None = None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("name") or "").strip().casefold() in wanted:
+                selected = row
+                break
+        if not selected:
+            readable = " / ".join(source_names)
+            raise MoviePilotServiceError(f"MoviePilot 未启用“{readable}”探索插件。")
+        raw_path = str(selected.get("api_path") or "").strip()
+        parsed = parse.urlsplit(raw_path)
+        path = parsed.path.lstrip("/")
+        if parsed.scheme or parsed.netloc or not path.startswith("plugin/"):
+            raise MoviePilotServiceError("MoviePilot 返回了不安全的探索插件路径。")
+        parameters = dict(parse.parse_qsl(parsed.query, keep_blank_values=True))
+        parameters.update({"page": str(max(1, int(page or 1))), "count": str(max(1, min(100, int(count or 30))) )})
+        return {
+            "result": self._request("GET", f"/{path}?{parse.urlencode(parameters)}"),
+            "transport": "discover-plugin",
+            "sourceName": str(selected.get("name") or ""),
+        }
 
     @classmethod
     def is_read_tool(
@@ -604,6 +660,7 @@ class MoviePilotServiceAdapter:
             "mediaType": media_type,
             "rating": rating_number,
             "overview": cls._first_text(row, "overview", "description", "summary", "plot", "intro"),
+            "genres": cls._text_list(row.get("genres") or row.get("genre_names") or row.get("genre")),
             "posterUrl": cls._safe_url(cls._first_text(row, "poster_path", "posterPath", "poster", "poster_url", "posterUrl", "image", "image_url", "imageUrl")),
             "backdropUrl": cls._safe_url(cls._first_text(row, "backdrop_path", "backdropPath", "backdrop", "backdrop_url", "backdropUrl")),
             "tmdbId": cls._first_text(row, "tmdb_id", "tmdbId") or cls._first_text(providers, "tmdb", "Tmdb", "TMDB"),

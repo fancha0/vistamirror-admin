@@ -463,7 +463,7 @@ const appState = {
   hdhiveResources: [],
   hdhiveIdentity: null,
   hdhiveRecords: [],
-  moviePilotSearch: { query: "", filter: "all", source: "tmdb_trending", mode: "explore", items: [], loading: false, searched: false, exploreLoaded: false, explorePage: 0, exploreHasMore: true, error: "", requestId: 0, debounceTimer: null },
+  moviePilotSearch: { query: "", filter: "movie", source: "tmdb_trending", mode: "explore", items: [], loading: false, searched: false, exploreLoaded: false, explorePage: 0, exploreHasMore: true, exploreRenderCount: 42, exploreSourcesAvailable: {}, exploreSourcesAvailabilityLoading: false, exploreFilters: { sort: "popularity.desc", genre: "", year: "" }, error: "", requestId: 0, debounceTimer: null },
   moviePilotWorkspace: { loaded: false, loading: false, tools: [], group: "all", filter: "", selected: "", output: null },
   drive115Records: [],
   drive115LastParse: null,
@@ -8847,7 +8847,7 @@ function updateMoviePilotFeedback(options = {}) {
     return;
   }
   elements.moviePilotFeedback.textContent = saved
-    ? "MoviePilot 已启用，可调用当前实例开放的 MCP 功能。"
+    ? "MoviePilot 已启用，使用 API Token 调用当前实例功能。"
     : "MoviePilot 已填写，点击保存后 AI Runtime 生效。";
 }
 
@@ -9697,13 +9697,81 @@ async function runMoviePilotTool(event) {
 
 function moviePilotVisibleResults() {
   const state = appState.moviePilotSearch;
-  return (state.items || []).filter((item) => state.filter === "all" || item.mediaType === state.filter);
+  let items = (state.items || []).filter((item) => state.filter === "all" || item.mediaType === state.filter);
+  if (state.mode !== "explore") return items;
+  if (moviePilotExploreSourceMeta().serverFilters) return items;
+  const filters = state.exploreFilters || {};
+  const aliases = {
+    "爱情": ["爱情", "romance", "love"], "都市": ["都市", "urban"], "青春": ["青春", "youth"],
+    "奇幻": ["奇幻", "fantasy"], "武侠": ["武侠", "wuxia"], "古装": ["古装", "historical"],
+    "科幻": ["科幻", "science fiction", "sci-fi"], "悬疑": ["悬疑", "mystery", "thriller"],
+    "喜剧": ["喜剧", "comedy"], "犯罪": ["犯罪", "crime"], "历史": ["历史", "history", "war"],
+  };
+  const searchableText = (item) => [item.title, item.originalTitle, item.overview, ...(Array.isArray(item.genres) ? item.genres : [])].filter(Boolean).join(" ").toLocaleLowerCase();
+  if (filters.genre) {
+    const terms = aliases[filters.genre] || [filters.genre.toLocaleLowerCase()];
+    items = items.filter((item) => terms.some((term) => searchableText(item).includes(term.toLocaleLowerCase())));
+  }
+  if (filters.topic) items = items.filter((item) => searchableText(item).includes(filters.topic.toLocaleLowerCase()));
+  if (filters.year) {
+    items = items.filter((item) => {
+      const year = Number(item.year || 0);
+      return filters.year === "earlier" ? year > 0 && year <= 2021 : String(year) === filters.year;
+    });
+  }
+  if (filters.sort === "latest") items = [...items].sort((left, right) => Number(right.year || 0) - Number(left.year || 0));
+  if (filters.sort === "rating") items = [...items].sort((left, right) => Number(right.rating || 0) - Number(left.rating || 0));
+  return items;
+}
+
+function moviePilotListPosterUrl(item) {
+  const source = String(item?.posterUrl || "").trim();
+  const match = source.match(/^https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w\d+)\/([A-Za-z0-9_-]{8,128}\.(?:jpe?g|png|webp))(?:[?#].*)?$/i);
+  if (match) return `/api/moviepilot/image?${new URLSearchParams({ path: match[1], size: "w342" }).toString()}`;
+  if (/^https:\/\//i.test(source)) return `/api/moviepilot/image?${new URLSearchParams({ url: source }).toString()}`;
+  return source;
+}
+
+function moviePilotResultCard(item, index) {
+  const posterUrl = moviePilotListPosterUrl(item);
+  const poster = posterUrl ? `<img src="${escapeHtml(posterUrl)}" alt="${escapeHtml(item.title)}" loading="lazy" decoding="async">` : "";
+  const rating = Number.isFinite(Number(item.rating)) ? `<span class="moviepilot-card-rating">${escapeHtml(item.rating)}</span>` : "";
+  const meta = [item.year, item.originalTitle].filter(Boolean).join(" · ") || "暂无年份";
+  return `<article class="moviepilot-result-card${poster ? "" : " no-poster"}" role="button" tabindex="0" aria-label="查看 ${escapeHtml(item.title)} 的详情" data-moviepilot-result-index="${index}">
+    <span class="moviepilot-card-poster">${poster}<i>MEDIA</i></span>
+    <span class="moviepilot-card-type">${escapeHtml(moviePilotTypeLabel(item.mediaType))}</span>${rating}
+    <span class="moviepilot-card-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(meta)}</small></span>
+    <span class="moviepilot-card-actions" aria-label="影视操作"><button type="button" title="搜索资源" aria-label="搜索资源" data-moviepilot-card-action="resources">⌕</button><button type="button" title="订阅" aria-label="订阅" data-moviepilot-card-action="subscribe">♡</button></span>
+  </article>`;
 }
 
 const MOVIEPILOT_EXPLORE_SOURCE_META = {
-  tmdb_trending: { label: "TheMovieDb 流行趋势", filters: ["all", "movie", "tv"], defaultFilter: "all" },
-  douban_movies: { label: "豆瓣电影", filters: ["all", "movie"], defaultFilter: "movie" },
+  tmdb_trending: {
+    // MoviePilot 的「TheMovieDb」探索页使用 /discover/tmdb_*，而不是
+    // /recommend/tmdb_trending。后者是另一份混合趋势列表，筛选条件不会生效。
+    label: "TheMovieDb", filters: ["movie", "tv"], defaultFilter: "movie", serverFilters: true,
+    defaultExploreFilters: { sort: "popularity.desc", genre: "", year: "" },
+    rows: [
+      { key: "sort", label: "排序", single: true, options: [["popularity.desc", "最热"], ["primary_release_date.desc", "最新上映"], ["vote_average.desc", "高分好评"]] },
+      { key: "genre", label: "类型", options: [["动作", "动作"], ["冒险", "冒险"], ["动画", "动画"], ["喜剧", "喜剧"], ["犯罪", "犯罪"], ["纪录", "纪录"], ["剧情", "剧情"], ["家庭", "家庭"], ["奇幻", "奇幻"], ["历史", "历史"], ["恐怖", "恐怖"], ["音乐", "音乐"], ["悬疑", "悬疑"], ["爱情", "爱情"], ["科幻", "科幻"], ["惊悚", "惊悚"], ["战争", "战争"], ["西部", "西部"]] },
+      { key: "year", label: "年份", options: [["2026", "2026"], ["2025", "2025"], ["2024", "2024"], ["2023", "2023"], ["2022", "2022"]] },
+    ],
+  },
+  douban_movies: {
+    label: "豆瓣", filters: ["movie", "tv"], defaultFilter: "movie", serverFilters: true,
+    defaultExploreFilters: { sort: "U", genre: "", region: "", year: "" },
+    rows: [
+      { key: "sort", label: "排序", single: true, options: [["U", "综合排序"], ["R", "首播时间"], ["T", "近期热度"], ["S", "高分优先"]] },
+      { key: "genre", label: "风格", options: [["喜剧", "喜剧"], ["爱情", "爱情"], ["动作", "动作"], ["科幻", "科幻"], ["动画", "动画"], ["悬疑", "悬疑"], ["犯罪", "犯罪"], ["惊悚", "惊悚"], ["冒险", "冒险"], ["音乐", "音乐"], ["历史", "历史"], ["奇幻", "奇幻"], ["恐怖", "恐怖"], ["战争", "战争"], ["传记", "传记"], ["歌舞", "歌舞"], ["武侠", "武侠"], ["情色", "情色"], ["灾难", "灾难"], ["西部", "西部"], ["纪录片", "纪录片"], ["短片", "短片"]] },
+      { key: "region", label: "地区", options: [["华语", "华语"], ["欧美", "欧美"], ["韩国", "韩国"], ["日本", "日本"], ["中国大陆", "中国大陆"], ["美国", "美国"], ["中国香港", "中国香港"], ["中国台湾", "中国台湾"], ["英国", "英国"], ["法国", "法国"], ["德国", "德国"], ["意大利", "意大利"], ["西班牙", "西班牙"], ["印度", "印度"], ["泰国", "泰国"], ["俄罗斯", "俄罗斯"], ["加拿大", "加拿大"], ["澳大利亚", "澳大利亚"], ["爱尔兰", "爱尔兰"], ["瑞典", "瑞典"], ["巴西", "巴西"], ["丹麦", "丹麦"]] },
+      { key: "year", label: "年代", options: [["2021", "2021"], ["2022", "2022"], ["2023", "2023"], ["2024", "2024"], ["2025", "2025"], ["2026", "2026"], ["2020年代", "2020年代"], ["2010年代", "2010年代"], ["2000年代", "2000年代"], ["90年代", "90年代"], ["80年代", "80年代"], ["70年代", "70年代"], ["60年代", "60年代"]] },
+    ],
+  },
   douban_tv_animation: { label: "豆瓣动漫", filters: ["tv"], defaultFilter: "tv" },
+  platform_iqiyi: { label: "爱奇艺", filters: ["all", "movie", "tv"], defaultFilter: "all", availabilityKey: "iqiyi" },
+  platform_tencent: { label: "腾讯视频", filters: ["all", "movie", "tv"], defaultFilter: "all", availabilityKey: "tencent" },
+  platform_youku: { label: "优酷", filters: ["all", "movie", "tv"], defaultFilter: "all", availabilityKey: "youku" },
+  platform_bilibili: { label: "哔哩哔哩", filters: ["all", "movie", "tv"], defaultFilter: "all", availabilityKey: "bilibili" },
   bangumi_calendar: { label: "Bangumi 每日放送", filters: ["tv"], defaultFilter: "tv" },
   douban_showing: { label: "豆瓣正在热映", filters: ["movie"], defaultFilter: "movie" },
 };
@@ -9712,63 +9780,94 @@ function moviePilotExploreSourceMeta(source = appState.moviePilotSearch.source) 
   return MOVIEPILOT_EXPLORE_SOURCE_META[source] || MOVIEPILOT_EXPLORE_SOURCE_META.tmdb_trending;
 }
 
+const MOVIEPILOT_DEFAULT_EXPLORE_ROWS = [
+  { key: "sort", label: "排序", single: true, options: [["popular", "最热"], ["latest", "最新上架"], ["rating", "高分好评"]] },
+  { key: "genre", label: "类型", options: [["爱情", "爱情"], ["都市", "都市"], ["青春", "青春"], ["奇幻", "奇幻"], ["武侠", "武侠"], ["古装", "古装"], ["科幻", "科幻"], ["悬疑", "悬疑"], ["喜剧", "喜剧"], ["犯罪", "犯罪"], ["历史", "历史"]] },
+  { key: "year", label: "年份", options: [["2026", "2026"], ["2025", "2025"], ["2024", "2024"], ["2023", "2023"], ["2022", "2022"], ["earlier", "更早"]] },
+  { key: "topic", label: "热门", options: [["东方玄幻", "东方玄幻"], ["都市奇幻", "都市奇幻"], ["战争传奇", "战争传奇"], ["重来人生", "重来人生"], ["家长里短", "家长里短"], ["末世生存", "末世生存"], ["甜虐爱情", "甜虐爱情"]] },
+];
+
+function moviePilotExploreDefaultFilters(sourceMeta = moviePilotExploreSourceMeta()) {
+  return { ...(sourceMeta.defaultExploreFilters || { sort: "popular", genre: "", year: "", topic: "" }) };
+}
+
+function renderMoviePilotExploreFilters(sourceMeta, filters) {
+  const host = elements.moviePilotExploreFilters;
+  if (!host) return;
+  const types = sourceMeta.filters.map((type) => [type, type === "all" ? "全部" : type === "movie" ? "电影" : "电视剧"]);
+  const rows = sourceMeta.rows || MOVIEPILOT_DEFAULT_EXPLORE_ROWS;
+  host.innerHTML = [
+    `<div><b>类型</b>${types.map(([value, label]) => `<button class="${value === appState.moviePilotSearch.filter ? "is-active" : ""}" type="button" data-moviepilot-explore-type="${value}">${label}</button>`).join("")}</div>`,
+    ...rows.map((row) => `<div${row.key === "topic" ? " class=\"moviepilot-hot-keywords\"" : ""}><b>${row.label}</b>${row.options.map(([value, label]) => `<button class="${filters[row.key] === value ? "is-active" : ""}" type="button" data-moviepilot-explore-filter-key="${row.key}" data-moviepilot-explore-filter-value="${escapeHtml(value)}">${escapeHtml(label)}</button>`).join("")}</div>`),
+  ].join("");
+}
+
+function moviePilotExploreRequestFilters() {
+  const state = appState.moviePilotSearch;
+  const sourceMeta = moviePilotExploreSourceMeta();
+  const filters = state.exploreFilters || {};
+  if (!sourceMeta.serverFilters) return filters;
+  if (state.source === "tmdb_trending") {
+    return {
+      sortBy: filters.sort || "popularity.desc",
+      genre: filters.genre || "",
+      year: /^20\d{2}$/.test(String(filters.year || "")) ? String(filters.year) : "",
+    };
+  }
+  return {
+    sort: filters.sort || "U",
+    tags: [filters.genre, filters.region, filters.year].filter(Boolean),
+  };
+}
+
 function renderMoviePilotSearch() {
   const state = appState.moviePilotSearch;
   const host = elements.moviePilotSearchResults;
-  if (!host || !elements.moviePilotSearchStatus) return;
+  if (!host) return;
   const sourceMeta = moviePilotExploreSourceMeta();
-  elements.moviePilotExploreSources?.querySelectorAll("[data-moviepilot-source]").forEach((button) => button.classList.toggle("is-active", button.dataset.moviepilotSource === state.source));
-  elements.moviePilotExploreFilters?.querySelectorAll("[data-moviepilot-explore-type]").forEach((button) => {
-    button.hidden = !sourceMeta.filters.includes(button.dataset.moviepilotExploreType || "");
+  elements.moviePilotExploreSources?.querySelectorAll("[data-moviepilot-source]").forEach((button) => {
+    const meta = moviePilotExploreSourceMeta(button.dataset.moviepilotSource);
+    const available = !meta.availabilityKey || state.exploreSourcesAvailable[meta.availabilityKey] !== false;
+    button.classList.toggle("is-active", button.dataset.moviepilotSource === state.source);
+    button.classList.toggle("is-unavailable", !available);
+    button.toggleAttribute("disabled", !available);
+    button.title = available ? "" : "MoviePilot 尚未启用该探索插件";
   });
+  const exploreFilters = state.exploreFilters || {};
+  renderMoviePilotExploreFilters(sourceMeta, exploreFilters);
   const visible = moviePilotVisibleResults();
+  const displayed = state.mode === "explore" ? visible.slice(0, state.exploreRenderCount || 42) : visible;
   elements.moviePilotSearchTabs?.querySelectorAll("[data-moviepilot-filter]").forEach((button) => {
     const active = button.dataset.moviepilotFilter === state.filter;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", active ? "true" : "false");
   });
   if (state.loading && !(state.mode === "explore" && state.items.length)) {
-    elements.moviePilotSearchStatus.textContent = "正在从 MoviePilot 读取搜索结果…";
     host.innerHTML = `<div class="moviepilot-empty-state is-loading"><strong>◌</strong><span>正在搜索影视信息…</span></div>`;
     return;
   }
   if (state.error) {
-    elements.moviePilotSearchStatus.textContent = "搜索未完成";
     host.innerHTML = `<div class="moviepilot-empty-state is-error"><strong>!</strong><span>${escapeHtml(state.error)}</span></div>`;
     return;
   }
   if (!state.searched) {
-    elements.moviePilotSearchStatus.textContent = state.mode === "explore" ? `正在浏览 ${sourceMeta.label} · ${state.items.length} 项${state.exploreHasMore ? " · 向下滚动加载更多" : " · 已加载全部"}。` : "输入名称后开始搜索。";
-    if (state.mode === "explore" && state.items.length) {
-      host.innerHTML = state.items.map((item) => {
-        const index = state.items.indexOf(item);
-        const poster = item.posterUrl ? `<img src="${escapeHtml(item.posterUrl)}" alt="${escapeHtml(item.title)}" loading="lazy">` : "";
-        const rating = Number.isFinite(Number(item.rating)) ? `<span class="moviepilot-card-rating">${escapeHtml(item.rating)}</span>` : "";
-        return `<button class="moviepilot-result-card${poster ? "" : " no-poster"}" type="button" data-moviepilot-result-index="${index}"><span class="moviepilot-card-poster">${poster}<i>MEDIA</i></span><span class="moviepilot-card-type">${escapeHtml(moviePilotTypeLabel(item.mediaType))}</span>${rating}<span class="moviepilot-card-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.year, item.originalTitle].filter(Boolean).join(" · ") || "暂无年份")}</small></span></button>`;
-      }).join("");
+    if (state.mode === "explore" && state.items.length && displayed.length) {
+      host.innerHTML = displayed.map((item) => moviePilotResultCard(item, state.items.indexOf(item))).join("");
       host.querySelectorAll("img").forEach((image) => image.addEventListener("error", () => image.closest(".moviepilot-result-card")?.classList.add("no-poster"), { once: true }));
+      return;
+    }
+    if (state.mode === "explore" && state.items.length) {
+      host.innerHTML = `<div class="moviepilot-empty-state"><strong>⌕</strong><span>当前筛选条件没有匹配结果。</span></div>`;
       return;
     }
     host.innerHTML = `<div class="moviepilot-empty-state"><strong>⌕</strong><span>搜索 MoviePilot 中的电影、剧集和动漫。</span></div>`;
     return;
   }
-  elements.moviePilotSearchStatus.textContent = visible.length
-    ? `“${state.query}”找到 ${state.items.length} 项 · 当前显示 ${visible.length} 项`
-    : state.items.length ? "当前分类没有匹配结果。" : `没有找到与“${state.query}”相关的结果。`;
   if (!visible.length) {
     host.innerHTML = `<div class="moviepilot-empty-state"><strong>⌕</strong><span>${state.items.length ? "试试切换到其他分类。" : "换个更准确的片名再试一次。"}</span></div>`;
     return;
   }
-  host.innerHTML = visible.map((item) => {
-    const index = state.items.indexOf(item);
-    const poster = item.posterUrl ? `<img src="${escapeHtml(item.posterUrl)}" alt="${escapeHtml(item.title)}" loading="lazy">` : "";
-    const rating = Number.isFinite(Number(item.rating)) ? `<span class="moviepilot-card-rating">${escapeHtml(item.rating)}</span>` : "";
-    return `<button class="moviepilot-result-card${poster ? "" : " no-poster"}" type="button" data-moviepilot-result-index="${index}">
-      <span class="moviepilot-card-poster">${poster}<i>MEDIA</i></span>
-      <span class="moviepilot-card-type">${escapeHtml(moviePilotTypeLabel(item.mediaType))}</span>${rating}
-      <span class="moviepilot-card-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml([item.year, item.originalTitle].filter(Boolean).join(" · ") || "暂无年份")}</small></span>
-    </button>`;
-  }).join("");
+  host.innerHTML = visible.map((item) => moviePilotResultCard(item, state.items.indexOf(item))).join("");
   host.querySelectorAll("img").forEach((image) => image.addEventListener("error", () => image.closest(".moviepilot-result-card")?.classList.add("no-poster"), { once: true }));
 }
 
@@ -9809,34 +9908,43 @@ async function searchMoviePilot(query = elements.moviePilotSearchInput?.value ||
 async function loadMoviePilotExplore(options = {}) {
   const { append = false } = options;
   const state = appState.moviePilotSearch;
+  loadMoviePilotDiscoverSourceAvailability();
   if (append && (!state.exploreLoaded || state.loading || !state.exploreHasMore)) return;
+  if (!append && state.loading) state.requestId += 1;
   state.mode = "explore";
   state.searched = false;
   state.loading = true;
   state.error = "";
-  const page = append ? state.explorePage + 1 : 1;
+  let page = append ? state.explorePage + 1 : 1;
   if (!append) {
     state.items = [];
     state.explorePage = 0;
     state.exploreHasMore = true;
+    state.exploreRenderCount = 42;
   }
   const requestId = ++state.requestId;
   renderMoviePilotSearch();
   try {
-    const result = await inviteApiFetch("/api/moviepilot/explore", { method: "POST", body: JSON.stringify({ source: state.source, mediaType: state.filter, page }) });
-    if (requestId !== state.requestId) return;
-    const incoming = Array.isArray(result?.items) ? result.items : [];
-    const existing = append ? state.items : [];
-    const known = new Set(existing.map((item) => item.tmdbId || item.imdbId || `${item.title}|${item.year}|${item.mediaType}`));
-    state.items = [...existing, ...incoming.filter((item) => {
-      const key = item.tmdbId || item.imdbId || `${item.title}|${item.year}|${item.mediaType}`;
-      if (known.has(key)) return false;
-      known.add(key);
-      return true;
-    })];
-    state.explorePage = Number(result?.page || page);
-    state.exploreHasMore = Boolean(result?.hasMore) && incoming.length > 0;
-    state.exploreLoaded = true;
+    const known = new Set(state.items.map((item) => item.tmdbId || item.imdbId || `${item.title}|${item.year}|${item.mediaType}`));
+    let hasMore = true;
+    while (hasMore) {
+      const result = await inviteApiFetch("/api/moviepilot/explore", { method: "POST", body: JSON.stringify({ source: state.source, mediaType: state.filter, filters: moviePilotExploreRequestFilters(), page }) });
+      if (requestId !== state.requestId) return;
+      const incoming = Array.isArray(result?.items) ? result.items : [];
+      const additions = incoming.filter((item) => {
+        const key = item.tmdbId || item.imdbId || `${item.title}|${item.year}|${item.mediaType}`;
+        if (known.has(key)) return false;
+        known.add(key);
+        return true;
+      });
+      state.items = [...state.items, ...additions];
+      state.explorePage = Number(result?.page || page);
+      state.exploreLoaded = true;
+      state.exploreHasMore = Boolean(result?.hasMore) && incoming.length > 0 && additions.length > 0;
+      renderMoviePilotSearch();
+      hasMore = state.exploreHasMore;
+      page = state.explorePage + 1;
+    }
   } catch (error) {
     if (requestId !== state.requestId) return;
     if (!append) state.items = [];
@@ -9849,14 +9957,37 @@ async function loadMoviePilotExplore(options = {}) {
 function maybeLoadMoreMoviePilotExplore() {
   const state = appState.moviePilotSearch;
   const host = elements.mainContent;
-  if (appState.activeView !== "moviepilot-search" || state.mode !== "explore" || state.loading || !state.exploreHasMore || !host) return;
-  if (host.scrollTop + host.clientHeight >= host.scrollHeight - 520) loadMoviePilotExplore({ append: true });
+  if (appState.activeView !== "moviepilot-search" || state.mode !== "explore" || !host) return;
+  if (host.scrollTop + host.clientHeight < host.scrollHeight - 520) return;
+  const total = moviePilotVisibleResults().length;
+  if (state.exploreRenderCount < total) {
+    state.exploreRenderCount = Math.min(total, state.exploreRenderCount + 42);
+    renderMoviePilotSearch();
+    return;
+  }
+  if (!state.loading && state.exploreHasMore) loadMoviePilotExplore({ append: true });
 }
 
 function ensureMoviePilotExploreLoaded() {
   const state = appState.moviePilotSearch;
+  if (appState.activeView === "moviepilot-search" && isAdminReady()) loadMoviePilotDiscoverSourceAvailability();
   if (appState.activeView === "moviepilot-search" && isAdminReady() && !state.exploreLoaded && !state.loading) {
     loadMoviePilotExplore();
+  }
+}
+
+async function loadMoviePilotDiscoverSourceAvailability() {
+  const state = appState.moviePilotSearch;
+  if (state.exploreSourcesAvailabilityLoading || Object.keys(state.exploreSourcesAvailable || {}).length) return;
+  state.exploreSourcesAvailabilityLoading = true;
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/discover-sources");
+    state.exploreSourcesAvailable = result?.sources && typeof result.sources === "object" ? result.sources : {};
+    renderMoviePilotSearch();
+  } catch (_) {
+    // Optional plugin availability must not block built-in exploration.
+  } finally {
+    state.exploreSourcesAvailabilityLoading = false;
   }
 }
 
@@ -9977,8 +10108,53 @@ async function openMoviePilotDetail(index) {
     const action = button.dataset.moviepilotDetailAction;
     modal.remove();
     if (action === "torrents") openMoviePilotResources(detail, item);
-    if (action === "subscribe") openMoviePilotWorkspace("add_subscribe", { title: detail.title || item.title, year: detail.year || item.year, media_type: detail.mediaType === "anime" ? "tv" : detail.mediaType, tmdb_id: detail.tmdbId || item.tmdbId });
+    if (action === "subscribe") openMoviePilotSubscribeConfirm(detail, item);
   }));
+}
+
+function openMoviePilotSubscribeConfirm(detail, item) {
+  document.getElementById("moviepilot-subscribe-modal")?.remove();
+  const title = String(detail.title || item.title || "").trim();
+  const year = String(detail.year || item.year || "").trim();
+  const mediaType = detail.mediaType === "anime" ? "tv" : String(detail.mediaType || item.mediaType || "").trim();
+  const tmdbId = String(detail.tmdbId || item.tmdbId || "").trim();
+  if (!title || !year || !["movie", "tv"].includes(mediaType)) {
+    showToast("缺少订阅所需的标题、年份或媒体类型。", 1800);
+    return;
+  }
+  const modal = document.createElement("div");
+  modal.id = "moviepilot-subscribe-modal";
+  modal.className = "moviepilot-subscribe-modal";
+  const typeLabel = moviePilotTypeLabel(mediaType);
+  const tvNotice = mediaType === "tv" ? "电视剧默认订阅第 1 季；后续季可在订阅管理中补充。" : "电影将按当前 MoviePilot 的订阅规则持续追踪。";
+  modal.innerHTML = `<section class="moviepilot-subscribe-panel" role="dialog" aria-modal="true" aria-label="确认 MoviePilot 订阅"><button class="moviepilot-subscribe-close" type="button" aria-label="关闭">×</button><p class="section-label">MOVIEPILOT · 自动订阅</p><h3>订阅《${escapeHtml(title)}》</h3><p class="moviepilot-subscribe-meta">${escapeHtml([year, typeLabel, tmdbId ? `TMDB ID ${tmdbId}` : ""].filter(Boolean).join("　"))}</p><p class="moviepilot-subscribe-copy">创建后由 MoviePilot 根据已配置站点、筛选规则和下载器自动处理，无需再打开功能中心填写表单。</p><label class="moviepilot-subscribe-option"><input type="checkbox" data-moviepilot-subscribe-immediate checked><span><b>创建后立即搜索资源</b><small>会搜索当前订阅对应的 PT 站点，并自动提交符合规则的资源下载。</small></span></label><p class="moviepilot-subscribe-note">${escapeHtml(tvNotice)}</p><p class="moviepilot-subscribe-feedback" data-moviepilot-subscribe-feedback></p><footer><button class="ghost-btn" type="button" data-moviepilot-subscribe-cancel>取消</button><button class="primary-btn" type="button" data-moviepilot-subscribe-confirm>确认订阅</button></footer></section>`;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal || (event.target instanceof Element && event.target.closest(".moviepilot-subscribe-close, [data-moviepilot-subscribe-cancel]"))) close();
+  });
+  const confirmButton = modal.querySelector("[data-moviepilot-subscribe-confirm]");
+  confirmButton?.addEventListener("click", async () => {
+    if (!(confirmButton instanceof HTMLButtonElement) || confirmButton.disabled) return;
+    const immediate = Boolean(modal.querySelector("[data-moviepilot-subscribe-immediate]")?.checked);
+    const feedback = modal.querySelector("[data-moviepilot-subscribe-feedback]");
+    confirmButton.disabled = true;
+    confirmButton.textContent = immediate ? "正在订阅并搜索…" : "正在创建订阅…";
+    if (feedback) feedback.textContent = "正在提交到 MoviePilot…";
+    try {
+      const result = await inviteApiFetch("/api/moviepilot/subscribe", {
+        method: "POST",
+        body: JSON.stringify({ title, year, mediaType, tmdbId, immediate })
+      });
+      if (feedback) feedback.textContent = result?.message || "订阅已创建。";
+      showToast(result?.immediateSearchStarted ? "订阅已创建，已开始搜索资源" : "MoviePilot 订阅已创建", 2100);
+      window.setTimeout(close, 900);
+    } catch (error) {
+      if (feedback) feedback.textContent = "操作失败：" + (error?.message || "未知错误");
+      confirmButton.disabled = false;
+      confirmButton.textContent = "确认订阅";
+    }
+  });
 }
 
 function moviePilotResourceFilters(filters = {}) {
@@ -14317,27 +14493,53 @@ function initEvents() {
     appState.moviePilotSearch.source = button.dataset.moviepilotSource || "tmdb_trending";
     const sourceMeta = moviePilotExploreSourceMeta(appState.moviePilotSearch.source);
     appState.moviePilotSearch.filter = sourceMeta.defaultFilter;
-    elements.moviePilotExploreFilters?.querySelectorAll("[data-moviepilot-explore-type]").forEach((chip) => chip.classList.toggle("is-active", chip.dataset.moviepilotExploreType === sourceMeta.defaultFilter));
+    appState.moviePilotSearch.exploreFilters = moviePilotExploreDefaultFilters(sourceMeta);
+    appState.moviePilotSearch.exploreRenderCount = 42;
     appState.moviePilotSearch.exploreLoaded = false;
     elements.moviePilotSearchInput.value = "";
     loadMoviePilotExplore();
   });
   elements.moviePilotExploreFilters?.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-explore-type]") : null;
-    if (!button) return;
-    appState.moviePilotSearch.filter = button.dataset.moviepilotExploreType || "all";
-    elements.moviePilotExploreFilters.querySelectorAll("[data-moviepilot-explore-type]").forEach((chip) => chip.classList.toggle("is-active", chip === button));
-    appState.moviePilotSearch.exploreLoaded = false;
-    elements.moviePilotSearchInput.value = "";
-    loadMoviePilotExplore();
+    if (button) {
+      appState.moviePilotSearch.filter = button.dataset.moviepilotExploreType || "all";
+      appState.moviePilotSearch.exploreRenderCount = 42;
+      if (moviePilotExploreSourceMeta().serverFilters) loadMoviePilotExplore();
+      else renderMoviePilotSearch();
+      return;
+    }
+    const filter = event.target instanceof Element ? event.target.closest("[data-moviepilot-explore-filter-key]") : null;
+    if (!filter) return;
+    const filters = appState.moviePilotSearch.exploreFilters;
+    const key = filter.dataset.moviepilotExploreFilterKey || "";
+    const value = filter.dataset.moviepilotExploreFilterValue || "";
+    if (!key || !value) return;
+    filters[key] = filters[key] === value ? "" : value;
+    appState.moviePilotSearch.exploreRenderCount = 42;
+    if (moviePilotExploreSourceMeta().serverFilters) loadMoviePilotExplore();
+    else renderMoviePilotSearch();
   });
   elements.mainContent?.addEventListener("scroll", maybeLoadMoreMoviePilotExplore, { passive: true });
   document.addEventListener("adaptive:viewchange", ensureMoviePilotExploreLoaded);
   window.addEventListener("vistamirror:auth-ready", ensureMoviePilotExploreLoaded);
+  window.addEventListener("vistamirror:auth-ready", loadMoviePilotDiscoverSourceAvailability);
   elements.moviePilotSearchResults?.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-result-index]") : null;
-    if (!button) return;
-    openMoviePilotDetail(Number(button.dataset.moviepilotResultIndex));
+    const target = event.target instanceof Element ? event.target : null;
+    const card = target?.closest("[data-moviepilot-result-index]");
+    if (!card) return;
+    const index = Number(card.dataset.moviepilotResultIndex);
+    const item = appState.moviePilotSearch.items[index];
+    const action = target?.closest("[data-moviepilot-card-action]")?.dataset.moviepilotCardAction;
+    if (action === "resources" && item) { openMoviePilotResources(item, item); return; }
+    if (action === "subscribe" && item) { openMoviePilotSubscribeConfirm(item, item); return; }
+    openMoviePilotDetail(index);
+  });
+  elements.moviePilotSearchResults?.addEventListener("keydown", (event) => {
+    if (!(event.target instanceof Element) || !["Enter", " "].includes(event.key) || event.target.closest("[data-moviepilot-card-action]")) return;
+    const card = event.target.closest("[data-moviepilot-result-index]");
+    if (!card) return;
+    event.preventDefault();
+    openMoviePilotDetail(Number(card.dataset.moviepilotResultIndex));
   });
   [
     elements.drive115Enabled,
