@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260723-moviepilot-hover-overlay-1">
+  <link rel="stylesheet" href="styles.css?v=20260723-moviepilot-workbench-1">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -1345,15 +1345,15 @@
               <input id="moviepilot-search-input" type="search" autocomplete="off" placeholder="搜索电影、剧集以及更多…" aria-label="搜索 MoviePilot 影视">
               <button id="moviepilot-search-submit" class="primary-btn" type="submit">搜索</button>
             </form>
-            <div class="moviepilot-workspace-switch"><button id="moviepilot-workspace-btn" class="ghost-btn" type="button">打开 MoviePilot 功能中心</button><span id="moviepilot-workspace-summary">读取全部 MCP 功能</span></div>
+            <nav id="moviepilot-workbench-tabs" class="moviepilot-workbench-tabs" aria-label="MoviePilot 工作台">
+              <button class="is-active" type="button" data-moviepilot-workbench-tab="explore">探索</button>
+              <button type="button" data-moviepilot-workbench-tab="subscriptions">我的订阅</button>
+              <button type="button" data-moviepilot-workbench-tab="downloads">下载任务</button>
+              <button type="button" data-moviepilot-workbench-tab="organize">整理状态</button>
+            </nav>
           </section>
 
-          <section id="moviepilot-workspace" class="moviepilot-workspace panel" hidden>
-            <div class="moviepilot-workspace-head"><div><p class="section-label">MOVIEPILOT · 全功能接入</p><h3>功能中心</h3><p>所有功能直接来自已连接 MoviePilot 的 MCP，按当前 MoviePilot 配置直接执行。</p></div><button id="moviepilot-workspace-close" class="ghost-btn" type="button">返回影视探索</button></div>
-            <div class="moviepilot-workspace-layout"><aside><label class="field"><span>筛选功能</span><input id="moviepilot-tool-filter" type="search" placeholder="搜索订阅、下载、插件…"></label><div id="moviepilot-tool-groups" class="moviepilot-tool-groups"></div><div id="moviepilot-tool-list" class="moviepilot-tool-list"><div class="empty-state">正在读取 MoviePilot MCP 功能…</div></div></aside><section class="moviepilot-tool-runner"><div id="moviepilot-tool-detail" class="moviepilot-tool-detail"><div class="empty-state">从左侧选择功能以查看参数和说明。</div></div><form id="moviepilot-tool-form" class="moviepilot-tool-form" hidden><div id="moviepilot-tool-fields" class="moviepilot-tool-fields"></div><div class="moviepilot-tool-actions"><button id="moviepilot-tool-run" class="primary-btn" type="submit">执行查询</button><span id="moviepilot-tool-safety" class="moviepilot-tool-safety"></span></div></form><section class="moviepilot-tool-result"><div><strong>执行结果</strong><button id="moviepilot-tool-result-clear" class="text-btn" type="button">清空</button></div><pre id="moviepilot-tool-output">尚未执行功能。</pre></section></section></div>
-          </section>
-
-          <section class="moviepilot-search-content panel">
+          <section id="moviepilot-explore-panel" class="moviepilot-search-content panel">
             <div id="moviepilot-explore-filters" class="moviepilot-explore-filters" aria-label="MoviePilot 探索筛选"></div>
             <div class="moviepilot-search-toolbar">
               <div id="moviepilot-search-tabs" class="moviepilot-search-tabs" role="tablist" aria-label="搜索结果类型">
@@ -1366,6 +1366,21 @@
             <div id="moviepilot-search-results" class="moviepilot-result-grid">
               <div class="moviepilot-empty-state"><strong>⌕</strong><span>搜索 MoviePilot 中的电影、剧集和动漫。</span></div>
             </div>
+          </section>
+
+          <section id="moviepilot-subscriptions-panel" class="moviepilot-operation-panel panel" hidden>
+            <header class="moviepilot-operation-head"><div><p class="section-label">MOVIEPILOT · 自动订阅</p><h3>我的订阅</h3><p>订阅会按 MoviePilot 当前站点、规则、下载器和整理策略自动执行。</p></div><div><select id="moviepilot-subscriptions-status" aria-label="订阅状态"><option value="all">全部状态</option><option value="r">进行中</option><option value="s">已暂停</option></select><button id="moviepilot-subscriptions-refresh" class="ghost-btn" type="button">刷新</button></div></header>
+            <div id="moviepilot-subscriptions-list" class="moviepilot-operation-list"><div class="empty-state">正在读取 MoviePilot 订阅…</div></div>
+          </section>
+
+          <section id="moviepilot-downloads-panel" class="moviepilot-operation-panel panel" hidden>
+            <header class="moviepilot-operation-head"><div><p class="section-label">MOVIEPILOT · 下载器</p><h3>下载任务</h3><p>任务状态来自当前 MoviePilot 已配置的下载器。</p></div><div><select id="moviepilot-downloads-status" aria-label="下载状态"><option value="all">全部任务</option><option value="downloading">下载中</option><option value="paused">已暂停</option><option value="completed">已完成</option></select><button id="moviepilot-downloads-refresh" class="ghost-btn" type="button">刷新</button></div></header>
+            <div id="moviepilot-downloads-list" class="moviepilot-operation-list"><div class="empty-state">正在读取 MoviePilot 下载任务…</div></div>
+          </section>
+
+          <section id="moviepilot-organize-panel" class="moviepilot-operation-panel panel" hidden>
+            <header class="moviepilot-operation-head"><div><p class="section-label">MOVIEPILOT · 媒体整理</p><h3>整理状态</h3><p>查看 MoviePilot 转移记录与最近入库内容。</p></div><div><select id="moviepilot-organize-status" aria-label="整理状态"><option value="all">全部记录</option><option value="failed">失败</option><option value="success">成功</option></select><button id="moviepilot-organize-refresh" class="ghost-btn" type="button">刷新</button></div></header>
+            <div id="moviepilot-organize-list" class="moviepilot-operation-list"><div class="empty-state">正在读取 MoviePilot 整理记录…</div></div>
           </section>
         </div>
       </section>
@@ -1735,7 +1750,7 @@
                       </label>
                       <div class="tmdb-switch-copy">
                         <strong>启用 MoviePilot 功能</strong>
-                        <p>AI 可查询 MoviePilot 的能力、订阅列表和下载任务，不会创建订阅或执行下载。</p>
+                        <p>VistaMirror 会在影视工作台中直接调度 MoviePilot 的订阅、下载和整理能力。</p>
                       </div>
                     </div>
                     <div class="settings-subgrid">
@@ -1755,6 +1770,12 @@
                         <input id="moviepilot-timeout-seconds" type="number" min="3" max="60" step="1" placeholder="12">
                       </label>
                       <p id="moviepilot-feedback" class="tmdb-token-hint field-span-2">MoviePilot 未启用，AI 不会调用其工具。</p>
+                      <details class="moviepilot-advanced-diagnostics field-span-2">
+                        <summary>高级诊断（只读）</summary>
+                        <p>仅用于检查当前 MoviePilot MCP 已暴露的能力；日常订阅、下载和整理请在 MoviePilot 工作台操作。</p>
+                        <button id="moviepilot-capabilities-btn" class="ghost-btn" type="button">读取已接入能力</button>
+                        <pre id="moviepilot-capabilities-output">尚未读取。</pre>
+                      </details>
                     </div>
                   </section>
 
@@ -2265,7 +2286,7 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260723-moviepilot-tmdb-discover-2"></script>
+  <script src="script.js?v=20260723-moviepilot-workbench-1"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

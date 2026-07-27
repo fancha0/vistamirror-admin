@@ -19,6 +19,7 @@ venv/
 data/ai_conversations.json
 data/media_identity_cache.json
 data/library_notification_state.json
+data/moviepilot_image_cache/
 
 # Optional local editor junk
 .vscode/

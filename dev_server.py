@@ -166,6 +166,7 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent
 DEFAULT_EMBY_CLIENT_NAME = "VistaMirror User Console"
 RUNTIME_DIR = pathlib.Path(str(os.environ.get("APP_RUNTIME_DIR") or (BASE_DIR / "runtime"))).expanduser()
 DATA_DIR = pathlib.Path(str(os.environ.get("APP_DATA_DIR") or (BASE_DIR / "data"))).expanduser()
+MOVIEPILOT_IMAGE_CACHE_DIR = DATA_DIR / "moviepilot_image_cache"
 PLAYBACK_EVENT_LOG_FILE = DATA_DIR / "playback_events.jsonl"
 PROJECT_EVENT_LOG_FILE = DATA_DIR / "project_events.jsonl"
 PROJECT_EVENT_STATE_FILE = DATA_DIR / ".project_events_state.json"
@@ -1267,6 +1268,52 @@ def _public_emby_server_hint(emby_config: dict[str, Any] | None = None) -> dict[
     }
 
 
+def _extract_moviepilot_subscribe_id(payload: Any) -> int | None:
+    """Extract a subscription id from MoviePilot's nested MCP response variants."""
+
+    def as_positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    def walk(value: Any, *, subscription_context: bool = False) -> int | None:
+        if isinstance(value, str):
+            try:
+                return walk(json.loads(value), subscription_context=subscription_context)
+            except (TypeError, ValueError):
+                return None
+        if isinstance(value, list):
+            for child in value:
+                found = walk(child, subscription_context=subscription_context)
+                if found is not None:
+                    return found
+            return None
+        if not isinstance(value, dict):
+            return None
+        for key in ("subscribe_id", "subscribeId", "subscription_id", "subscriptionId"):
+            found = as_positive_int(value.get(key))
+            if found is not None:
+                return found
+        kind = " ".join(str(value.get(key) or "") for key in ("type", "kind", "resource", "message")).lower()
+        is_subscription = subscription_context or "subscr" in kind or "订阅" in kind or any(
+            key in value for key in ("tmdb_id", "tmdbId", "lack_episode", "lackEpisode", "start_episode", "startEpisode")
+        )
+        if is_subscription:
+            found = as_positive_int(value.get("id"))
+            if found is not None:
+                return found
+        for key in ("result", "data", "content", "text", "item", "subscribe", "subscription"):
+            if key in value:
+                found = walk(value[key], subscription_context=is_subscription or key in {"subscribe", "subscription"})
+                if found is not None:
+                    return found
+        return None
+
+    return walk(payload)
+
+
 class AppHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1308,6 +1355,12 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/moviepilot/capabilities":
             self._handle_moviepilot_capabilities()
+            return
+        if path == "/api/moviepilot/discover-sources":
+            self._handle_moviepilot_discover_sources()
+            return
+        if path == "/api/moviepilot/image":
+            self._handle_moviepilot_image(parsed.query)
             return
         if path == "/api/cover-studio/config":
             self._handle_cover_studio_config_get()
@@ -1429,6 +1482,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/moviepilot/detail":
             self._handle_moviepilot_detail()
             return
+        if path == "/api/moviepilot/subscribe":
+            self._handle_moviepilot_subscribe()
+            return
         if path == "/api/moviepilot/tool":
             self._handle_moviepilot_tool()
             return
@@ -1437,6 +1493,27 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/moviepilot/resources/download":
             self._handle_moviepilot_resource_download()
+            return
+        if path == "/api/moviepilot/subscriptions/query":
+            self._handle_moviepilot_subscriptions_query()
+            return
+        if path == "/api/moviepilot/subscriptions/action":
+            self._handle_moviepilot_subscriptions_action()
+            return
+        if path == "/api/moviepilot/downloads/query":
+            self._handle_moviepilot_downloads_query()
+            return
+        if path == "/api/moviepilot/downloads/action":
+            self._handle_moviepilot_downloads_action()
+            return
+        if path == "/api/moviepilot/organize/query":
+            self._handle_moviepilot_organize_query()
+            return
+        if path == "/api/moviepilot/organize/action":
+            self._handle_moviepilot_organize_action()
+            return
+        if path == "/api/moviepilot/workbench/options":
+            self._handle_moviepilot_workbench_options()
             return
         if path == "/api/cover-studio/config":
             self._handle_cover_studio_config_save()
@@ -2913,6 +2990,85 @@ class AppHandler(SimpleHTTPRequestHandler):
         tools = capabilities.get("tools") if isinstance(capabilities.get("tools"), list) else []
         self._send_json(200, {"ok": True, "tools": tools, "toolCount": len(tools), "readToolCount": sum(1 for tool in tools if isinstance(tool, dict) and tool.get("readOnly"))})
 
+    def _handle_moviepilot_subscribe(self) -> None:
+        """Create a media subscription and optionally trigger its first search."""
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        title = str(payload.get("title") or "").strip()
+        year = str(payload.get("year") or "").strip()
+        media_type = str(payload.get("mediaType") or payload.get("media_type") or "").strip().lower()
+        media_type = "tv" if media_type == "anime" else media_type
+        immediate = bool(payload.get("immediate"))
+        if not title or not year or media_type not in {"movie", "tv"}:
+            self._send_json(400, {"ok": False, "error": "订阅需要完整的标题、年份和媒体类型。"})
+            return
+        tmdb_id = _parse_positive_int(payload.get("tmdbId") or payload.get("tmdb_id"))
+        douban_id = str(payload.get("doubanId") or payload.get("douban_id") or "").strip()
+        season = _parse_positive_int(payload.get("season"))
+        config, error = self._moviepilot_effective_config()
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        arguments: dict[str, Any] = {"title": title, "year": year, "media_type": media_type}
+        if tmdb_id is not None:
+            arguments["tmdb_id"] = tmdb_id
+        elif douban_id:
+            arguments["douban_id"] = douban_id
+        if media_type == "tv" and season is not None:
+            arguments["season"] = season
+        try:
+            started = time.time()
+            adapter = MoviePilotServiceAdapter(config)
+            created = adapter.invoke_named_tool("add_subscribe", arguments)
+            if not created.get("ok"):
+                self._send_json(502, {"ok": False, "error": str(created.get("message") or "MoviePilot 创建订阅失败。")})
+                return
+            subscribe_id = _extract_moviepilot_subscribe_id(created.get("result"))
+            if immediate and subscribe_id is None:
+                lookup_args: dict[str, Any] = {"media_type": media_type}
+                if tmdb_id is not None:
+                    lookup_args["tmdb_id"] = tmdb_id
+                elif douban_id:
+                    lookup_args["douban_id"] = douban_id
+                lookup = adapter.query_named_read_tool("query_subscribes", lookup_args)
+                if lookup.get("ok"):
+                    subscribe_id = _extract_moviepilot_subscribe_id(lookup.get("result"))
+            search_started = False
+            search_message = ""
+            if immediate and subscribe_id is not None:
+                searched = adapter.invoke_named_tool("search_subscribe", {"subscribe_id": subscribe_id, "manual": True})
+                search_started = bool(searched.get("ok"))
+                if not search_started:
+                    search_message = str(searched.get("message") or "立即搜索未启动，订阅仍会按 MoviePilot 调度执行。")
+            elif immediate:
+                search_message = "订阅已创建，但 MoviePilot 未返回订阅 ID；将按 MoviePilot 调度自动搜索。"
+            elapsed_ms = int((time.time() - started) * 1000)
+        except MoviePilotServiceError as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(
+            level="info" if not search_message else "warning",
+            module="moviepilot",
+            action="moviepilot_subscribe_created",
+            message="MoviePilot 订阅已创建。" if not search_started else "MoviePilot 订阅已创建并启动立即搜索。",
+            status=200,
+            detail={"title": title, "year": year, "mediaType": media_type, "tmdbId": tmdb_id, "season": season, "subscribeId": subscribe_id, "immediate": immediate, "searchStarted": search_started, "elapsedMs": elapsed_ms},
+        )
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "title": title,
+                "season": season,
+                "subscribeId": subscribe_id,
+                "immediateRequested": immediate,
+                "immediateSearchStarted": search_started,
+                "message": search_message or ("订阅已创建，已开始搜索可下载资源。" if search_started else "订阅已创建，MoviePilot 将按订阅规则自动搜索。"),
+                "elapsedMs": elapsed_ms,
+            },
+        )
+
     def _handle_moviepilot_tool(self) -> None:
         payload = self._read_json_body()
         if payload is None:
@@ -2958,8 +3114,13 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         tmdb_id = str(payload.get("tmdbId") or payload.get("tmdb_id") or "").strip()
         media_type = str(payload.get("mediaType") or payload.get("media_type") or "").strip().lower()
-        if not tmdb_id.isdigit() or media_type not in {"movie", "tv", "anime"}:
-            self._send_json(400, {"ok": False, "error": "资源搜索需要影片的 TMDB ID 与类型。"})
+        title = str(payload.get("title") or payload.get("mediaTitle") or "").strip()
+        year = str(payload.get("year") or "").strip()
+        if media_type not in {"movie", "tv", "anime", ""}:
+            self._send_json(400, {"ok": False, "error": "资源搜索的媒体类型无效。"})
+            return
+        if not tmdb_id.isdigit() and not title:
+            self._send_json(400, {"ok": False, "error": "资源搜索需要 TMDB ID，或可识别的作品标题。"})
             return
         try:
             page = max(1, int(payload.get("page") or 1))
@@ -2971,10 +3132,22 @@ class AppHandler(SimpleHTTPRequestHandler):
         if error:
             self._send_json(400, {"ok": False, "error": error})
             return
-        query_type = "tv" if media_type == "anime" else media_type
         try:
             started = time.time()
             adapter = MoviePilotServiceAdapter(config)
+            resolved_identity: dict[str, Any] | None = None
+            if not tmdb_id.isdigit():
+                resolved = adapter.resolve_media_identity(title, year=year, media_type=media_type)
+                if not resolved.get("ok"):
+                    self._send_json(422, {"ok": False, "error": str(resolved.get("message") or "MoviePilot 未能确认媒体身份。")})
+                    return
+                resolved_identity = resolved.get("identity") if isinstance(resolved.get("identity"), dict) else None
+                tmdb_id = str((resolved_identity or {}).get("tmdbId") or "").strip()
+                media_type = str((resolved_identity or {}).get("mediaType") or "").strip().lower()
+            if not tmdb_id.isdigit() or media_type not in {"movie", "tv", "anime"}:
+                self._send_json(422, {"ok": False, "error": "MoviePilot 未能确认可用于 PT 搜索的 TMDB 媒体身份。"})
+                return
+            query_type = "tv" if media_type == "anime" else media_type
             refresh = adapter.invoke_named_tool("search_torrents", {"tmdb_id": int(tmdb_id), "media_type": query_type})
             result_args = {"page": page}
             for source_key, target_key in (("site", "site"), ("season", "season"), ("freeState", "free_state"), ("resolution", "resolution"), ("edition", "edition"), ("videoCode", "video_code"), ("releaseGroup", "release_group"), ("titlePattern", "title_pattern")):
@@ -2991,8 +3164,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             self._send_json(502, {"ok": False, "error": str(err)})
             return
         refresh_error = str(refresh.get("message") or "") if not refresh.get("ok") else ""
-        self._log_event(level="info" if not refresh_error else "warning", module="moviepilot", action="moviepilot_resource_search", message="MoviePilot 资源搜索完成。" if not refresh_error else "MoviePilot 资源刷新失败，已返回缓存结果。", status=200, detail={"tmdbId": tmdb_id, "mediaType": query_type, "page": page, "resultCount": len(normalized["items"]), "refreshError": refresh_error, "elapsedMs": elapsed_ms})
-        self._send_json(200, {"ok": True, "refreshSucceeded": not bool(refresh_error), "searchError": refresh_error, "items": normalized["items"], "filters": normalized["filters"], "totalCount": normalized["totalCount"], "page": normalized["page"], "totalPages": normalized["totalPages"], "elapsedMs": elapsed_ms})
+        self._log_event(level="info" if not refresh_error else "warning", module="moviepilot", action="moviepilot_resource_search", message="MoviePilot 资源搜索完成。" if not refresh_error else "MoviePilot 资源刷新失败，已返回缓存结果。", status=200, detail={"tmdbId": tmdb_id, "mediaType": query_type, "page": page, "resultCount": len(normalized["items"]), "identityResolved": bool(resolved_identity), "refreshError": refresh_error, "elapsedMs": elapsed_ms})
+        self._send_json(200, {"ok": True, "refreshSucceeded": not bool(refresh_error), "searchError": refresh_error, "identity": resolved_identity, "items": normalized["items"], "filters": normalized["filters"], "totalCount": normalized["totalCount"], "page": normalized["page"], "totalPages": normalized["totalPages"], "elapsedMs": elapsed_ms})
 
     def _handle_moviepilot_resource_download(self) -> None:
         payload = self._read_json_body()
@@ -3020,6 +3193,173 @@ class AppHandler(SimpleHTTPRequestHandler):
                 failed.append({"reference": reference, "error": str(result.get("message") or "创建下载任务失败。")})
         self._log_event(level="info" if not failed else "warning", module="moviepilot", action="moviepilot_resource_download", message="MoviePilot 下载任务已提交。", status=200, detail={"selectedCount": len(refs), "successCount": len(succeeded), "failedCount": len(failed), "downloader": str(options.get("downloader") or "")})
         self._send_json(200, {"ok": True, "selectedCount": len(refs), "successCount": len(succeeded), "failed": failed})
+
+    def _moviepilot_workbench_adapter(self) -> MoviePilotServiceAdapter | None:
+        """Return a configured adapter or send one consistent business error."""
+        config, error = self._moviepilot_effective_config()
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return None
+        return MoviePilotServiceAdapter(config)
+
+    def _moviepilot_workbench_call(self, adapter: MoviePilotServiceAdapter, tool: str, arguments: dict[str, Any] | None = None, *, emit_error: bool = True) -> dict[str, Any] | None:
+        """Call only a named business capability and never expose raw MCP input."""
+        result = adapter.invoke_named_tool(tool, arguments or {})
+        if result.get("ok"):
+            return result
+        if emit_error:
+            self._send_json(501, {"ok": False, "error": f"当前 MoviePilot 未提供此能力：{tool}。", "tool": tool})
+        return None
+
+    def _handle_moviepilot_subscriptions_query(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        page = max(1, int(payload.get("page") or 1))
+        status = str(payload.get("status") or "all").lower()
+        media_type = str(payload.get("mediaType") or "all").lower()
+        if status not in {"all", "r", "s"} or media_type not in {"all", "movie", "tv"}:
+            self._send_json(400, {"ok": False, "error": "订阅筛选参数无效。"})
+            return
+        subscriptions = AppHandler._moviepilot_workbench_call(self, adapter, "query_subscribes", {"status": status.upper() if status != "all" else "all", "media_type": media_type, "page": page})
+        if not subscriptions:
+            return
+        history = AppHandler._moviepilot_workbench_call(self, adapter, "query_subscribe_history", {"media_type": media_type, "page": 1}, emit_error=False)
+        self._send_json(200, {
+            "ok": True,
+            "subscriptions": MoviePilotServiceAdapter.public_result(subscriptions.get("result")),
+            "history": MoviePilotServiceAdapter.public_result(history.get("result")) if history else None,
+            "page": page,
+        })
+
+    def _handle_moviepilot_subscriptions_action(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        action = str(payload.get("action") or "").lower()
+        subscribe_id = _parse_positive_int(payload.get("subscribeId"))
+        if action not in {"search", "pause", "resume", "delete"} or subscribe_id is None:
+            self._send_json(400, {"ok": False, "error": "订阅操作或订阅 ID 无效。"})
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        mapping = {
+            "search": ("search_subscribe", {"subscribe_id": subscribe_id, "manual": True}),
+            "pause": ("update_subscribe", {"subscribe_id": subscribe_id, "state": "S"}),
+            "resume": ("update_subscribe", {"subscribe_id": subscribe_id, "state": "R"}),
+            "delete": ("delete_subscribe", {"subscribe_id": subscribe_id}),
+        }
+        tool, arguments = mapping[action]
+        result = AppHandler._moviepilot_workbench_call(self, adapter, tool, arguments)
+        if not result:
+            return
+        self._log_event(level="info", module="moviepilot", action=f"moviepilot_subscription_{action}", message="MoviePilot 订阅操作已执行。", status=200, detail={"subscribeId": subscribe_id, "action": action})
+        self._send_json(200, {"ok": True, "action": action, "subscribeId": subscribe_id, "message": "订阅操作已提交。", "result": MoviePilotServiceAdapter.public_result(result.get("result"))})
+
+    def _handle_moviepilot_downloads_query(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        status = str(payload.get("status") or "all").lower()
+        if status not in {"all", "downloading", "completed", "paused"}:
+            self._send_json(400, {"ok": False, "error": "下载状态筛选无效。"})
+            return
+        tasks = AppHandler._moviepilot_workbench_call(self, adapter, "query_download_tasks", {"status": status, "include_all_tags": False})
+        if not tasks:
+            return
+        self._send_json(200, {"ok": True, "tasks": MoviePilotServiceAdapter.public_result(tasks.get("result")), "status": status})
+
+    def _handle_moviepilot_downloads_action(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        action = str(payload.get("action") or "").lower()
+        task_hash = str(payload.get("hash") or "").strip()
+        if action not in {"start", "stop", "delete", "tags"} or not re.fullmatch(r"[A-Za-z0-9_-]{6,160}", task_hash):
+            self._send_json(400, {"ok": False, "error": "下载任务操作或任务标识无效。"})
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        downloader = str(payload.get("downloader") or "").strip()
+        base = {"hash": task_hash, **({"downloader": downloader} if downloader else {})}
+        if action == "delete":
+            result = AppHandler._moviepilot_workbench_call(self, adapter, "delete_download_tasks", {**base, "delete_files": bool(payload.get("deleteFiles"))})
+        else:
+            arguments = dict(base)
+            if action in {"start", "stop"}:
+                arguments["action"] = action
+            else:
+                tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
+                arguments["tags"] = [str(tag).strip() for tag in tags if str(tag).strip()][:12]
+            result = AppHandler._moviepilot_workbench_call(self, adapter, "update_download_tasks", arguments)
+        if not result:
+            return
+        self._log_event(level="info", module="moviepilot", action=f"moviepilot_download_{action}", message="MoviePilot 下载任务操作已执行。", status=200, detail={"hash": task_hash, "action": action})
+        self._send_json(200, {"ok": True, "action": action, "hash": task_hash, "message": "下载任务操作已提交。", "result": MoviePilotServiceAdapter.public_result(result.get("result"))})
+
+    def _handle_moviepilot_organize_query(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        status = str(payload.get("status") or "all").lower()
+        if status not in {"all", "success", "failed"}:
+            self._send_json(400, {"ok": False, "error": "整理状态筛选无效。"})
+            return
+        transfers = AppHandler._moviepilot_workbench_call(self, adapter, "query_transfer_history", {"status": status, "page": max(1, int(payload.get("page") or 1))})
+        if not transfers:
+            return
+        latest = AppHandler._moviepilot_workbench_call(self, adapter, "query_library_latest", {"page": 1}, emit_error=False)
+        self._send_json(200, {"ok": True, "transfers": MoviePilotServiceAdapter.public_result(transfers.get("result")), "latest": MoviePilotServiceAdapter.public_result(latest.get("result")) if latest else None, "status": status})
+
+    def _handle_moviepilot_organize_action(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        file_path = str(payload.get("filePath") or "").strip()
+        media_type = str(payload.get("mediaType") or "").lower()
+        if not file_path or media_type not in {"movie", "tv"}:
+            self._send_json(400, {"ok": False, "error": "重新整理需要来源文件和媒体类型。"})
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        arguments: dict[str, Any] = {"file_path": file_path, "media_type": media_type, "background": True}
+        tmdb_id = _parse_positive_int(payload.get("tmdbId"))
+        if tmdb_id is not None:
+            arguments["tmdbid"] = tmdb_id
+        season = _parse_positive_int(payload.get("season"))
+        if season is not None:
+            arguments["season"] = season
+        result = AppHandler._moviepilot_workbench_call(self, adapter, "transfer_file", arguments)
+        if not result:
+            return
+        self._log_event(level="info", module="moviepilot", action="moviepilot_organize_retry", message="MoviePilot 重新整理已提交。", status=200, detail={"mediaType": media_type, "tmdbId": tmdb_id})
+        self._send_json(200, {"ok": True, "message": "已提交 MoviePilot 后台整理。", "result": MoviePilotServiceAdapter.public_result(result.get("result"))})
+
+    def _handle_moviepilot_workbench_options(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        adapter = AppHandler._moviepilot_workbench_adapter(self)
+        if not adapter:
+            return
+        result: dict[str, Any] = {"ok": True, "downloaders": None, "ruleGroups": None, "sites": None}
+        for key, tool, arguments in (("downloaders", "query_downloaders", {}), ("ruleGroups", "query_rule_groups", {"include_usage": True}), ("sites", "query_sites", {"status": "all"})):
+            response = AppHandler._moviepilot_workbench_call(self, adapter, tool, arguments, emit_error=False)
+            if response:
+                result[key] = MoviePilotServiceAdapter.public_result(response.get("result"))
+        self._send_json(200, result)
 
     def _handle_moviepilot_search(self) -> None:
         payload = self._read_json_body()
@@ -3082,8 +3422,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         source = str(payload.get("source") or "tmdb_trending").strip()
         media_type = str(payload.get("mediaType") or "all").strip().lower()
+        raw_filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
         try:
-            page = max(1, min(1000, int(payload.get("page") or 1)))
+            page = max(1, int(payload.get("page") or 1))
         except (TypeError, ValueError):
             self._send_json(400, {"ok": False, "error": "探索页码无效。"})
             return
@@ -3091,7 +3432,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             "tmdb_trending", "tmdb_movies", "tmdb_tvs", "douban_hot", "douban_movie_hot",
             "douban_tv_hot", "douban_showing", "douban_movies", "douban_tvs",
             "douban_movie_top250", "douban_tv_weekly_chinese", "douban_tv_weekly_global",
-            "douban_tv_animation", "bangumi_calendar",
+            "douban_tv_animation", "bangumi_calendar", "platform_iqiyi", "platform_tencent",
+            "platform_youku", "platform_bilibili",
         }
         if source not in allowed_sources or media_type not in {"all", "movie", "tv"}:
             self._send_json(400, {"ok": False, "error": "探索筛选参数无效。"})
@@ -3107,14 +3449,164 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         try:
             started = time.time()
-            result = MoviePilotServiceAdapter(config).get_recommendations(source, media_type=media_type, page=page)
+            adapter = MoviePilotServiceAdapter(config)
+            platform_sources = {
+                "platform_iqiyi": ("爱奇艺", "iQIYI", "IQIYI"),
+                "platform_tencent": ("腾讯视频", "腾讯"),
+                "platform_youku": ("优酷", "优酷视频", "Youku"),
+                "platform_bilibili": ("哔哩哔哩", "Bilibili", "B站"),
+            }
+            if source == "douban_movies":
+                # Mirror MoviePilot's Explore page, rather than its separately
+                # cached recommendation stream.  Keep the exact MP sort/tag
+                # vocabulary and reject arbitrary query parameters.
+                sort = str(raw_filters.get("sort") or "U").strip().upper()
+                if sort not in {"U", "T", "S", "R"}:
+                    sort = "U"
+                raw_tags = raw_filters.get("tags")
+                tags = []
+                if isinstance(raw_tags, list):
+                    tags = [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+                elif isinstance(raw_tags, str):
+                    tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+                # Limit the count and size so the proxy remains a bounded read.
+                tags = tags[:8]
+                endpoint = "douban_tvs" if media_type == "tv" else "douban_movies"
+                result = adapter.get_discover_feed(endpoint, page=page, parameters={"sort": sort, "tags": ",".join(tags)})
+            elif source == "tmdb_trending":
+                # The MoviePilot TheMovieDb page is backed by the native
+                # /discover/tmdb_* API.  Do not substitute its separate
+                # recommendation/trending stream here: that stream mixes
+                # media types and ignores these Explore filters.
+                if media_type not in {"movie", "tv"}:
+                    self._send_json(400, {"ok": False, "error": "TheMovieDb 探索请选择电影或电视剧。"})
+                    return
+                sort_by = str(raw_filters.get("sortBy") or "popularity.desc").strip()
+                if sort_by not in {"popularity.desc", "primary_release_date.desc", "vote_average.desc"}:
+                    sort_by = "popularity.desc"
+                if media_type == "tv" and sort_by == "primary_release_date.desc":
+                    # TMDB TV discover uses first_air_date instead of the
+                    # movie-only primary_release_date field.
+                    sort_by = "first_air_date.desc"
+                genre_name = str(raw_filters.get("genre") or "").strip()
+                tmdb_genres = {
+                    "动作": "28", "冒险": "12", "动画": "16", "喜剧": "35", "犯罪": "80", "纪录": "99",
+                    "剧情": "18", "家庭": "10751", "奇幻": "14", "历史": "36", "恐怖": "27", "音乐": "10402",
+                    "悬疑": "9648", "爱情": "10749", "科幻": "878", "惊悚": "53", "战争": "10752", "西部": "37",
+                }
+                year = str(raw_filters.get("year") or "").strip()
+                # MoviePilot forwards release_date as a lower bound to TMDB;
+                # use 1 January of the selected year, matching its API semantics.
+                release_date = f"{year}-01-01" if re.fullmatch(r"20\d{2}", year) else ""
+                endpoint = "tmdb_tvs" if media_type == "tv" else "tmdb_movies"
+                result = adapter.get_discover_feed(
+                    endpoint,
+                    page=page,
+                    parameters={
+                        "sort_by": sort_by,
+                        "with_genres": tmdb_genres.get(genre_name, ""),
+                        "release_date": release_date,
+                    },
+                )
+            else:
+                result = adapter.get_discovery_source(platform_sources[source], page=page) if source in platform_sources else adapter.get_recommendations(source, media_type=media_type, page=page)
             items = MoviePilotServiceAdapter.normalize_search_results(result.get("result"))
             elapsed_ms = int((time.time() - started) * 1000)
         except MoviePilotServiceError as err:
             self._send_json(502, {"ok": False, "error": str(err)})
             return
         self._log_event(level="info", module="moviepilot", action="moviepilot_explore_completed", message="MoviePilot 探索内容读取完成。", status=200, detail={"source": source, "mediaType": media_type, "page": page, "transport": result.get("transport"), "resultCount": len(items), "elapsedMs": elapsed_ms})
-        self._send_json(200, {"ok": True, "source": source, "mediaType": media_type, "page": page, "transport": result.get("transport"), "hasMore": len(items) >= 30, "items": items, "elapsedMs": elapsed_ms})
+        # Recommendation providers normally return 20 rows per page.  Treat a
+        # non-empty page as a possible continuation instead of assuming a
+        # 30-row page size; the browser stops when the next page is empty or
+        # contains no new media identifiers.
+        self._send_json(200, {"ok": True, "source": source, "mediaType": media_type, "page": page, "transport": result.get("transport"), "hasMore": bool(items), "items": items, "elapsedMs": elapsed_ms})
+
+    def _handle_moviepilot_discover_sources(self) -> None:
+        """Return only public availability flags for optional video-platform plugins."""
+        with STORE_LOCK:
+            config = _apply_moviepilot_env_overrides(_read_store_unlocked().get("moviePilotConfig"))
+        if not config.get("enabled"):
+            self._send_json(400, {"ok": False, "error": "MoviePilot 尚未启用，请先完成连接设置。"})
+            return
+        _, error = _validate_moviepilot_config(config)
+        if error:
+            self._send_json(400, {"ok": False, "error": error})
+            return
+        try:
+            rows = MoviePilotServiceAdapter(config)._extract_rows(MoviePilotServiceAdapter(config)._request("GET", "/discover/source"))
+        except MoviePilotServiceError as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        names = {str(row.get("name") or "").strip().casefold() for row in rows if isinstance(row, dict)}
+        aliases = {
+            "iqiyi": ("爱奇艺", "iqiyi"), "tencent": ("腾讯视频", "腾讯"),
+            "youku": ("优酷", "优酷视频", "youku"), "bilibili": ("哔哩哔哩", "bilibili", "b站"),
+        }
+        availability = {key: any(alias.casefold() in names for alias in source_aliases) for key, source_aliases in aliases.items()}
+        self._send_json(200, {"ok": True, "sources": availability})
+
+    def _handle_moviepilot_image(self, query: str) -> None:
+        """Return a cached TMDB poster thumbnail for MoviePilot result cards.
+
+        The route intentionally accepts only a TMDB image filename and a small
+        allowlist of display sizes.  It is not a general purpose URL proxy.
+        """
+        params = urllib.parse.parse_qs(query)
+        image_name = str((params.get("path") or [""])[0]).strip()
+        size = str((params.get("size") or ["w342"])[0]).strip().lower()
+        source_url = str((params.get("url") or [""])[0]).strip()
+        if source_url:
+            parsed_source = urllib.parse.urlsplit(source_url)
+            host = str(parsed_source.hostname or "").lower()
+            allowed_cdn_suffixes = (".qpic.cn", ".hdslb.com", ".iqiyipic.com", ".ykimg.com", ".youku.com", ".doubanio.com")
+            if parsed_source.scheme != "https" or parsed_source.username or parsed_source.password or not any(host.endswith(suffix) for suffix in allowed_cdn_suffixes):
+                self._send_json(400, {"ok": False, "error": "海报来源不受支持。"})
+                return
+            remote_url = source_url
+            cache_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()
+        else:
+            if size not in {"w185", "w342", "w500"} or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}\.(?:jpe?g|png|webp)", image_name, re.IGNORECASE):
+                self._send_json(400, {"ok": False, "error": "海报参数无效。"})
+                return
+            remote_url = f"https://image.tmdb.org/t/p/{size}/{image_name}"
+            cache_key = hashlib.sha256(f"{size}/{image_name}".encode("utf-8")).hexdigest()
+        cache_file = MOVIEPILOT_IMAGE_CACHE_DIR / f"{cache_key}.image"
+        try:
+            if cache_file.is_file() and cache_file.stat().st_size > 0:
+                content = cache_file.read_bytes()
+            else:
+                remote_host = str(urllib.parse.urlsplit(remote_url).hostname or "").lower()
+                request_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"}
+                # 豆瓣图片 CDN 会拒绝没有来源页的服务端请求（HTTP 418）。
+                # 只为允许的 doubanio 域补充其公开电影页 Referer，仍由前面的
+                # host allowlist 限制，不把本路由变成通用图片代理。
+                if remote_host.endswith(".doubanio.com"):
+                    request_headers["Referer"] = "https://movie.douban.com/"
+                request = urllib.request.Request(remote_url, headers=request_headers)
+                with urllib.request.urlopen(request, timeout=12) as response:
+                    content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+                    content_length = int(response.headers.get("Content-Length") or 0)
+                    if content_length > 5 * 1024 * 1024:
+                        raise MoviePilotServiceError("影视海报响应无效。")
+                    content = response.read(5 * 1024 * 1024 + 1)
+                    is_image_bytes = content.startswith(b"\xff\xd8\xff") or content.startswith(b"\x89PNG\r\n\x1a\n") or content[:12].endswith(b"WEBP")
+                    if not content or len(content) > 5 * 1024 * 1024 or (not content_type.startswith("image/") and not is_image_bytes):
+                        raise MoviePilotServiceError("影视海报超过缓存大小限制。")
+                MOVIEPILOT_IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                temporary = cache_file.with_suffix(".tmp")
+                temporary.write_bytes(content)
+                temporary.replace(cache_file)
+        except (OSError, urllib.error.URLError, MoviePilotServiceError) as err:
+            self._send_json(502, {"ok": False, "error": f"影视海报读取失败：{err}"})
+            return
+        media_type = "image/webp" if content[:12].endswith(b"WEBP") else "image/png" if content.startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg"
+        self.send_response(200)
+        self.send_header("Content-Type", media_type)
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.end_headers()
+        self.wfile.write(content)
 
     def _handle_moviepilot_detail(self) -> None:
         """Read a single MoviePilot media record; no resource or subscription calls."""

@@ -444,6 +444,19 @@ class MoviePilotServiceAdapterTests(unittest.TestCase):
         self.assertEqual("示例站", result["items"][0]["site"])
         self.assertEqual("免费", result["items"][0]["freeState"])
 
+    def test_resolve_media_identity_uses_safe_metadata_search_for_platform_card(self):
+        def transport(method, url, headers, payload, timeout):
+            if method == "GET":
+                return {"tools": [{"name": "search_media", "description": "Search movie metadata", "inputSchema": {"properties": {"keyword": {"type": "string"}}}}]}
+            return {"content": [{"type": "text", "text": json.dumps({"items": [
+                {"title": "庆余年", "year": "2024", "media_type": "tv", "tmdb_id": 1086922},
+            ]})}]}
+
+        result = self._adapter(transport).resolve_media_identity("庆余年", year="2024", media_type="tv")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual({"title": "庆余年", "year": "2024", "mediaType": "tv", "tmdbId": "1086922"}, result["identity"])
+
 
 class MoviePilotToolFormattingTests(unittest.TestCase):
     def _tool(self, operation):
@@ -640,6 +653,36 @@ class MoviePilotSearchApiTests(unittest.TestCase):
         self.assertEqual(1, urlopen.call_count)
         self.assertEqual(b"\xff\xd8\xff", handler.wfile.getvalue())
 
+    def test_moviepilot_image_proxy_sets_douban_referer_for_douban_poster(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler.send_response = lambda status: responses.append(("status", status))
+        handler.send_header = lambda key, value: responses.append((key, value))
+        handler.end_headers = lambda: None
+        handler.wfile = io.BytesIO()
+
+        class Response:
+            headers = {"Content-Type": "image/webp", "Content-Length": "12"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit):
+                return b"RIFF\x04\x00\x00\x00WEBP"
+
+        with tempfile.TemporaryDirectory() as cache_dir, patch.object(dev_server, "MOVIEPILOT_IMAGE_CACHE_DIR", dev_server.pathlib.Path(cache_dir)), patch.object(
+            dev_server.urllib.request, "urlopen", return_value=Response()
+        ) as urlopen:
+            dev_server.AppHandler._handle_moviepilot_image(handler, "url=https%3A%2F%2Fimg3.doubanio.com%2Fview%2Fphoto%2Fm_ratio_poster%2Fpublic%2Fp1.webp")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual("https://movie.douban.com/", request.get_header("Referer"))
+        self.assertIn("Mozilla", request.get_header("User-agent"))
+
     def test_tmdb_explore_uses_native_discover_endpoint_and_keeps_loading_after_a_20_item_page(self):
         responses = []
         handler = type("Handler", (), {})()
@@ -733,6 +776,38 @@ class MoviePilotSearchApiTests(unittest.TestCase):
             [call.args for call in adapter.invoke_named_tool.call_args_list],
         )
 
+    def test_resource_search_resolves_platform_title_before_searching_torrents(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {"title": "庆余年", "year": "2024", "mediaType": "tv", "page": 1}
+        handler._moviepilot_effective_config = lambda: ({"enabled": True}, "")
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler._log_event = lambda **kwargs: None
+        adapter = MagicMock()
+        adapter.resolve_media_identity.return_value = {
+            "ok": True,
+            "identity": {"title": "庆余年", "year": "2024", "mediaType": "tv", "tmdbId": "1086922"},
+        }
+        adapter.invoke_named_tool.side_effect = [
+            {"ok": True, "result": {"accepted": True}},
+            {"ok": True, "result": {"results": []}},
+        ]
+
+        with patch.object(dev_server, "MoviePilotServiceAdapter", return_value=adapter) as adapter_class:
+            adapter_class.normalize_torrent_results.return_value = {"items": [], "filters": {}, "totalCount": 0, "page": 1, "totalPages": 1}
+            dev_server.AppHandler._handle_moviepilot_resource_search(handler)
+
+        self.assertEqual(200, responses[0][0])
+        self.assertEqual("1086922", responses[0][1]["identity"]["tmdbId"])
+        adapter.resolve_media_identity.assert_called_once_with("庆余年", year="2024", media_type="tv")
+        self.assertEqual(
+            [
+                ("search_torrents", {"tmdb_id": 1086922, "media_type": "tv"}),
+                ("get_search_results", {"page": 1}),
+            ],
+            [call.args for call in adapter.invoke_named_tool.call_args_list],
+        )
+
     def test_search_endpoint_rejects_disabled_connection_without_calling_moviepilot(self):
         responses = []
         handler = type("Handler", (), {})()
@@ -748,6 +823,56 @@ class MoviePilotSearchApiTests(unittest.TestCase):
         self.assertEqual(400, responses[0][0])
         self.assertIn("尚未启用", responses[0][1]["error"])
         adapter.assert_not_called()
+
+    def test_subscription_action_uses_one_named_business_tool_without_raw_arguments(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {"action": "pause", "subscribeId": 88}
+        handler._moviepilot_effective_config = lambda: ({"enabled": True}, "")
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler._log_event = lambda **kwargs: None
+        adapter = MagicMock()
+        adapter.invoke_named_tool.return_value = {"ok": True, "result": {"state": "S"}}
+
+        with patch.object(dev_server, "MoviePilotServiceAdapter", return_value=adapter):
+            dev_server.AppHandler._handle_moviepilot_subscriptions_action(handler)
+
+        self.assertEqual(200, responses[0][0])
+        adapter.invoke_named_tool.assert_called_once_with("update_subscribe", {"subscribe_id": 88, "state": "S"})
+
+    def test_download_action_starts_task_once_without_generic_tool_endpoint(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {"action": "start", "hash": "abcdef123456", "downloader": "qBittorrent"}
+        handler._moviepilot_effective_config = lambda: ({"enabled": True}, "")
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        handler._log_event = lambda **kwargs: None
+        adapter = MagicMock()
+        adapter.invoke_named_tool.return_value = {"ok": True, "result": {"accepted": True}}
+
+        with patch.object(dev_server, "MoviePilotServiceAdapter", return_value=adapter):
+            dev_server.AppHandler._handle_moviepilot_downloads_action(handler)
+
+        self.assertEqual(200, responses[0][0])
+        adapter.invoke_named_tool.assert_called_once_with("update_download_tasks", {"hash": "abcdef123456", "downloader": "qBittorrent", "action": "start"})
+
+    def test_subscription_query_degrades_when_history_tool_is_not_exposed(self):
+        responses = []
+        handler = type("Handler", (), {})()
+        handler._read_json_body = lambda: {"status": "all", "mediaType": "all"}
+        handler._moviepilot_effective_config = lambda: ({"enabled": True}, "")
+        handler._send_json = lambda status, payload: responses.append((status, payload))
+        adapter = MagicMock()
+        adapter.invoke_named_tool.side_effect = [
+            {"ok": True, "result": {"items": [{"id": 8, "name": "示例"}]}},
+            {"ok": False, "message": "missing"},
+        ]
+
+        with patch.object(dev_server, "MoviePilotServiceAdapter", return_value=adapter):
+            dev_server.AppHandler._handle_moviepilot_subscriptions_query(handler)
+
+        self.assertEqual(200, responses[0][0])
+        self.assertIsNone(responses[0][1]["history"])
 
 
 if __name__ == "__main__":

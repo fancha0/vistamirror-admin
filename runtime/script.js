@@ -464,6 +464,7 @@ const appState = {
   hdhiveIdentity: null,
   hdhiveRecords: [],
   moviePilotSearch: { query: "", filter: "movie", source: "tmdb_trending", mode: "explore", items: [], loading: false, searched: false, exploreLoaded: false, explorePage: 0, exploreHasMore: true, exploreRenderCount: 42, exploreSourcesAvailable: {}, exploreSourcesAvailabilityLoading: false, exploreFilters: { sort: "popularity.desc", genre: "", year: "" }, error: "", requestId: 0, debounceTimer: null },
+  moviePilotWorkbench: { tab: "explore", subscriptions: { loading: false, payload: null, error: "" }, downloads: { loading: false, payload: null, error: "" }, organize: { loading: false, payload: null, error: "" } },
   moviePilotWorkspace: { loaded: false, loading: false, tools: [], group: "all", filter: "", selected: "", output: null },
   drive115Records: [],
   drive115LastParse: null,
@@ -1409,12 +1410,28 @@ const elements = {
   moviePilotTimeoutSeconds: document.getElementById("moviepilot-timeout-seconds"),
   moviePilotTestBtn: document.getElementById("moviepilot-test-btn"),
   moviePilotFeedback: document.getElementById("moviepilot-feedback"),
+  moviePilotCapabilitiesBtn: document.getElementById("moviepilot-capabilities-btn"),
+  moviePilotCapabilitiesOutput: document.getElementById("moviepilot-capabilities-output"),
   moviePilotSearchForm: document.getElementById("moviepilot-search-form"),
   moviePilotSearchInput: document.getElementById("moviepilot-search-input"),
   moviePilotSearchSubmit: document.getElementById("moviepilot-search-submit"),
   moviePilotSearchTabs: document.getElementById("moviepilot-search-tabs"),
   moviePilotSearchStatus: document.getElementById("moviepilot-search-status"),
   moviePilotSearchResults: document.getElementById("moviepilot-search-results"),
+  moviePilotWorkbenchTabs: document.getElementById("moviepilot-workbench-tabs"),
+  moviePilotExplorePanel: document.getElementById("moviepilot-explore-panel"),
+  moviePilotSubscriptionsPanel: document.getElementById("moviepilot-subscriptions-panel"),
+  moviePilotSubscriptionsList: document.getElementById("moviepilot-subscriptions-list"),
+  moviePilotSubscriptionsStatus: document.getElementById("moviepilot-subscriptions-status"),
+  moviePilotSubscriptionsRefresh: document.getElementById("moviepilot-subscriptions-refresh"),
+  moviePilotDownloadsPanel: document.getElementById("moviepilot-downloads-panel"),
+  moviePilotDownloadsList: document.getElementById("moviepilot-downloads-list"),
+  moviePilotDownloadsStatus: document.getElementById("moviepilot-downloads-status"),
+  moviePilotDownloadsRefresh: document.getElementById("moviepilot-downloads-refresh"),
+  moviePilotOrganizePanel: document.getElementById("moviepilot-organize-panel"),
+  moviePilotOrganizeList: document.getElementById("moviepilot-organize-list"),
+  moviePilotOrganizeStatus: document.getElementById("moviepilot-organize-status"),
+  moviePilotOrganizeRefresh: document.getElementById("moviepilot-organize-refresh"),
   moviePilotExploreSources: document.getElementById("moviepilot-explore-sources"),
   moviePilotExploreFilters: document.getElementById("moviepilot-explore-filters"),
   moviePilotWorkspace: document.getElementById("moviepilot-workspace"),
@@ -9572,6 +9589,152 @@ function moviePilotTypeLabel(type) {
   return ({ movie: "电影", tv: "电视剧", anime: "动漫", other: "影视" })[String(type || "")] || "影视";
 }
 
+async function loadMoviePilotCapabilityDiagnostics() {
+  if (elements.moviePilotCapabilitiesBtn) elements.moviePilotCapabilitiesBtn.disabled = true;
+  if (elements.moviePilotCapabilitiesOutput) elements.moviePilotCapabilitiesOutput.textContent = "正在读取…";
+  try {
+    const result = await inviteApiFetch("/api/moviepilot/capabilities");
+    const tools = Array.isArray(result?.tools) ? result.tools : [];
+    const readCount = tools.filter((tool) => tool?.readOnly).length;
+    if (elements.moviePilotCapabilitiesOutput) elements.moviePilotCapabilitiesOutput.textContent = `已接入 ${tools.length} 项能力（只读 ${readCount} 项）。\n业务工作台会自动选择所需接口；原始参数不会暴露到日常页面。`;
+  } catch (error) {
+    if (elements.moviePilotCapabilitiesOutput) elements.moviePilotCapabilitiesOutput.textContent = `读取失败：${error?.message || "未知错误"}`;
+  } finally { if (elements.moviePilotCapabilitiesBtn) elements.moviePilotCapabilitiesBtn.disabled = false; }
+}
+
+function moviePilotBusinessRows(payload) {
+  const seen = new Set();
+  const decode = (value) => {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    if (!/^[{\[]/.test(trimmed)) return value;
+    try { return JSON.parse(trimmed); } catch (_) { return value; }
+  };
+  const visit = (raw, depth = 0) => {
+    const value = decode(raw);
+    if (depth > 7 || value == null || seen.has(value)) return [];
+    if (typeof value === "object") seen.add(value);
+    if (Array.isArray(value)) return value.filter((row) => row && typeof row === "object");
+    if (typeof value !== "object") return [];
+    for (const key of ["items", "results", "data", "list", "subscriptions", "tasks", "records", "content"]) {
+      if (value[key] == null) continue;
+      const rows = visit(value[key], depth + 1);
+      if (rows.length) return rows;
+    }
+    for (const child of Object.values(value)) {
+      const rows = visit(child, depth + 1);
+      if (rows.length) return rows;
+    }
+    return Object.keys(value).length ? [value] : [];
+  };
+  return visit(payload);
+}
+
+function moviePilotBusinessValue(row, ...keys) {
+  for (const key of keys) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && String(value).trim()) return value;
+  }
+  return "";
+}
+
+function moviePilotBusinessText(value, fallback = "-") {
+  if (Array.isArray(value)) return value.map((item) => moviePilotBusinessText(item, "")).filter(Boolean).join("、") || fallback;
+  if (value && typeof value === "object") return Object.values(value).map((item) => moviePilotBusinessText(item, "")).filter(Boolean).slice(0, 4).join(" · ") || fallback;
+  return String(value ?? "").trim() || fallback;
+}
+
+function renderMoviePilotWorkbench() {
+  const state = appState.moviePilotWorkbench;
+  const tab = state.tab;
+  elements.moviePilotWorkbenchTabs?.querySelectorAll("[data-moviepilot-workbench-tab]").forEach((button) => button.classList.toggle("is-active", button.dataset.moviepilotWorkbenchTab === tab));
+  if (elements.moviePilotExplorePanel) elements.moviePilotExplorePanel.hidden = tab !== "explore";
+  if (elements.moviePilotSubscriptionsPanel) elements.moviePilotSubscriptionsPanel.hidden = tab !== "subscriptions";
+  if (elements.moviePilotDownloadsPanel) elements.moviePilotDownloadsPanel.hidden = tab !== "downloads";
+  if (elements.moviePilotOrganizePanel) elements.moviePilotOrganizePanel.hidden = tab !== "organize";
+  renderMoviePilotSubscriptions();
+  renderMoviePilotDownloads();
+  renderMoviePilotOrganize();
+}
+
+function renderMoviePilotSubscriptions() {
+  const state = appState.moviePilotWorkbench.subscriptions;
+  if (!elements.moviePilotSubscriptionsList) return;
+  if (state.loading) { elements.moviePilotSubscriptionsList.innerHTML = `<div class="empty-state">正在读取 MoviePilot 订阅…</div>`; return; }
+  if (state.error) { elements.moviePilotSubscriptionsList.innerHTML = `<div class="empty-state">${escapeHtml(state.error)}</div>`; return; }
+  const rows = moviePilotBusinessRows(state.payload?.subscriptions);
+  elements.moviePilotSubscriptionsList.innerHTML = rows.length ? rows.map((row) => {
+    const id = moviePilotBusinessValue(row, "subscribe_id", "subscribeId", "id");
+    const title = moviePilotBusinessText(moviePilotBusinessValue(row, "name", "title", "media_name"), "未命名订阅");
+    const stateCode = String(moviePilotBusinessValue(row, "state", "status")).toUpperCase();
+    const paused = stateCode === "S" || /pause|暂停/i.test(stateCode);
+    const meta = [moviePilotBusinessValue(row, "year"), moviePilotBusinessValue(row, "media_type", "mediaType", "type"), moviePilotBusinessValue(row, "season") ? `第 ${moviePilotBusinessValue(row, "season")} 季` : "", moviePilotBusinessValue(row, "lack_episode", "lackEpisode") ? `缺 ${moviePilotBusinessValue(row, "lack_episode", "lackEpisode")} 集` : ""].filter(Boolean);
+    return `<article class="moviepilot-operation-card"><div><h4>${escapeHtml(title)}</h4><p>${escapeHtml(meta.join(" · ") || "MoviePilot 订阅")}</p><small>${paused ? "已暂停" : "进行中"}</small></div><div class="moviepilot-operation-actions">${id ? `<button type="button" data-moviepilot-subscription-action="search" data-moviepilot-subscription-id="${escapeHtml(id)}">立即搜索</button><button type="button" data-moviepilot-subscription-action="${paused ? "resume" : "pause"}" data-moviepilot-subscription-id="${escapeHtml(id)}">${paused ? "恢复" : "暂停"}</button><button type="button" class="is-danger" data-moviepilot-subscription-action="delete" data-moviepilot-subscription-id="${escapeHtml(id)}">删除</button>` : `<span>MoviePilot 未返回订阅 ID</span>`}</div></article>`;
+  }).join("") : `<div class="empty-state">暂无 MoviePilot 订阅。</div>`;
+}
+
+function renderMoviePilotDownloads() {
+  const state = appState.moviePilotWorkbench.downloads;
+  if (!elements.moviePilotDownloadsList) return;
+  if (state.loading) { elements.moviePilotDownloadsList.innerHTML = `<div class="empty-state">正在读取 MoviePilot 下载任务…</div>`; return; }
+  if (state.error) { elements.moviePilotDownloadsList.innerHTML = `<div class="empty-state">${escapeHtml(state.error)}</div>`; return; }
+  const rows = moviePilotBusinessRows(state.payload?.tasks);
+  elements.moviePilotDownloadsList.innerHTML = rows.length ? rows.map((row) => {
+    const hash = moviePilotBusinessValue(row, "hash", "torrent_hash", "torrentHash");
+    const title = moviePilotBusinessText(moviePilotBusinessValue(row, "title", "name", "torrent_name"), "下载任务");
+    const status = moviePilotBusinessText(moviePilotBusinessValue(row, "status", "state"), "未知状态");
+    const progress = moviePilotBusinessText(moviePilotBusinessValue(row, "progress", "progress_text", "percent"), "-");
+    const downloader = moviePilotBusinessText(moviePilotBusinessValue(row, "downloader", "downloader_name"), "");
+    const stopped = /pause|stop|暂停/i.test(status);
+    return `<article class="moviepilot-operation-card"><div><h4>${escapeHtml(title)}</h4><p>${escapeHtml([status, progress, downloader].filter(Boolean).join(" · "))}</p><small>${escapeHtml(moviePilotBusinessText(moviePilotBusinessValue(row, "tags", "tag"), ""))}</small></div><div class="moviepilot-operation-actions">${hash ? `<button type="button" data-moviepilot-download-action="${stopped ? "start" : "stop"}" data-moviepilot-download-hash="${escapeHtml(hash)}" data-moviepilot-download-downloader="${escapeHtml(downloader)}">${stopped ? "开始" : "暂停"}</button><button type="button" class="is-danger" data-moviepilot-download-action="delete" data-moviepilot-download-hash="${escapeHtml(hash)}" data-moviepilot-download-downloader="${escapeHtml(downloader)}">删除</button>` : `<span>MoviePilot 未返回任务标识</span>`}</div></article>`;
+  }).join("") : `<div class="empty-state">暂无匹配的 MoviePilot 下载任务。</div>`;
+}
+
+function renderMoviePilotOrganize() {
+  const state = appState.moviePilotWorkbench.organize;
+  if (!elements.moviePilotOrganizeList) return;
+  if (state.loading) { elements.moviePilotOrganizeList.innerHTML = `<div class="empty-state">正在读取 MoviePilot 整理记录…</div>`; return; }
+  if (state.error) { elements.moviePilotOrganizeList.innerHTML = `<div class="empty-state">${escapeHtml(state.error)}</div>`; return; }
+  const transfers = moviePilotBusinessRows(state.payload?.transfers);
+  const latest = moviePilotBusinessRows(state.payload?.latest);
+  const transferHtml = transfers.length ? transfers.map((row) => {
+    const title = moviePilotBusinessText(moviePilotBusinessValue(row, "title", "name", "media_name"), "整理记录");
+    const status = moviePilotBusinessText(moviePilotBusinessValue(row, "status", "state"), "未知状态");
+    const path = moviePilotBusinessValue(row, "src", "source", "source_path", "file_path", "from_path");
+    const type = String(moviePilotBusinessValue(row, "media_type", "type") || "").toLowerCase();
+    const tmdbId = moviePilotBusinessValue(row, "tmdb_id", "tmdbId");
+    const failed = /fail|error|失败/i.test(status);
+    return `<article class="moviepilot-operation-card"><div><h4>${escapeHtml(title)}</h4><p>${escapeHtml(status)}</p><small>${escapeHtml(moviePilotBusinessText(moviePilotBusinessValue(row, "message", "error", "reason"), ""))}</small></div><div class="moviepilot-operation-actions">${failed && path && ["movie", "tv"].includes(type) ? `<button type="button" data-moviepilot-organize-retry data-moviepilot-organize-path="${escapeHtml(path)}" data-moviepilot-organize-type="${escapeHtml(type)}" data-moviepilot-organize-tmdb-id="${escapeHtml(tmdbId)}">重新整理</button>` : ""}</div></article>`;
+  }).join("") : `<div class="empty-state">暂无匹配的 MoviePilot 整理记录。</div>`;
+  const latestHtml = latest.length ? `<div class="moviepilot-latest-library"><strong>最近入库</strong><span>${escapeHtml(latest.slice(0, 8).map((row) => moviePilotBusinessText(moviePilotBusinessValue(row, "title", "name"), "媒体")).join("、"))}</span></div>` : "";
+  elements.moviePilotOrganizeList.innerHTML = transferHtml + latestHtml;
+}
+
+async function loadMoviePilotWorkbenchPanel(panel) {
+  const state = appState.moviePilotWorkbench[panel];
+  if (!state || state.loading) return;
+  state.loading = true; state.error = ""; renderMoviePilotWorkbench();
+  const requests = {
+    subscriptions: ["/api/moviepilot/subscriptions/query", { status: elements.moviePilotSubscriptionsStatus?.value || "all" }],
+    downloads: ["/api/moviepilot/downloads/query", { status: elements.moviePilotDownloadsStatus?.value || "all" }],
+    organize: ["/api/moviepilot/organize/query", { status: elements.moviePilotOrganizeStatus?.value || "all" }],
+  };
+  try {
+    const [url, body] = requests[panel];
+    state.payload = await inviteApiFetch(url, { method: "POST", body: JSON.stringify(body) });
+  } catch (error) { state.error = error?.message || "MoviePilot 数据读取失败。"; }
+  finally { state.loading = false; renderMoviePilotWorkbench(); }
+}
+
+async function runMoviePilotWorkbenchAction(panel, payload) {
+  const endpoints = { subscriptions: "/api/moviepilot/subscriptions/action", downloads: "/api/moviepilot/downloads/action", organize: "/api/moviepilot/organize/action" };
+  try {
+    const result = await inviteApiFetch(endpoints[panel], { method: "POST", body: JSON.stringify(payload) });
+    showToast(result?.message || "MoviePilot 操作已提交。", 1800);
+    loadMoviePilotWorkbenchPanel(panel);
+  } catch (error) { showToast(error?.message || "MoviePilot 操作失败。", 2200); }
+}
+
 function moviePilotToolGroup(tool) {
   const name = String(tool?.name || "").toLowerCase();
   if (/(subscribe|filter_rule|rule_group)/.test(name)) return "订阅与规则";
@@ -10101,7 +10264,7 @@ async function openMoviePilotDetail(index) {
   const credit = (label, people) => Array.isArray(people) && people.length ? `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(people.slice(0, 12).join("、"))}</span></div>` : "";
   const facts = [["评分", detail.rating != null ? `${detail.rating} / 10` : "暂无"], ["TMDB ID", detail.tmdbId || item.tmdbId || "暂无"], ["原始标题", detail.originalTitle || "暂无"], ["状态", detail.status || "暂无"], ["上映日期", detail.releaseDate || detail.year || "暂无"], ["数字发行", detail.digitalReleaseDate || "暂无"], ["原始语言", detail.originalLanguage || "暂无"], ["出品国家", detail.countries?.join("、") || "暂无"], ["制作公司", detail.productionCompanies?.join("、") || "暂无"]].map(([label, value]) => `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></div>`).join("");
   const embyAction = library ? (() => { const base = String(appState.config.serverUrl || "").replace(/\/emby$/i, "").replace(/\/$/, ""); return `<span class="moviepilot-library-status is-ready">已入库</span><a class="moviepilot-detail-link" href="${escapeHtml(`${base}/web/index.html#!/item?id=${encodeURIComponent(library.Id)}`)}" target="_blank" rel="noopener noreferrer">在 Emby 打开</a>`; })() : `<span class="moviepilot-library-status">未入库</span>`;
-  modal.querySelector(".moviepilot-detail-panel").innerHTML = `<button class="moviepilot-detail-close" type="button" aria-label="关闭">×</button><div class="moviepilot-detail-hero"${backdrop}><div class="moviepilot-detail-hero-wash"></div><div class="moviepilot-detail-poster">${poster}</div><div class="moviepilot-detail-title"><p class="moviepilot-detail-kicker">${escapeHtml(moviePilotTypeLabel(detail.mediaType || item.mediaType))}</p><h3>${escapeHtml(detail.title || item.title)}</h3>${detail.originalTitle ? `<p class="moviepilot-detail-original">${escapeHtml(detail.originalTitle)}</p>` : ""}<div class="moviepilot-detail-meta">${escapeHtml([detail.year, moviePilotTypeLabel(detail.mediaType || item.mediaType), detail.tmdbId || item.tmdbId ? `TMDB ID ${detail.tmdbId || item.tmdbId}` : "", detail.rating != null ? `评分 ${detail.rating}` : ""].filter(Boolean).join("　"))}</div><div class="moviepilot-detail-genres">${escapeHtml((detail.genres || []).join("　") || "影视详情")}</div><div class="moviepilot-detail-library">${embyAction}${detail.tmdbId || item.tmdbId ? `<span>TMDB</span>` : ""}${detail.imdbId ? `<span>IMDb</span>` : ""}</div></div><div class="moviepilot-detail-actions">${detail.tmdbId || item.tmdbId ? `<button class="moviepilot-action-button" type="button" data-moviepilot-detail-action="torrents">⌕ 搜索资源</button>` : ""}<button class="moviepilot-action-button is-subscribe" type="button" data-moviepilot-detail-action="subscribe">♧ MP订阅</button></div></div><div class="moviepilot-detail-body"><article class="moviepilot-detail-copy">${detail.tagline ? `<p class="moviepilot-detail-tagline">${escapeHtml(detail.tagline)}</p>` : ""}<h4>剧情简介</h4><p>${escapeHtml(detail.overview || "MoviePilot 未提供作品简介。")}</p><div class="moviepilot-detail-credits">${credit("导演", credits.directors)}${credit("编剧", credits.writers)}${credit("主创", credits.creators)}${credit("主演", credits.cast)}</div>${detail.seasons?.length ? `<h4>季集信息</h4><div class="moviepilot-detail-seasons">${detail.seasons.map((season) => `<span>${escapeHtml([season.name || (season.number ? `第 ${season.number} 季` : "季"), season.episodeCount ? `${season.episodeCount} 集` : ""].filter(Boolean).join(" · "))}</span>`).join("")}</div>` : ""}</article><aside class="moviepilot-detail-facts">${facts}</aside></div>`;
+  modal.querySelector(".moviepilot-detail-panel").innerHTML = `<button class="moviepilot-detail-close" type="button" aria-label="关闭">×</button><div class="moviepilot-detail-hero"${backdrop}><div class="moviepilot-detail-hero-wash"></div><div class="moviepilot-detail-poster">${poster}</div><div class="moviepilot-detail-title"><p class="moviepilot-detail-kicker">${escapeHtml(moviePilotTypeLabel(detail.mediaType || item.mediaType))}</p><h3>${escapeHtml(detail.title || item.title)}</h3>${detail.originalTitle ? `<p class="moviepilot-detail-original">${escapeHtml(detail.originalTitle)}</p>` : ""}<div class="moviepilot-detail-meta">${escapeHtml([detail.year, moviePilotTypeLabel(detail.mediaType || item.mediaType), detail.tmdbId || item.tmdbId ? `TMDB ID ${detail.tmdbId || item.tmdbId}` : "", detail.rating != null ? `评分 ${detail.rating}` : ""].filter(Boolean).join("　"))}</div><div class="moviepilot-detail-genres">${escapeHtml((detail.genres || []).join("　") || "影视详情")}</div><div class="moviepilot-detail-library">${embyAction}${detail.tmdbId || item.tmdbId ? `<span>TMDB</span>` : ""}${detail.imdbId ? `<span>IMDb</span>` : ""}</div></div><div class="moviepilot-detail-actions">${detail.title || item.title ? `<button class="moviepilot-action-button" type="button" data-moviepilot-detail-action="torrents">⌕ 搜索资源</button>` : ""}<button class="moviepilot-action-button is-subscribe" type="button" data-moviepilot-detail-action="subscribe">♧ MP订阅</button></div></div><div class="moviepilot-detail-body"><article class="moviepilot-detail-copy">${detail.tagline ? `<p class="moviepilot-detail-tagline">${escapeHtml(detail.tagline)}</p>` : ""}<h4>剧情简介</h4><p>${escapeHtml(detail.overview || "MoviePilot 未提供作品简介。")}</p><div class="moviepilot-detail-credits">${credit("导演", credits.directors)}${credit("编剧", credits.writers)}${credit("主创", credits.creators)}${credit("主演", credits.cast)}</div>${detail.seasons?.length ? `<h4>季集信息</h4><div class="moviepilot-detail-seasons">${detail.seasons.map((season) => `<span>${escapeHtml([season.name || (season.number ? `第 ${season.number} 季` : "季"), season.episodeCount ? `${season.episodeCount} 集` : ""].filter(Boolean).join(" · "))}</span>`).join("")}</div>` : ""}</article><aside class="moviepilot-detail-facts">${facts}</aside></div>`;
   modal.querySelectorAll("img").forEach((image) => image.addEventListener("error", () => image.closest(".moviepilot-detail-poster")?.classList.add("no-poster"), { once: true }));
   if (detailResult.status === "rejected") modal.querySelector(".moviepilot-detail-copy")?.insertAdjacentHTML("afterbegin", `<p class="moviepilot-detail-read-error">详情读取失败：已显示当前卡片信息。</p>`);
   modal.querySelectorAll("[data-moviepilot-detail-action]").forEach((button) => button.addEventListener("click", () => {
@@ -10113,7 +10276,6 @@ async function openMoviePilotDetail(index) {
 }
 
 function openMoviePilotSubscribeConfirm(detail, item) {
-  document.getElementById("moviepilot-subscribe-modal")?.remove();
   const title = String(detail.title || item.title || "").trim();
   const year = String(detail.year || item.year || "").trim();
   const mediaType = detail.mediaType === "anime" ? "tv" : String(detail.mediaType || item.mediaType || "").trim();
@@ -10122,38 +10284,26 @@ function openMoviePilotSubscribeConfirm(detail, item) {
     showToast("缺少订阅所需的标题、年份或媒体类型。", 1800);
     return;
   }
+  const submit = async (season = null) => {
+    try {
+      const result = await inviteApiFetch("/api/moviepilot/subscribe", { method: "POST", body: JSON.stringify({ title, year, mediaType, tmdbId, season, immediate: true }) });
+      showToast(result?.immediateSearchStarted ? "订阅已创建，已开始搜索资源" : "MoviePilot 订阅已创建", 2100);
+      document.getElementById("moviepilot-subscribe-modal")?.remove();
+      if (appState.moviePilotWorkbench.tab === "subscriptions") loadMoviePilotWorkbenchPanel("subscriptions");
+    } catch (error) { showToast(error?.message || "创建 MoviePilot 订阅失败。", 2400); }
+  };
+  if (mediaType === "movie") { submit(); return; }
+  document.getElementById("moviepilot-subscribe-modal")?.remove();
+  const seasons = Array.isArray(detail.seasons) && detail.seasons.length ? detail.seasons : [{ number: 1, name: "第 1 季" }];
   const modal = document.createElement("div");
   modal.id = "moviepilot-subscribe-modal";
   modal.className = "moviepilot-subscribe-modal";
-  const typeLabel = moviePilotTypeLabel(mediaType);
-  const tvNotice = mediaType === "tv" ? "电视剧默认订阅第 1 季；后续季可在订阅管理中补充。" : "电影将按当前 MoviePilot 的订阅规则持续追踪。";
-  modal.innerHTML = `<section class="moviepilot-subscribe-panel" role="dialog" aria-modal="true" aria-label="确认 MoviePilot 订阅"><button class="moviepilot-subscribe-close" type="button" aria-label="关闭">×</button><p class="section-label">MOVIEPILOT · 自动订阅</p><h3>订阅《${escapeHtml(title)}》</h3><p class="moviepilot-subscribe-meta">${escapeHtml([year, typeLabel, tmdbId ? `TMDB ID ${tmdbId}` : ""].filter(Boolean).join("　"))}</p><p class="moviepilot-subscribe-copy">创建后由 MoviePilot 根据已配置站点、筛选规则和下载器自动处理，无需再打开功能中心填写表单。</p><label class="moviepilot-subscribe-option"><input type="checkbox" data-moviepilot-subscribe-immediate checked><span><b>创建后立即搜索资源</b><small>会搜索当前订阅对应的 PT 站点，并自动提交符合规则的资源下载。</small></span></label><p class="moviepilot-subscribe-note">${escapeHtml(tvNotice)}</p><p class="moviepilot-subscribe-feedback" data-moviepilot-subscribe-feedback></p><footer><button class="ghost-btn" type="button" data-moviepilot-subscribe-cancel>取消</button><button class="primary-btn" type="button" data-moviepilot-subscribe-confirm>确认订阅</button></footer></section>`;
+  modal.innerHTML = `<section class="moviepilot-subscribe-panel" role="dialog" aria-modal="true" aria-label="选择订阅季"><button class="moviepilot-subscribe-close" type="button" aria-label="关闭">×</button><p class="section-label">MOVIEPILOT · 自动订阅</p><h3>选择《${escapeHtml(title)}》的季</h3><p class="moviepilot-subscribe-meta">${escapeHtml([year, "电视剧", tmdbId ? `TMDB ID ${tmdbId}` : ""].filter(Boolean).join("　"))}</p><p class="moviepilot-subscribe-copy">选择后立即按当前 MoviePilot 规则创建订阅并搜索资源。</p><div class="moviepilot-season-picker">${seasons.map((season) => `<button class="ghost-btn" type="button" data-moviepilot-subscribe-season="${escapeHtml(season.number || 1)}">${escapeHtml(season.name || `第 ${season.number || 1} 季`)}${season.episodeCount ? ` · ${escapeHtml(season.episodeCount)} 集` : ""}</button>`).join("")}</div></section>`;
   document.body.appendChild(modal);
-  const close = () => modal.remove();
   modal.addEventListener("click", (event) => {
-    if (event.target === modal || (event.target instanceof Element && event.target.closest(".moviepilot-subscribe-close, [data-moviepilot-subscribe-cancel]"))) close();
-  });
-  const confirmButton = modal.querySelector("[data-moviepilot-subscribe-confirm]");
-  confirmButton?.addEventListener("click", async () => {
-    if (!(confirmButton instanceof HTMLButtonElement) || confirmButton.disabled) return;
-    const immediate = Boolean(modal.querySelector("[data-moviepilot-subscribe-immediate]")?.checked);
-    const feedback = modal.querySelector("[data-moviepilot-subscribe-feedback]");
-    confirmButton.disabled = true;
-    confirmButton.textContent = immediate ? "正在订阅并搜索…" : "正在创建订阅…";
-    if (feedback) feedback.textContent = "正在提交到 MoviePilot…";
-    try {
-      const result = await inviteApiFetch("/api/moviepilot/subscribe", {
-        method: "POST",
-        body: JSON.stringify({ title, year, mediaType, tmdbId, immediate })
-      });
-      if (feedback) feedback.textContent = result?.message || "订阅已创建。";
-      showToast(result?.immediateSearchStarted ? "订阅已创建，已开始搜索资源" : "MoviePilot 订阅已创建", 2100);
-      window.setTimeout(close, 900);
-    } catch (error) {
-      if (feedback) feedback.textContent = "操作失败：" + (error?.message || "未知错误");
-      confirmButton.disabled = false;
-      confirmButton.textContent = "确认订阅";
-    }
+    if (event.target === modal || (event.target instanceof Element && event.target.closest(".moviepilot-subscribe-close"))) { modal.remove(); return; }
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-subscribe-season]") : null;
+    if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = "正在创建订阅…"; submit(Number(button.dataset.moviepilotSubscribeSeason || 1)); }
   });
 }
 
@@ -10182,7 +10332,13 @@ async function loadMoviePilotResources(state, page = 1) {
   state.page = page;
   renderMoviePilotResources(state);
   try {
-    const result = await inviteApiFetch("/api/moviepilot/resources/search", { method: "POST", body: JSON.stringify({ tmdbId: state.tmdbId, mediaType: state.mediaType, page, filters: state.activeFilters }) });
+    const result = await inviteApiFetch("/api/moviepilot/resources/search", { method: "POST", body: JSON.stringify({ tmdbId: state.tmdbId, title: state.title, year: state.year, mediaType: state.mediaType, page, filters: state.activeFilters }) });
+    if (result?.identity?.tmdbId) {
+      state.tmdbId = String(result.identity.tmdbId);
+      state.mediaType = String(result.identity.mediaType || state.mediaType);
+      state.title = String(result.identity.title || state.title);
+      state.year = String(result.identity.year || state.year);
+    }
     state.items = Array.isArray(result?.items) ? result.items : [];
     state.filters = result?.filters || {};
     state.totalCount = Number(result?.totalCount || state.items.length);
@@ -10219,8 +10375,10 @@ async function downloadMoviePilotResources(state) {
 function openMoviePilotResources(detail, item) {
   document.getElementById("moviepilot-resource-modal")?.remove();
   const tmdbId = String(detail.tmdbId || item.tmdbId || "");
-  if (!tmdbId) { showToast("缺少 TMDB ID，无法在 MoviePilot 精准搜索资源。", 1800); return; }
-  const state = { title: detail.title || item.title || "影视资源", tmdbId, mediaType: detail.mediaType === "anime" ? "tv" : (detail.mediaType || item.mediaType), items: [], filters: {}, activeFilters: {}, selected: new Set(), totalCount: 0, page: 1, totalPages: 1, loading: true, searchError: "" };
+  const rawType = detail.mediaType || item.mediaType || "";
+  const mediaType = rawType === "anime" ? "tv" : (['movie', 'tv'].includes(rawType) ? rawType : "");
+  if (!tmdbId && !String(detail.title || item.title || "").trim()) { showToast("缺少作品信息，无法调用 MoviePilot 搜索资源。", 1800); return; }
+  const state = { title: detail.title || item.title || "影视资源", year: String(detail.year || item.year || ""), tmdbId, mediaType, items: [], filters: {}, activeFilters: {}, selected: new Set(), totalCount: 0, page: 1, totalPages: 1, loading: true, searchError: "" };
   const modal = document.createElement("div");
   modal.id = "moviepilot-resource-modal";
   modal.className = "moviepilot-resource-modal";
@@ -14453,11 +14611,41 @@ function initEvents() {
   });
   elements.aiTestBtn?.addEventListener("click", testAiConfig);
   elements.moviePilotTestBtn?.addEventListener("click", testMoviePilotConfig);
+  elements.moviePilotCapabilitiesBtn?.addEventListener("click", loadMoviePilotCapabilityDiagnostics);
   elements.moviePilotSearchForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     searchMoviePilot();
   });
   elements.moviePilotSearchInput?.addEventListener("input", scheduleMoviePilotSearch);
+  elements.moviePilotWorkbenchTabs?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-workbench-tab]") : null;
+    if (!button) return;
+    const tab = button.dataset.moviepilotWorkbenchTab || "explore";
+    appState.moviePilotWorkbench.tab = tab;
+    renderMoviePilotWorkbench();
+    if (tab !== "explore") loadMoviePilotWorkbenchPanel(tab);
+  });
+  elements.moviePilotSubscriptionsRefresh?.addEventListener("click", () => loadMoviePilotWorkbenchPanel("subscriptions"));
+  elements.moviePilotDownloadsRefresh?.addEventListener("click", () => loadMoviePilotWorkbenchPanel("downloads"));
+  elements.moviePilotOrganizeRefresh?.addEventListener("click", () => loadMoviePilotWorkbenchPanel("organize"));
+  elements.moviePilotSubscriptionsStatus?.addEventListener("change", () => loadMoviePilotWorkbenchPanel("subscriptions"));
+  elements.moviePilotDownloadsStatus?.addEventListener("change", () => loadMoviePilotWorkbenchPanel("downloads"));
+  elements.moviePilotOrganizeStatus?.addEventListener("change", () => loadMoviePilotWorkbenchPanel("organize"));
+  elements.moviePilotSubscriptionsList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-subscription-action]") : null;
+    if (!button) return;
+    runMoviePilotWorkbenchAction("subscriptions", { action: button.dataset.moviepilotSubscriptionAction, subscribeId: Number(button.dataset.moviepilotSubscriptionId) });
+  });
+  elements.moviePilotDownloadsList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-download-action]") : null;
+    if (!button) return;
+    runMoviePilotWorkbenchAction("downloads", { action: button.dataset.moviepilotDownloadAction, hash: button.dataset.moviepilotDownloadHash, downloader: button.dataset.moviepilotDownloadDownloader });
+  });
+  elements.moviePilotOrganizeList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-moviepilot-organize-retry]") : null;
+    if (!button) return;
+    runMoviePilotWorkbenchAction("organize", { filePath: button.dataset.moviepilotOrganizePath, mediaType: button.dataset.moviepilotOrganizeType, tmdbId: button.dataset.moviepilotOrganizeTmdbId });
+  });
   elements.moviePilotWorkspaceBtn?.addEventListener("click", () => openMoviePilotWorkspace());
   elements.moviePilotWorkspaceClose?.addEventListener("click", closeMoviePilotWorkspace);
   elements.moviePilotToolFilter?.addEventListener("input", () => {

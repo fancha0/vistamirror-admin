@@ -276,6 +276,73 @@ class MoviePilotServiceAdapter:
             return {"ok": False, "tool": tool_name, "message": str(exc)}
         return {"ok": True, "tool": tool_name, "query": keyword, "result": result}
 
+    def resolve_media_identity(
+        self,
+        title: str,
+        *,
+        year: str = "",
+        media_type: str = "",
+    ) -> dict[str, Any]:
+        """Resolve a catalog card to the TMDB identity MoviePilot needs for PT search.
+
+        Discovery feeds from video platforms often contain only the platform's
+        own IDs.  ``search_torrents`` cannot use those IDs, so resolve the
+        title through MoviePilot's safe metadata-search tool first.  This is a
+        read-only operation and deliberately never falls back to
+        ``search_subscribe``.
+        """
+        query = str(title or "").strip()
+        if not query:
+            return {"ok": False, "message": "缺少作品标题，无法确认 MoviePilot 媒体身份。"}
+        searched = self.query_search_tool(query)
+        if not searched.get("ok"):
+            return {"ok": False, "message": str(searched.get("message") or "MoviePilot 媒体识别失败。")}
+
+        requested_year = str(year or "").strip()
+        requested_type = self._normalize_media_type(str(media_type or ""))
+        query_key = self._identity_title_key(query)
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        for row in self.normalize_search_results(searched.get("result")):
+            tmdb_id = str(row.get("tmdbId") or "").strip()
+            if not tmdb_id.isdigit():
+                continue
+            candidate_type = self._normalize_media_type(str(row.get("mediaType") or ""))
+            score = 0
+            titles = (str(row.get("title") or ""), str(row.get("originalTitle") or ""))
+            title_keys = [self._identity_title_key(value) for value in titles if value]
+            if query_key and query_key in title_keys:
+                score += 100
+            elif query_key and any(query_key in value or value in query_key for value in title_keys if value):
+                score += 35
+            if requested_year and str(row.get("year") or "") == requested_year:
+                score += 20
+            if requested_type and candidate_type:
+                if requested_type == candidate_type or {requested_type, candidate_type} <= {"tv", "anime"}:
+                    score += 12
+                else:
+                    score -= 20
+            candidates.append((score, row))
+
+        if not candidates:
+            return {"ok": False, "message": f"MoviePilot 未能为《{query}》找到带 TMDB ID 的媒体信息。"}
+        candidates.sort(key=lambda value: value[0], reverse=True)
+        _, best = candidates[0]
+        best_type = self._normalize_media_type(str(best.get("mediaType") or ""))
+        if best_type == "anime":
+            best_type = "tv"
+        if best_type not in {"movie", "tv"}:
+            return {"ok": False, "message": f"MoviePilot 已找到《{query}》，但未能识别电影或电视剧类型。"}
+        return {
+            "ok": True,
+            "tool": str(searched.get("tool") or ""),
+            "identity": {
+                "title": str(best.get("title") or query),
+                "year": str(best.get("year") or requested_year),
+                "mediaType": best_type,
+                "tmdbId": str(best.get("tmdbId") or ""),
+            },
+        }
+
     def query_named_read_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call one explicitly named, discovered read-only MCP tool."""
         requested = str(name or "").strip()
@@ -680,6 +747,10 @@ class MoviePilotServiceAdapter:
     def _safe_url(value: str) -> str:
         url = str(value or "").strip()
         return url if re.match(r"^https?://", url, flags=re.IGNORECASE) else ""
+
+    @staticmethod
+    def _identity_title_key(value: str) -> str:
+        return re.sub(r"[^\w\u4e00-\u9fff]+", "", str(value or "").casefold())
 
     @staticmethod
     def _normalize_media_type(value: str) -> str:
