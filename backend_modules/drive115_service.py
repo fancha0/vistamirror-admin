@@ -338,6 +338,127 @@ class Drive115Service:
             offset += len(page)
         return rows
 
+    def list_files_recursive(self, cid: str, *, max_files: int = 20000) -> list[dict[str, Any]]:
+        """List a 115 directory tree with stable file and pick-code metadata."""
+        root = str(cid or "0").strip() or "0"
+        output: list[dict[str, Any]] = []
+        pending: list[tuple[str, str]] = [(root, "")]
+        visited: set[str] = set()
+        while pending and len(output) < max_files:
+            current_cid, prefix = pending.pop()
+            if current_cid in visited:
+                continue
+            visited.add(current_cid)
+            offset = 0
+            limit = 200
+            while len(output) < max_files:
+                query = urllib.parse.urlencode({"aid": "1", "cid": current_cid, "offset": offset, "limit": limit, "show_dir": "1", "o": "file_name", "asc": "1"})
+                payload = self._request(f"https://webapi.115.com/files?{query}")
+                self._ensure_success(payload, "115 目录读取失败。")
+                data = self._response_data(payload)
+                rows = data.get("data") if isinstance(data.get("data"), list) else data.get("list")
+                if not isinstance(rows, list):
+                    rows = payload.get("data") if isinstance(payload.get("data"), list) else []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    name = str(row.get("n") or row.get("name") or row.get("file_name") or "").strip()
+                    if not name:
+                        continue
+                    # 115's web endpoint commonly emits folders as {cid, fc: 0}
+                    # (rather than fc=1). A missing fid is the reliable folder
+                    # signal, while regular files carry fid.
+                    is_dir = bool(
+                        row.get("is_dir")
+                        or row.get("isDir")
+                        or row.get("isFolder")
+                        or (row.get("cid") and not row.get("fid"))
+                    )
+                    item_id = str(row.get("cid") if is_dir else row.get("fid") or row.get("file_id") or row.get("id") or "").strip()
+                    path = f"{prefix}/{name}" if prefix else name
+                    if is_dir and item_id:
+                        pending.append((item_id, path))
+                        continue
+                    if not item_id:
+                        continue
+                    try:
+                        size = int(float(row.get("s") or row.get("size") or 0))
+                    except (TypeError, ValueError):
+                        size = 0
+                    output.append({"id": item_id, "name": name, "path": path, "isDir": False, "pickCode": str(row.get("pc") or row.get("pick_code") or row.get("pickCode") or "").strip(), "sha1": str(row.get("sha") or row.get("sha1") or "").strip(), "size": size})
+                    if len(output) >= max_files:
+                        break
+                if len(rows) < limit or len(output) >= max_files:
+                    break
+                offset += len(rows)
+        if len(output) >= max_files:
+            raise RuntimeError(f"115 目录文件数超过 {max_files}，请缩小 STRM 同步范围。")
+        return output
+
+    def list_directory_page(self, cid: str, *, offset: int = 0, limit: int = 200) -> dict[str, Any]:
+        """Read one directory page for resumable STRM scans.
+
+        Keeping this primitive here lets the STRM service persist its cursor
+        between runs instead of repeatedly walking a whole large 115 tree.
+        """
+        current_cid = str(cid or "0").strip() or "0"
+        page_offset = max(0, int(offset or 0))
+        page_limit = max(1, min(200, int(limit or 200)))
+        query = urllib.parse.urlencode({"aid": "1", "cid": current_cid, "offset": page_offset, "limit": page_limit, "show_dir": "1", "o": "file_name", "asc": "1"})
+        payload = self._request(f"https://webapi.115.com/files?{query}")
+        self._ensure_success(payload, "115 目录读取失败。")
+        data = self._response_data(payload)
+        raw_rows = data.get("data") if isinstance(data.get("data"), list) else data.get("list")
+        if not isinstance(raw_rows, list):
+            raw_rows = payload.get("data") if isinstance(payload.get("data"), list) else []
+        items: list[dict[str, Any]] = []
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("n") or row.get("name") or row.get("file_name") or "").strip()
+            if not name:
+                continue
+            is_dir = bool(row.get("is_dir") or row.get("isDir") or row.get("isFolder") or (row.get("cid") and not row.get("fid")))
+            item_id = str(row.get("cid") if is_dir else row.get("fid") or row.get("file_id") or row.get("id") or "").strip()
+            if not item_id:
+                continue
+            try:
+                size = int(float(row.get("s") or row.get("size") or 0))
+            except (TypeError, ValueError):
+                size = 0
+            items.append({"id": item_id, "name": name, "isDir": is_dir, "pickCode": str(row.get("pc") or row.get("pick_code") or row.get("pickCode") or "").strip(), "sha1": str(row.get("sha") or row.get("sha1") or "").strip(), "size": size})
+        return {"items": items, "nextOffset": page_offset + len(raw_rows), "hasMore": len(raw_rows) >= page_limit}
+
+    def resolve_download_url(self, pick_code: str) -> str:
+        """Resolve a fresh 115 download redirect without exposing the cookie."""
+        code = str(pick_code or "").strip()
+        if not code:
+            raise RuntimeError("115 文件缺少 pick_code，无法生成播放直链。")
+        request = urllib.request.Request(
+            f"https://webapi.115.com/files/download?{urllib.parse.urlencode({'pickcode': code})}",
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac) AppleWebKit/537.36 Chrome/120 Safari/537.36", "Cookie": self.cookie, "Referer": "https://115.com/"},
+            method="GET",
+        )
+
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+                return None
+
+        try:
+            opener = urllib.request.build_opener(_NoRedirect())
+            with opener.open(request, timeout=self.timeout) as response:
+                location = str(response.headers.get("Location") or "").strip()
+        except urllib.error.HTTPError as err:
+            location = str(err.headers.get("Location") or "").strip()
+            if not location:
+                body = err.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"115 播放直链解析失败（HTTP {err.code}）：{body[:180]}") from err
+        except urllib.error.URLError as err:
+            raise RuntimeError(f"115 播放直链网络错误：{getattr(err, 'reason', err)}") from err
+        if not location.startswith(("http://", "https://")):
+            raise RuntimeError("115 没有返回有效的播放直链，请更新 Cookie 后重试。")
+        return location
+
     def _target_has_files(self, cid: str, source_files: list[dict[str, Any]]) -> bool:
         expected = [self._file_meta(row) for row in source_files]
         expected = [row for row in expected if row["name"]]

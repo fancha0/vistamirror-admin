@@ -72,6 +72,13 @@ from backend_modules.drive115_service import (
     public_drive115_config,
     redact_drive115_payload,
 )
+from backend_modules.strm115_service import (
+    Strm115Service,
+    default_strm115_config,
+    merge_strm115_config,
+    normalize_strm115_config,
+    public_strm115_config,
+)
 from backend_modules.hdhive_service import (
     HDHiveError,
     HDHiveService,
@@ -167,6 +174,8 @@ DEFAULT_EMBY_CLIENT_NAME = "VistaMirror User Console"
 RUNTIME_DIR = pathlib.Path(str(os.environ.get("APP_RUNTIME_DIR") or (BASE_DIR / "runtime"))).expanduser()
 DATA_DIR = pathlib.Path(str(os.environ.get("APP_DATA_DIR") or (BASE_DIR / "data"))).expanduser()
 MOVIEPILOT_IMAGE_CACHE_DIR = DATA_DIR / "moviepilot_image_cache"
+STRM115_CONFIG_FILE = DATA_DIR / "strm115_config.json"
+STRM115_INDEX_FILE = DATA_DIR / "strm115_index.json"
 PLAYBACK_EVENT_LOG_FILE = DATA_DIR / "playback_events.jsonl"
 PROJECT_EVENT_LOG_FILE = DATA_DIR / "project_events.jsonl"
 PROJECT_EVENT_STATE_FILE = DATA_DIR / ".project_events_state.json"
@@ -218,6 +227,9 @@ TELEGRAM_SENDER = TelegramSender()
 TELEGRAM_COMMAND_SERVICE: TelegramCommandService | None = None
 ADMIN_AUTH_SERVICE: AdminAuthService | None = None
 DRIVE115_QRCODE_LOCK = threading.Lock()
+STRM115_LOCK = threading.Lock()
+STRM115_SYNC_LOCK = threading.Lock()
+STRM115_SCHEDULE_STOP = threading.Event()
 DRIVE115_QRCODE_SESSIONS: dict[str, dict[str, Any]] = {}
 HDHIVE_OAUTH_LOCK = threading.Lock()
 HDHIVE_OAUTH_STATES: dict[str, dict[str, Any]] = {}
@@ -1123,6 +1135,47 @@ def _write_store_unlocked(store: dict[str, Any]) -> None:
     app_store.write_store_unlocked(path=_store_path(), store=store)
 
 
+def _read_strm115_config_unlocked() -> dict[str, Any]:
+    try:
+        payload = json.loads(STRM115_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default_strm115_config()
+    return normalize_strm115_config(payload)
+
+
+def _write_strm115_config_unlocked(config: dict[str, Any]) -> None:
+    STRM115_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = STRM115_CONFIG_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(normalize_strm115_config(config), ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(STRM115_CONFIG_FILE)
+
+
+def _strm115_schedule_loop() -> None:
+    """Run one bounded incremental batch per interval; never overlaps manual sync."""
+    last_run = 0.0
+    while not STRM115_SCHEDULE_STOP.wait(30):
+        with STRM115_LOCK:
+            config = _read_strm115_config_unlocked()
+        if not config.get("enabled") or not config.get("scheduleEnabled"):
+            continue
+        interval = max(3600, int(config.get("scheduleIntervalHours") or 12) * 3600)
+        now = time.time()
+        if now - last_run < interval:
+            continue
+        if not STRM115_SYNC_LOCK.acquire(blocking=False):
+            continue
+        try:
+            service = Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=Drive115Service(_apply_drive115_env_overrides(_read_store_unlocked().get("drive115Config"))))
+            result = service.sync(mode="safe_incremental")
+            _write_project_event(level="info" if result.get("ok") else "warning", module="strm115", action="strm115_scheduled_sync", message="115 STRM 定时安全增量已执行。", detail=result.get("summary") if isinstance(result.get("summary"), dict) else {})
+            last_run = now
+        except Exception as err:
+            _write_project_event(level="warning", module="strm115", action="strm115_scheduled_sync_failed", message="115 STRM 定时同步失败。", detail={"error": str(err)})
+            last_run = now
+        finally:
+            STRM115_SYNC_LOCK.release()
+
+
 def _sanitize_invite_record(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
@@ -1325,6 +1378,11 @@ class AppHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
+        # A STRM file is consumed by Emby directly, outside of the admin UI
+        # session. The URL itself is protected by a server-only HMAC signature.
+        if path.startswith("/api/strm/115/"):
+            self._handle_strm115_playback(path, parsed.query)
+            return
         if not self._enforce_admin_auth(method="GET", path=path):
             return
 
@@ -1373,6 +1431,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/drive115/config":
             self._handle_drive115_config_get()
+            return
+        if path == "/api/drive115/strm/config":
+            self._handle_strm115_config_get()
+            return
+        if path == "/api/drive115/strm/status":
+            self._handle_strm115_status_get()
+            return
+        if path == "/api/drive115/strm/logs":
+            self._handle_strm115_logs_get()
             return
         if path == "/api/drive115/qrcode/status":
             self._handle_drive115_qrcode_status(parsed.query)
@@ -1538,6 +1605,18 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/drive115/config":
             self._handle_drive115_config_save()
+            return
+        if path == "/api/drive115/strm/config":
+            self._handle_strm115_config_save()
+            return
+        if path == "/api/drive115/strm/sync":
+            self._handle_strm115_sync()
+            return
+        if path == "/api/drive115/strm/cleanup":
+            self._handle_strm115_cleanup()
+            return
+        if path == "/api/drive115/strm/emby-refresh":
+            self._handle_strm115_emby_refresh()
             return
         if path == "/api/drive115/test":
             self._handle_drive115_test()
@@ -3921,6 +4000,154 @@ class AppHandler(SimpleHTTPRequestHandler):
                     merged[key] = value
             base = _apply_drive115_env_overrides(merged)
         return Drive115Service(base)
+
+    def _strm115_service(self) -> Strm115Service:
+        with STRM115_LOCK:
+            config = _read_strm115_config_unlocked()
+        return Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store())
+
+    def _handle_strm115_config_get(self) -> None:
+        with STRM115_LOCK:
+            config = _read_strm115_config_unlocked()
+        service = Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store())
+        self._send_json(200, {"ok": True, "strm115Config": public_strm115_config(config), "status": service.status()})
+
+    def _handle_strm115_status_get(self) -> None:
+        try:
+            status = self._strm115_service().status()
+        except Exception as err:
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._send_json(200, {"ok": True, "status": status})
+
+    def _handle_strm115_logs_get(self) -> None:
+        events, total = read_project_events(PROJECT_EVENT_LOG_FILE, module="strm115", limit=100)
+        self._send_json(200, {"ok": True, "events": events, "total": total, "returned": len(events)})
+
+    def _handle_strm115_config_save(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw = payload.get("strm115Config") if isinstance(payload, dict) else payload
+        if not isinstance(raw, dict):
+            self._send_json(400, {"ok": False, "error": "STRM 配置必须是对象。"})
+            return
+        with STRM115_LOCK:
+            saved = merge_strm115_config(_read_strm115_config_unlocked(), raw)
+            _write_strm115_config_unlocked(saved)
+        self._log_event(
+            level="info", module="strm115", action="strm115_config_saved", message="115 STRM 配置已保存。", status=200,
+            detail={"enabled": bool(saved.get("enabled")), "sourceCid": saved.get("sourceCid"), "outputDir": saved.get("outputDir")},
+        )
+        service = Strm115Service(config=saved, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store())
+        self._send_json(200, {"ok": True, "strm115Config": public_strm115_config(saved), "status": service.status()})
+
+    def _handle_strm115_sync(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        dry_run = bool(payload.get("dryRun")) if isinstance(payload, dict) else False
+        mode = str(payload.get("mode") or "safe_incremental") if isinstance(payload, dict) else "safe_incremental"
+        try:
+            if not STRM115_SYNC_LOCK.acquire(blocking=False):
+                raise RuntimeError("已有 STRM 同步正在执行，请稍后刷新状态。")
+            try:
+                result = self._strm115_service().sync(dry_run=dry_run, mode=mode)
+            finally:
+                STRM115_SYNC_LOCK.release()
+        except Exception as err:
+            self._log_event(level="warning", module="strm115", action="strm115_sync_failed", message="115 STRM 同步失败。", detail={"error": str(err), "dryRun": dry_run, "mode": mode})
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(
+            level="info" if result.get("ok") else "warning", module="strm115", action="strm115_sync_preview" if dry_run else "strm115_sync",
+            message="115 STRM 预览完成。" if dry_run else "115 STRM 同步完成。", status=200,
+            detail=result.get("summary") if isinstance(result.get("summary"), dict) else {},
+        )
+        result["status"] = self._strm115_service().status()
+        self._send_json(200, result)
+
+    def _handle_strm115_cleanup(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        confirm = bool(payload.get("confirm")) if isinstance(payload, dict) else False
+        try:
+            if not STRM115_SYNC_LOCK.acquire(blocking=False):
+                raise RuntimeError("STRM 同步正在执行，暂不能清理文件。")
+            try:
+                result = self._strm115_service().cleanup_orphans(confirm=confirm)
+            finally:
+                STRM115_SYNC_LOCK.release()
+        except Exception as err:
+            self._log_event(level="warning", module="strm115", action="strm115_cleanup_failed", message="115 STRM 孤儿文件清理失败。", detail={"error": str(err), "confirm": confirm})
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(level="info", module="strm115", action="strm115_cleanup" if confirm else "strm115_cleanup_preview", message="115 STRM 孤儿文件已清理。" if confirm else "115 STRM 孤儿文件清理预览完成。", status=200, detail={"count": result.get("count", 0), "removed": result.get("removed", 0), "confirm": confirm})
+        result["status"] = self._strm115_service().status()
+        self._send_json(200, result)
+
+    def _handle_strm115_playback(self, path: str, query: str) -> None:
+        file_id = urllib.parse.unquote(path[len("/api/strm/115/"):]).strip()
+        params = urllib.parse.parse_qs(query, keep_blank_values=False)
+        try:
+            record = self._strm115_service().resolve_file(
+                file_id,
+                expires=str((params.get("exp") or [""])[0]),
+                signature=str((params.get("sig") or [""])[0]),
+            )
+            pick_code = str(record.get("pickCode") or "").strip()
+            if not pick_code:
+                raise RuntimeError("STRM 索引缺少 115 pick_code，请重新同步。")
+            location, cache_hit = self._strm115_service().resolve_playback_url(record)
+        except RuntimeError as err:
+            self._send_json(403, {"ok": False, "error": str(err)})
+            return
+        except Exception as err:
+            self._log_event(level="warning", module="strm115", action="strm115_playback_failed", message="115 STRM 播放地址解析失败。", detail={"fileId": file_id, "error": str(err)})
+            self._send_json(502, {"ok": False, "error": "115 播放地址解析失败。"})
+            return
+        self._log_event(
+            level="info",
+            module="strm115",
+            action="strm115_playback_redirect",
+            message="115 STRM 播放地址已解析并跳转。",
+            status=307,
+            detail={"fileId": file_id, "name": str(record.get("name") or ""), "size": record.get("size") or 0, "cacheHit": cache_hit},
+        )
+        self.send_response(307)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store, no-cache, max-age=0")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _handle_strm115_emby_refresh(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        with STORE_LOCK:
+            emby = _apply_emby_env_overrides(_read_store_unlocked().get("embyConfig"))
+        base_url = str(emby.get("serverUrl") or "").rstrip("/")
+        api_key = str(emby.get("apiKey") or "")
+        if not base_url or not api_key:
+            self._send_json(400, {"ok": False, "error": "请先配置 Emby 服务器地址和 API Key。"})
+            return
+        with STRM115_LOCK:
+            strm_config = _read_strm115_config_unlocked()
+        library_id = str(strm_config.get("embyLibraryId") or "").strip()
+        query = urllib.parse.urlencode({"api_key": api_key, **({"LibraryId": library_id} if library_id else {})})
+        request = urllib.request.Request(f"{base_url}/Library/Refresh?{query}", data=b"", method="POST", headers={"X-Emby-Token": api_key})
+        try:
+            with urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=30) as response:
+                status = int(response.status)
+        except urllib.error.HTTPError as err:
+            self._send_json(502, {"ok": False, "error": f"Emby 刷库失败：HTTP {err.code}。"})
+            return
+        except Exception as err:
+            self._send_json(502, {"ok": False, "error": f"Emby 刷库失败：{str(err)[:160]}"})
+            return
+        self._log_event(level="info", module="strm115", action="strm115_emby_refresh", message="已向 Emby 提交媒体库刷新。", status=status, detail={"libraryId": library_id})
+        self._send_json(200, {"ok": True, "message": "已向 Emby 提交刷新任务。", "libraryId": library_id})
 
     def _handle_drive115_test(self) -> None:
         payload = self._read_json_body()
@@ -7673,6 +7900,9 @@ def main() -> None:
     HDHIVE_CHECKIN_STOP.clear()
     hdhive_checkin_thread = threading.Thread(target=_hdhive_direct_checkin_loop, name="hdhive-checkin", daemon=True)
     hdhive_checkin_thread.start()
+    STRM115_SCHEDULE_STOP.clear()
+    strm115_schedule_thread = threading.Thread(target=_strm115_schedule_loop, name="strm115-scheduler", daemon=True)
+    strm115_schedule_thread.start()
     COVER_STUDIO_SCHEDULE_STOP.clear()
     COVER_STUDIO_SCHEDULER = CoverStudioScheduler(
         stop_event=COVER_STUDIO_SCHEDULE_STOP,
@@ -7698,6 +7928,7 @@ def main() -> None:
         pass
     finally:
         HDHIVE_CHECKIN_STOP.set()
+        STRM115_SCHEDULE_STOP.set()
         COVER_STUDIO_SCHEDULE_STOP.set()
         server.server_close()
         if TELEGRAM_COMMAND_SERVICE is not None:

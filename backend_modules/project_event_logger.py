@@ -15,7 +15,7 @@ _SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _LEVELS = {"info", "warning", "error"}
-_MODULES = {"auth", "invite", "webhook", "playback", "system", "docker"}
+_MODULES = {"auth", "invite", "webhook", "playback", "system", "docker", "strm115"}
 
 
 def redact_sensitive(value: Any) -> Any:

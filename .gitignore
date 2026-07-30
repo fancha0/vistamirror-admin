@@ -20,6 +20,8 @@ data/ai_conversations.json
 data/media_identity_cache.json
 data/library_notification_state.json
 data/moviepilot_image_cache/
+data/strm115_config.json
+data/strm115_index.json
 
 # Optional local editor junk
 .vscode/

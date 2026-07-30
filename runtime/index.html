@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260723-moviepilot-workbench-1">
+  <link rel="stylesheet" href="styles.css?v=20260730-strm-workbench-1">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -70,6 +70,7 @@
         <p class="nav-group-title">资源获取</p>
         <button class="nav-item" data-view="moviepilot-search" type="button"><span class="nav-icon">🔎</span>MoviePilot 搜索</button>
         <button class="nav-item" data-view="drive-115" type="button"><span class="nav-icon">📦</span>115网盘</button>
+        <button class="nav-item" data-view="strm-115" type="button"><span class="nav-icon">▶</span>STRM 直连</button>
         <button class="nav-item" data-view="hdhive" type="button"><span class="nav-icon">🪺</span>影巢搜索</button>
         <p class="nav-group-title">用户与终端</p>
         <button class="nav-item" data-view="user-center" type="button"><span class="nav-icon">👥</span>用户管理</button>
@@ -1182,12 +1183,97 @@
                       <div class="empty-state">暂无 115 转存记录。</div>
                     </div>
                   </section>
+
                 </div>
               </div>
             </div>
           </section>
         </div>
       </section>
+
+      <section id="view-strm-115" class="view-section">
+        <div class="strm115-page-shell">
+          <header class="strm115-page-head">
+            <div><p>资源获取 / STRM 直连</p><h3>STRM 直连控制台</h3><span>将 115 视频目录安全映射为 Emby 可播放的 STRM 媒体库。</span></div>
+            <div class="strm115-page-tags" aria-label="STRM 工作流"><span>115 云盘</span><span>安全增量</span><span>Emby 刷库</span></div>
+          </header>
+          <div class="strm115-workbench-grid">
+          <section class="strm115-console" aria-labelledby="strm115-console-title">
+            <div class="strm115-console-head">
+              <div>
+                <p>连接与输出</p>
+                <h4 id="strm115-console-title">同步配置</h4>
+                <span>扫描网盘目录，生成由 VistaMirror 签名的稳定 STRM 文件。</span>
+              </div>
+              <label class="strm115-switch" title="启用 115 STRM">
+                <input id="strm115-enabled" type="checkbox">
+                <span>启用服务</span>
+              </label>
+            </div>
+            <section class="strm115-config-section" aria-label="基础连接">
+              <div class="strm115-section-title"><span>基础连接</span><small>路径和播放地址只在服务器端保存</small></div>
+              <div class="strm115-fields">
+              <label><span>115 源目录 CID</span><input id="strm115-source-cid" type="text" placeholder="例如 123456789"></label>
+              <label><span>STRM 输出目录</span><input id="strm115-output-dir" type="text" placeholder="例如 /media/strm/115"></label>
+              <label class="strm115-field-wide"><span>VistaMirror 外部地址</span><input id="strm115-public-base-url" type="url" placeholder="例如 https://mirror.example.com"></label>
+              <label><span>Emby 媒体库 ID（可选）</span><input id="strm115-emby-library-id" type="text" placeholder="留空刷新全部媒体库"></label>
+              <label><span>默认同步策略</span><select id="strm115-sync-mode"><option value="safe_incremental">安全增量（推荐）</option><option value="full">受控全量</option></select></label>
+              </div>
+            </section>
+            <section class="strm115-config-section strm115-config-section-advanced" aria-label="同步策略">
+              <div class="strm115-section-title"><span>同步策略</span><small>按批处理，避免占满网盘和 Emby 资源</small></div>
+              <div class="strm115-fields strm115-fields-compact">
+              <label><span>请求间隔（毫秒）</span><input id="strm115-request-interval" type="number" min="300" max="10000" step="100"></label>
+              <label><span>每批目录页数</span><input id="strm115-max-pages" type="number" min="1" max="500"></label>
+              <label><span>播放直链缓存（分钟）</span><input id="strm115-playback-cache" type="number" min="0" max="120"></label>
+              <label class="strm115-switch-field"><span>定时安全增量</span><input id="strm115-schedule-enabled" type="checkbox"><em>后台分批继续，不扫完不强行重头开始</em></label>
+              <label><span>定时间隔（小时）</span><input id="strm115-schedule-interval" type="number" min="1" max="168"></label>
+              </div>
+            </section>
+          </section>
+          <aside class="strm115-operations" aria-label="STRM 操作与状态">
+            <section class="strm115-operation-card">
+              <div class="strm115-section-title"><span>快捷操作</span><small>写入操作按当前配置直接执行</small></div>
+            <div class="strm115-commandbar">
+              <button id="strm115-save-btn" type="button">保存配置</button>
+              <button id="strm115-preview-btn" type="button">快速校验</button>
+              <button id="strm115-sync-btn" class="is-primary" type="button">执行默认同步</button>
+              <button id="strm115-full-sync-btn" type="button">开始受控全量</button>
+              <button id="strm115-cleanup-preview-btn" type="button">清理预览</button>
+              <button id="strm115-cleanup-confirm-btn" type="button" disabled>确认清理 0 项</button>
+              <button id="strm115-emby-refresh-btn" type="button">提交 Emby 刷库</button>
+              <button id="strm115-log-btn" type="button">运行日志</button>
+            </div>
+            </section>
+            <section class="strm115-operation-card strm115-runtime-card">
+              <div class="strm115-section-title"><span>运行状态</span><small>最近一次同步及待处理信息</small></div>
+            <div class="strm115-monitor">
+              <div id="strm115-status" class="strm115-status">等待配置。</div>
+              <div class="strm115-log-teaser">同步预览、生成结果与每次播放跳转均会记录。点击“运行日志”查看最近记录。</div>
+            </div>
+            </section>
+            <p class="strm115-footnote">安全增量每次只处理一批目录页并保存断点；仅在全量周期完整结束后才会识别孤儿文件。清理始终先预览，确认后才删除本工具生成的 .strm。</p>
+          </aside>
+          </div>
+        </div>
+      </section>
+
+      <div id="strm115-log-modal" class="strm115-log-modal" hidden>
+        <section class="strm115-log-window" role="dialog" aria-modal="true" aria-labelledby="strm115-log-title">
+          <header>
+            <div>
+              <p>115 / STRM EVENT STREAM</p>
+              <h3 id="strm115-log-title">运行日志</h3>
+              <span>生成预览、同步写入与实际播放跳转记录。</span>
+            </div>
+            <div class="strm115-log-actions">
+              <button id="strm115-log-refresh-btn" type="button">刷新</button>
+              <button id="strm115-log-close-btn" type="button" aria-label="关闭运行日志">×</button>
+            </div>
+          </header>
+          <div id="strm115-log-list" class="strm115-log-list"><p>正在读取运行记录…</p></div>
+        </section>
+      </div>
 
       <section id="view-hdhive" class="view-section">
         <div class="dashboard-grid logs-grid">

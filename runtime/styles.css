@@ -679,6 +679,144 @@ body.vistamirror-fig1-skin .main-content > .topbar[hidden] {
   background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
 }
 
+/* Deliberately separate from the settings-card language: this is an operational
+   console, not another pale configuration form. */
+.strm115-console {
+  grid-column: 1 / -1;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid rgba(93, 230, 206, .28);
+  border-radius: 18px;
+  color: #d8edf0;
+  background:
+    radial-gradient(circle at 86% 12%, rgba(51, 177, 177, .22), transparent 31%),
+    linear-gradient(135deg, #101827 0%, #101d2c 55%, #0b2830 100%);
+  box-shadow: 0 18px 34px rgba(15, 28, 44, .18);
+}
+.strm115-page-shell {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 8px 0 28px;
+}
+.strm115-page-head { margin: 0 0 16px; }
+.strm115-page-head p { margin: 0 0 5px; color: #37a3a7; font: 800 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; }
+.strm115-page-head h3 { margin: 0; color: #1f2b3b; font-size: 24px; letter-spacing: -.03em; }
+.strm115-page-head span { display: block; margin-top: 7px; color: #718096; font-size: 12px; }
+.strm115-console::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .28;
+  background-image: linear-gradient(rgba(124, 255, 230, .08) 1px, transparent 1px), linear-gradient(90deg, rgba(124, 255, 230, .06) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.strm115-console > * { position: relative; z-index: 1; }
+.strm115-console-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.strm115-console-head p { margin: 0 0 5px; color: #65e5d1; font: 800 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
+.strm115-console-head h4 { margin: 0; color: #fff; font-size: 20px; letter-spacing: .04em; }
+.strm115-console-head span { display: block; margin-top: 6px; color: #9cb8c2; font-size: 12px; }
+.strm115-switch { display: inline-flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid rgba(112, 248, 221, .36); border-radius: 999px; color: #84f6df; background: rgba(20, 68, 73, .45); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; cursor: pointer; }
+.strm115-switch input { accent-color: #55e2ca; }
+.strm115-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.strm115-fields label { display: grid; gap: 6px; min-width: 0; color: #9ab5bf; font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .03em; }
+.strm115-fields .strm115-field-wide { grid-column: span 2; }
+.strm115-fields input, .strm115-fields select { width: 100%; min-width: 0; height: 38px; box-sizing: border-box; border: 1px solid rgba(161, 209, 220, .18); border-radius: 8px; outline: 0; padding: 0 11px; color: #eafdfc; background: rgba(4, 16, 28, .56); font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.strm115-fields input:focus, .strm115-fields select:focus { border-color: #62e8d1; box-shadow: 0 0 0 3px rgba(82, 225, 203, .12); }
+.strm115-fields .strm115-switch-field { grid-template-columns: auto 1fr; align-items: center; column-gap: 9px; }
+.strm115-fields .strm115-switch-field input { width: 16px; height: 16px; accent-color: #68e7d4; }
+.strm115-fields .strm115-switch-field em { grid-column: span 2; color: #71909c; font: 500 10px/1.3 system-ui, sans-serif; letter-spacing: 0; font-style: normal; }
+.strm115-commandbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.strm115-commandbar button { border: 1px solid rgba(135, 211, 218, .25); border-radius: 7px; padding: 9px 12px; color: #d9eff2; background: rgba(19, 48, 62, .84); font-size: 12px; font-weight: 800; cursor: pointer; transition: background .16s ease, border-color .16s ease; }
+.strm115-commandbar button:hover:not(:disabled) { border-color: #72e4d2; background: rgba(26, 79, 83, .92); }
+.strm115-commandbar button.is-primary { color: #052027; border-color: #6cf2d9; background: linear-gradient(135deg, #70ead5, #52b9e5); }
+.strm115-commandbar button:disabled { cursor: wait; opacity: .55; }
+.strm115-monitor { display: grid; grid-template-columns: minmax(210px, .45fr) minmax(0, 1fr); gap: 12px; }
+.strm115-status, .strm115-log-teaser { margin: 0; min-height: 72px; box-sizing: border-box; border: 1px solid rgba(135, 211, 218, .16); border-radius: 9px; padding: 12px; background: rgba(4, 13, 24, .55); color: #9fc8ce; font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.strm115-status { display: flex; align-items: center; color: #c8f2e9; }
+.strm115-log-teaser { display: flex; align-items: center; color: #80d8ca; }
+.strm115-footnote { margin: -4px 0 0; color: #77949e; font-size: 11px; line-height: 1.55; }
+
+.strm115-log-modal { position: fixed; z-index: 4700; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(3, 12, 22, .72); backdrop-filter: blur(8px); }
+.strm115-log-modal[hidden] { display: none; }
+.strm115-log-window { width: min(980px, 100%); max-height: min(720px, calc(100vh - 48px)); display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: 1px solid rgba(105, 239, 217, .28); border-radius: 18px; color: #d4edee; background: linear-gradient(145deg, #0b1422, #0c2630); box-shadow: 0 30px 80px rgba(0, 0, 0, .45); }
+.strm115-log-window > header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid rgba(126, 210, 213, .17); }
+.strm115-log-window header p { margin: 0 0 4px; color: #65e5d1; font: 800 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; }
+.strm115-log-window header h3 { margin: 0; color: #fff; font-size: 18px; }
+.strm115-log-window header span { display: block; margin-top: 5px; color: #8cabb5; font-size: 12px; }
+.strm115-log-actions { display: flex; gap: 8px; }
+.strm115-log-actions button { border: 1px solid rgba(123, 222, 215, .26); border-radius: 8px; padding: 8px 11px; color: #ccefee; background: rgba(22, 66, 74, .75); font-size: 12px; font-weight: 800; cursor: pointer; }
+.strm115-log-actions #strm115-log-close-btn { width: 34px; padding: 0; color: #fff; font-size: 22px; }
+.strm115-log-list { overflow: auto; padding: 14px 20px 20px; }
+.strm115-log-list > p { margin: 0; color: #8ea8b1; font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.strm115-log-row { display: grid; grid-template-columns: 154px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid rgba(137, 199, 205, .12); }
+.strm115-log-row time { color: #6edbca; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.strm115-log-row strong { display: block; color: #effffd; font-size: 13px; }
+.strm115-log-row p { margin: 4px 0 0; color: #93b1b9; font-size: 12px; line-height: 1.55; }
+.strm115-log-row em { min-width: 50px; border-radius: 999px; padding: 3px 7px; color: #9adfd4; background: rgba(68, 174, 151, .18); font: 800 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; font-style: normal; }
+.strm115-log-row.is-warning em { color: #ffd288; background: rgba(181, 116, 21, .2); }
+.strm115-log-row.is-error em { color: #ff9fa9; background: rgba(185, 54, 75, .2); }
+
+/* Light media-operations workbench for the STRM direct-play page.  The
+   existing controls and IDs stay intact; only the presentation is replaced. */
+#view-strm-115 { max-width: 1380px; margin: 0 auto; padding: 4px 0 34px; }
+#view-strm-115 .strm115-page-shell { width: 100%; padding: 0; }
+#view-strm-115 .strm115-page-head { display:flex; align-items:center; justify-content:space-between; gap:22px; margin:0 0 18px; padding:22px 24px; border:1px solid #dfe8f4; border-left:4px solid #6f9df6; border-radius:16px; background:linear-gradient(112deg,#fbfdff 0%,#f4f8ff 100%); box-shadow:0 9px 25px rgba(86,116,160,.07); }
+#view-strm-115 .strm115-page-head p { margin:0 0 7px; color:#6f8fc8; font:800 11px/1.2 system-ui,-apple-system,sans-serif; letter-spacing:.08em; }
+#view-strm-115 .strm115-page-head h3 { margin:0; color:#202b42; font-size:25px; letter-spacing:-.035em; }
+#view-strm-115 .strm115-page-head > div:first-child > span { display:block; margin-top:8px; color:#71809a; font-size:13px; }
+#view-strm-115 .strm115-page-tags { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+#view-strm-115 .strm115-page-tags span { display:inline-flex; align-items:center; margin-top:0; padding:7px 10px; border:1px solid #d9e5f6; border-radius:8px; color:#5c75a2; background:#fff; font-size:11px; font-weight:750; }
+#view-strm-115 .strm115-page-tags span::before { content:"●"; margin-right:5px; color:#73a6fa; font-size:9px; }
+#view-strm-115 .strm115-workbench-grid { display:grid; grid-template-columns:minmax(0,1.48fr) minmax(320px,.82fr); gap:18px; align-items:start; }
+#view-strm-115 .strm115-console,#view-strm-115 .strm115-operations { display:grid; gap:14px; color:#30415e; }
+#view-strm-115 .strm115-console { padding:0; overflow:hidden; border:1px solid #dfe7f2; border-radius:16px; background:#fff; box-shadow:0 9px 25px rgba(86,116,160,.07); }
+#view-strm-115 .strm115-console::after { display:none; }
+#view-strm-115 .strm115-console > * { position:static; }
+#view-strm-115 .strm115-console-head { align-items:center; padding:18px 20px; border-bottom:1px solid #e8eef6; background:#fff; }
+#view-strm-115 .strm115-console-head p,#view-strm-115 .strm115-section-title > span { color:#5d81c3; font:800 11px/1.2 system-ui,-apple-system,sans-serif; letter-spacing:.04em; }
+#view-strm-115 .strm115-console-head h4 { margin-top:4px; color:#1f2c43; font-size:18px; letter-spacing:-.02em; }
+#view-strm-115 .strm115-console-head span { color:#7c8aa2; font-size:12px; }
+#view-strm-115 .strm115-switch { padding:9px 12px; border:1px solid #bcd5ff; border-radius:9px; color:#4178d6; background:#edf5ff; font:750 11px/1 system-ui,-apple-system,sans-serif; letter-spacing:0; }
+#view-strm-115 .strm115-switch input,#view-strm-115 .strm115-fields .strm115-switch-field input { accent-color:#4f8ff7; }
+#view-strm-115 .strm115-config-section { padding:18px 20px 20px; border-bottom:1px solid #edf1f6; }
+#view-strm-115 .strm115-config-section-advanced { border-bottom:0; }
+#view-strm-115 .strm115-section-title { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:13px; }
+#view-strm-115 .strm115-section-title small { color:#98a5b8; font-size:11px; }
+#view-strm-115 .strm115-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:13px 12px; }
+#view-strm-115 .strm115-fields label { gap:6px; color:#66758d; font:750 11px/1.2 system-ui,-apple-system,sans-serif; letter-spacing:0; }
+#view-strm-115 .strm115-fields input,#view-strm-115 .strm115-fields select { height:38px; border:1px solid #dce5f0; border-radius:8px; padding:0 11px; color:#2d3d56; background:#fbfcff; font:12px/1.2 system-ui,-apple-system,sans-serif; }
+#view-strm-115 .strm115-fields input:focus,#view-strm-115 .strm115-fields select:focus { border-color:#75a8fa; box-shadow:0 0 0 3px rgba(94,151,246,.14); }
+#view-strm-115 .strm115-fields .strm115-switch-field { grid-template-columns:auto 1fr; padding:9px 10px; border:1px solid #e0e9f4; border-radius:8px; background:#f8fbff; }
+#view-strm-115 .strm115-fields .strm115-switch-field input { width:16px; height:16px; background:transparent; }
+#view-strm-115 .strm115-fields .strm115-switch-field em { color:#8997aa; font:11px/1.45 system-ui,-apple-system,sans-serif; }
+#view-strm-115 .strm115-operation-card { padding:18px; border:1px solid #dfe7f2; border-radius:16px; background:#fff; box-shadow:0 9px 25px rgba(86,116,160,.07); }
+#view-strm-115 .strm115-operation-card .strm115-section-title { margin-bottom:15px; }
+#view-strm-115 .strm115-commandbar { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+#view-strm-115 .strm115-commandbar button { min-height:38px; padding:8px 10px; border:1px solid #dce5f2; border-radius:8px; color:#52647d; background:#f8fbff; font-size:12px; font-weight:750; }
+#view-strm-115 .strm115-commandbar button:hover:not(:disabled) { border-color:#aacafc; color:#3c76d6; background:#eff6ff; }
+#view-strm-115 .strm115-commandbar button.is-primary { color:#fff; border-color:#4c8df4; background:linear-gradient(135deg,#5c9cf7,#3f7ee4); box-shadow:0 6px 14px rgba(72,135,234,.22); }
+#view-strm-115 .strm115-commandbar button:disabled { opacity:.5; }
+#view-strm-115 .strm115-monitor { grid-template-columns:1fr; gap:10px; }
+#view-strm-115 .strm115-status,#view-strm-115 .strm115-log-teaser { min-height:76px; padding:12px; border:1px solid #e0e8f2; border-radius:9px; color:#61728c; background:#f8fbff; font:12px/1.65 system-ui,-apple-system,sans-serif; }
+#view-strm-115 .strm115-status { color:#3c75ca; background:linear-gradient(135deg,#edf5ff,#f8fbff); }
+#view-strm-115 .strm115-footnote { margin:0; padding:0 4px; color:#8a98aa; font-size:11px; line-height:1.6; }
+.strm115-log-modal { background:rgba(46,61,85,.36); }
+.strm115-log-window { border-color:#dfe7f2; color:#34445d; background:#fff; box-shadow:0 24px 64px rgba(42,58,84,.22); }
+.strm115-log-window > header { border-color:#e8eef5; background:#f8fbff; }
+.strm115-log-window header p,.strm115-log-row time { color:#5d8edc; font-family:system-ui,-apple-system,sans-serif; }
+.strm115-log-window header h3,.strm115-log-row strong { color:#26364e; }
+.strm115-log-window header span,.strm115-log-list > p,.strm115-log-row p { color:#7a889d; }
+.strm115-log-actions button { border-color:#d9e5f3; color:#52647d; background:#fff; }
+.strm115-log-actions #strm115-log-close-btn { color:#5a6d86; }
+.strm115-log-row { border-color:#edf1f6; }
+.strm115-log-row em { color:#367e62; background:#eaf8f0; font-family:system-ui,-apple-system,sans-serif; }
+@media (max-width:1040px) { #view-strm-115 .strm115-workbench-grid { grid-template-columns:1fr; } #view-strm-115 .strm115-operations { grid-template-columns:repeat(2,minmax(0,1fr)); } #view-strm-115 .strm115-footnote { grid-column:1 / -1; } }
+@media (max-width:680px) { #view-strm-115 .strm115-page-head { align-items:flex-start; flex-direction:column; padding:18px; } #view-strm-115 .strm115-page-tags { justify-content:flex-start; } #view-strm-115 .strm115-workbench-grid,#view-strm-115 .strm115-operations { grid-template-columns:1fr; } #view-strm-115 .strm115-fields { grid-template-columns:1fr; } #view-strm-115 .strm115-fields .strm115-field-wide { grid-column:auto; } #view-strm-115 .strm115-section-title { align-items:flex-start; flex-direction:column; gap:4px; } }
+
 .drive115-shell {
   grid-template-columns: 1fr;
 }
@@ -915,6 +1053,9 @@ body.vistamirror-fig1-skin .main-content > .topbar[hidden] {
   .drive115-qr-controls {
     grid-template-columns: 1fr;
   }
+  .strm115-fields, .strm115-monitor { grid-template-columns: 1fr; }
+  .strm115-fields .strm115-field-wide { grid-column: auto; }
+  .strm115-log-row { grid-template-columns: 1fr; gap: 5px; }
 }
 
 .hdhive-shell {

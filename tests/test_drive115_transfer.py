@@ -111,6 +111,21 @@ class Drive115TransferTests(unittest.TestCase):
                     source_files=[{"name": "episode.mkv", "size": 1024}],
                 )
 
+    def test_recursive_listing_preserves_relative_path_and_pick_code(self):
+        service = self.make_service()
+
+        def fake_request(url, *, method="GET", data=None, timeout=None):
+            if "cid=root" in url:
+                # Real 115 folder rows currently use fc=0 and omit fid.
+                return {"state": True, "data": {"data": [{"cid": "child", "n": "Movies", "fc": 0}]}}
+            if "cid=child" in url:
+                return {"state": True, "data": {"data": [{"fid": "f1", "n": "Film.mkv", "pc": "pc1", "sha": "sha1", "s": 42}]}}
+            raise AssertionError(url)
+
+        service._request = fake_request
+        rows = service.list_files_recursive("root")
+        self.assertEqual(rows, [{"id": "f1", "name": "Film.mkv", "path": "Movies/Film.mkv", "isDir": False, "pickCode": "pc1", "sha1": "sha1", "size": 42}])
+
 
 if __name__ == "__main__":
     unittest.main()

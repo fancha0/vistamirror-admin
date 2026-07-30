@@ -184,6 +184,22 @@ const DEFAULT_DRIVE115_CONFIG = {
   cookieMasked: ""
 };
 
+const DEFAULT_STRM115_CONFIG = {
+  enabled: false,
+  sourceCid: "",
+  outputDir: "",
+  publicBaseUrl: "",
+  embyLibraryId: "",
+  syncMode: "safe_incremental",
+  requestIntervalMs: 1200,
+  maxPagesPerRun: 20,
+  scheduleEnabled: false,
+  scheduleIntervalHours: 12,
+  playbackCacheMinutes: 20,
+  hasSigningSecret: false,
+  updatedAt: ""
+};
+
 const DEFAULT_COVER_STUDIO_FONT_KEY = "heiti";
 const REMOVED_COVER_STUDIO_FONT_KEYS = new Set([
   "hiragino",
@@ -459,6 +475,9 @@ const appState = {
   coverStudioEditingScheduleId: "",
   libraryDirectoryConfig: loadJson(STORAGE_KEYS.libraryDirectoryConfig, DEFAULT_LIBRARY_DIRECTORY_CONFIG),
   drive115Config: loadJson(STORAGE_KEYS.drive115Config, DEFAULT_DRIVE115_CONFIG),
+  strm115Config: { ...DEFAULT_STRM115_CONFIG },
+  strm115Status: { fileCount: 0, lastSyncedAt: "", lastSummary: {} },
+  strm115LogEvents: [],
   hdhiveConfig: loadJson(STORAGE_KEYS.hdhiveConfig, DEFAULT_HDHIVE_CONFIG),
   hdhiveResources: [],
   hdhiveIdentity: null,
@@ -955,6 +974,25 @@ function normalizeDrive115Config(rawConfig) {
   };
 }
 
+function normalizeStrm115Config(rawConfig) {
+  const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
+  return {
+    enabled: Boolean(config.enabled),
+    sourceCid: String(config.sourceCid || "").trim(),
+    outputDir: String(config.outputDir || "").trim(),
+    publicBaseUrl: String(config.publicBaseUrl || "").trim().replace(/\/$/, ""),
+    embyLibraryId: String(config.embyLibraryId || "").trim(),
+    syncMode: ["safe_incremental", "full"].includes(String(config.syncMode || "")) ? String(config.syncMode) : "safe_incremental",
+    requestIntervalMs: Math.max(300, Math.min(10000, Number.parseInt(config.requestIntervalMs, 10) || 1200)),
+    maxPagesPerRun: Math.max(1, Math.min(500, Number.parseInt(config.maxPagesPerRun, 10) || 20)),
+    scheduleEnabled: Boolean(config.scheduleEnabled),
+    scheduleIntervalHours: Math.max(1, Math.min(168, Number.parseInt(config.scheduleIntervalHours, 10) || 12)),
+    playbackCacheMinutes: Math.max(0, Math.min(120, Number.parseInt(config.playbackCacheMinutes, 10) || 20)),
+    hasSigningSecret: Boolean(config.hasSigningSecret),
+    updatedAt: String(config.updatedAt || "").trim()
+  };
+}
+
 function normalizeCoverStudioConfig(rawConfig) {
   const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
   const clampInt = (value, fallback, minimum, maximum) => {
@@ -1337,6 +1375,7 @@ appState.moviePilotConfig = normalizeMoviePilotConfig({ ...DEFAULT_MOVIEPILOT_CO
 appState.coverStudioConfig = normalizeCoverStudioConfig({ ...DEFAULT_COVER_STUDIO_CONFIG, ...appState.coverStudioConfig });
 appState.libraryDirectoryConfig = normalizeLibraryDirectoryConfig({ ...DEFAULT_LIBRARY_DIRECTORY_CONFIG, ...appState.libraryDirectoryConfig });
 appState.drive115Config = normalizeDrive115Config({ ...DEFAULT_DRIVE115_CONFIG, ...appState.drive115Config });
+appState.strm115Config = normalizeStrm115Config(appState.strm115Config);
 appState.hdhiveConfig = normalizeHDHiveConfig({ ...DEFAULT_HDHIVE_CONFIG, ...appState.hdhiveConfig });
 appState.qualityResolutionFilters = normalizeQualityResolutionFilters(appState.qualityResolutionFilters);
 
@@ -1533,6 +1572,30 @@ const elements = {
   drive115TransferBtn: document.getElementById("drive115-transfer-btn"),
   drive115ParseResult: document.getElementById("drive115-parse-result"),
   drive115Records: document.getElementById("drive115-records"),
+  strm115Enabled: document.getElementById("strm115-enabled"),
+  strm115SourceCid: document.getElementById("strm115-source-cid"),
+  strm115OutputDir: document.getElementById("strm115-output-dir"),
+  strm115PublicBaseUrl: document.getElementById("strm115-public-base-url"),
+  strm115EmbyLibraryId: document.getElementById("strm115-emby-library-id"),
+  strm115SyncMode: document.getElementById("strm115-sync-mode"),
+  strm115RequestInterval: document.getElementById("strm115-request-interval"),
+  strm115MaxPages: document.getElementById("strm115-max-pages"),
+  strm115PlaybackCache: document.getElementById("strm115-playback-cache"),
+  strm115ScheduleEnabled: document.getElementById("strm115-schedule-enabled"),
+  strm115ScheduleInterval: document.getElementById("strm115-schedule-interval"),
+  strm115SaveBtn: document.getElementById("strm115-save-btn"),
+  strm115PreviewBtn: document.getElementById("strm115-preview-btn"),
+  strm115SyncBtn: document.getElementById("strm115-sync-btn"),
+  strm115FullSyncBtn: document.getElementById("strm115-full-sync-btn"),
+  strm115CleanupPreviewBtn: document.getElementById("strm115-cleanup-preview-btn"),
+  strm115CleanupConfirmBtn: document.getElementById("strm115-cleanup-confirm-btn"),
+  strm115EmbyRefreshBtn: document.getElementById("strm115-emby-refresh-btn"),
+  strm115LogBtn: document.getElementById("strm115-log-btn"),
+  strm115Status: document.getElementById("strm115-status"),
+  strm115LogModal: document.getElementById("strm115-log-modal"),
+  strm115LogList: document.getElementById("strm115-log-list"),
+  strm115LogRefreshBtn: document.getElementById("strm115-log-refresh-btn"),
+  strm115LogCloseBtn: document.getElementById("strm115-log-close-btn"),
   hdhiveEnabled: document.getElementById("hdhive-enabled"),
   hdhiveAuthMode: document.getElementById("hdhive-auth-mode"),
   hdhiveBrokerUrl: document.getElementById("hdhive-broker-url"),
@@ -1864,6 +1927,11 @@ const VIEW_META = {
     icon: "📦",
     title: "115网盘",
     subtitle: "配置 115 账号、解析分享链接并确认转存"
+  },
+  "strm-115": {
+    icon: "▶",
+    title: "STRM 直连",
+    subtitle: "将 115 网盘目录增量映射为 Emby 可播放的 STRM 媒体库"
   },
   hdhive: {
     icon: "🪺",
@@ -9335,10 +9403,183 @@ function renderDrive115ParseResult(payload = undefined) {
   }
 }
 
+function readStrm115ConfigFromInputs() {
+  return normalizeStrm115Config({
+    enabled: Boolean(elements.strm115Enabled?.checked),
+    sourceCid: elements.strm115SourceCid?.value,
+    outputDir: elements.strm115OutputDir?.value,
+    publicBaseUrl: elements.strm115PublicBaseUrl?.value,
+    embyLibraryId: elements.strm115EmbyLibraryId?.value,
+    syncMode: elements.strm115SyncMode?.value,
+    requestIntervalMs: elements.strm115RequestInterval?.value,
+    maxPagesPerRun: elements.strm115MaxPages?.value,
+    scheduleEnabled: Boolean(elements.strm115ScheduleEnabled?.checked),
+    scheduleIntervalHours: elements.strm115ScheduleInterval?.value,
+    playbackCacheMinutes: elements.strm115PlaybackCache?.value,
+    hasSigningSecret: appState.strm115Config?.hasSigningSecret
+  });
+}
+
+function renderStrm115RunLogs() {
+  if (!elements.strm115LogList) return;
+  const events = Array.isArray(appState.strm115LogEvents) ? appState.strm115LogEvents : [];
+  if (!events.length) {
+    elements.strm115LogList.innerHTML = "<p>暂无 STRM 运行记录。生成预览、同步或播放后会出现在这里。</p>";
+    return;
+  }
+  elements.strm115LogList.innerHTML = events.map((event) => {
+    const level = String(event?.level || "info").toLowerCase();
+    const detail = event?.detail && typeof event.detail === "object" ? event.detail : {};
+    const summary = [
+      detail.scanned !== undefined ? `扫描 ${detail.scanned}` : "",
+      detail.videos !== undefined ? `视频 ${detail.videos}` : "",
+      detail.created !== undefined ? `新增 ${detail.created}` : "",
+      detail.updated !== undefined ? `更新 ${detail.updated}` : "",
+      detail.name ? `文件 ${detail.name}` : ""
+    ].filter(Boolean).join(" · ");
+    return `<article class="strm115-log-row is-${escapeHtml(level)}"><time>${escapeHtml(event?.time || "-")}</time><div><strong>${escapeHtml(event?.message || "STRM 事件")}</strong>${summary ? `<p>${escapeHtml(summary)}</p>` : ""}</div><em>${escapeHtml(level === "error" ? "失败" : level === "warning" ? "警告" : "完成")}</em></article>`;
+  }).join("");
+}
+
+async function loadStrm115RunLogs(options = {}) {
+  try {
+    const result = await inviteApiFetch("/api/drive115/strm/logs");
+    appState.strm115LogEvents = Array.isArray(result?.events) ? result.events : [];
+    renderStrm115RunLogs();
+  } catch (error) {
+    if (elements.strm115LogList) elements.strm115LogList.innerHTML = `<p>读取运行日志失败：${escapeHtml(error.message || "未知错误")}</p>`;
+    if (!options.silent) showToast("读取 STRM 日志失败", 1200);
+  }
+}
+
+function openStrm115RunLogs() {
+  if (!elements.strm115LogModal) return;
+  elements.strm115LogModal.hidden = false;
+  loadStrm115RunLogs({ silent: true });
+}
+
+function closeStrm115RunLogs() {
+  if (elements.strm115LogModal) elements.strm115LogModal.hidden = true;
+}
+
+function renderStrm115Console() {
+  const config = normalizeStrm115Config({ ...DEFAULT_STRM115_CONFIG, ...appState.strm115Config });
+  const status = appState.strm115Status || {};
+  if (elements.strm115Enabled) elements.strm115Enabled.checked = config.enabled;
+  if (elements.strm115SourceCid) elements.strm115SourceCid.value = config.sourceCid;
+  if (elements.strm115OutputDir) elements.strm115OutputDir.value = config.outputDir;
+  if (elements.strm115PublicBaseUrl) elements.strm115PublicBaseUrl.value = config.publicBaseUrl;
+  if (elements.strm115EmbyLibraryId) elements.strm115EmbyLibraryId.value = config.embyLibraryId;
+  if (elements.strm115SyncMode) elements.strm115SyncMode.value = config.syncMode;
+  if (elements.strm115RequestInterval) elements.strm115RequestInterval.value = config.requestIntervalMs;
+  if (elements.strm115MaxPages) elements.strm115MaxPages.value = config.maxPagesPerRun;
+  if (elements.strm115PlaybackCache) elements.strm115PlaybackCache.value = config.playbackCacheMinutes;
+  if (elements.strm115ScheduleEnabled) elements.strm115ScheduleEnabled.checked = config.scheduleEnabled;
+  if (elements.strm115ScheduleInterval) elements.strm115ScheduleInterval.value = config.scheduleIntervalHours;
+  if (elements.strm115Status) {
+    const summary = status.lastSummary || {};
+    elements.strm115Status.textContent = !config.enabled
+      ? "ENGINE OFFLINE · 保存并启用后可预览或生成 STRM。"
+      : `ENGINE ONLINE · 已索引 ${Number(status.fileCount || 0)} 个视频${status.lastSyncedAt ? `\n最近完整同步：${status.lastSyncedAt}` : ""}${summary.videos !== undefined ? `\n本批视频：${summary.videos} · 剩余目录：${summary.remainingDirectories || 0}` : ""}${Number(status.orphanCount || 0) ? `\n待清理孤儿：${status.orphanCount} 项` : ""}`;
+  }
+  if (elements.strm115CleanupConfirmBtn) {
+    const count = Number(status.orphanCount || 0);
+    elements.strm115CleanupConfirmBtn.disabled = count <= 0;
+    elements.strm115CleanupConfirmBtn.textContent = `确认清理 ${count} 项`;
+  }
+}
+
+async function loadStrm115Config(options = {}) {
+  try {
+    const result = await inviteApiFetch("/api/drive115/strm/config");
+    appState.strm115Config = normalizeStrm115Config({ ...DEFAULT_STRM115_CONFIG, ...(result?.strm115Config || {}) });
+    appState.strm115Status = result?.status || {};
+    renderStrm115Console();
+    return true;
+  } catch (error) {
+    if (!options.silent) appendStrm115Log(`读取配置失败：${error.message || "未知错误"}`);
+    renderStrm115Console();
+    return false;
+  }
+}
+
+async function saveStrm115Config() {
+  const button = elements.strm115SaveBtn;
+  if (button) { button.disabled = true; button.textContent = "保存中..."; }
+  try {
+    const result = await inviteApiFetch("/api/drive115/strm/config", { method: "POST", body: JSON.stringify({ strm115Config: readStrm115ConfigFromInputs() }) });
+    appState.strm115Config = normalizeStrm115Config({ ...DEFAULT_STRM115_CONFIG, ...(result?.strm115Config || {}) });
+    appState.strm115Status = result?.status || appState.strm115Status;
+    if (!elements.strm115LogModal?.hidden) loadStrm115RunLogs({ silent: true });
+    renderStrm115Console();
+    showToast("STRM 配置已保存", 1200);
+  } catch (error) {
+    showToast(`STRM 配置保存失败：${error.message || "未知错误"}`, 1600);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "保存配置"; }
+  }
+}
+
+async function runStrm115Sync(mode) {
+  const isVerify = mode === "quick_verify";
+  const isFull = mode === "full";
+  const button = isVerify ? elements.strm115PreviewBtn : isFull ? elements.strm115FullSyncBtn : elements.strm115SyncBtn;
+  const originalText = button?.textContent || "执行";
+  if (button) { button.disabled = true; button.textContent = isVerify ? "校验中..." : "同步中..."; }
+  try {
+    const result = await inviteApiFetch("/api/drive115/strm/sync", { method: "POST", body: JSON.stringify({ mode }) });
+    appState.strm115Status = result?.status || appState.strm115Status;
+    const summary = result?.summary || {};
+    if (!elements.strm115LogModal?.hidden) loadStrm115RunLogs({ silent: true });
+    renderStrm115Console();
+    showToast(isVerify ? "快速校验完成" : summary.complete ? "STRM 同步周期完成" : `本批完成，剩余 ${summary.remainingDirectories || 0} 个目录`, 1800);
+  } catch (error) {
+    showToast(`STRM ${isVerify ? "校验" : "同步"}失败：${error.message || "未知错误"}`, 1800);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = originalText; }
+  }
+}
+
+async function previewStrm115Cleanup(confirm = false) {
+  const button = confirm ? elements.strm115CleanupConfirmBtn : elements.strm115CleanupPreviewBtn;
+  const originalText = button?.textContent || "清理";
+  if (button) { button.disabled = true; button.textContent = confirm ? "清理中..." : "读取中..."; }
+  try {
+    const result = await inviteApiFetch("/api/drive115/strm/cleanup", { method: "POST", body: JSON.stringify({ confirm }) });
+    appState.strm115Status = result?.status || appState.strm115Status;
+    renderStrm115Console();
+    if (!confirm && Array.isArray(result?.items) && result.items.length) {
+      openStrm115RunLogs();
+      showToast(`找到 ${result.count || result.items.length} 个孤儿 STRM，可确认清理`, 1800);
+    } else {
+      showToast(confirm ? `已清理 ${result?.removed || 0} 个 STRM` : "当前没有可清理的孤儿 STRM", 1500);
+    }
+  } catch (error) {
+    showToast(`孤儿清理失败：${error.message || "未知错误"}`, 1800);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = originalText; }
+  }
+}
+
+async function refreshStrm115Emby() {
+  const button = elements.strm115EmbyRefreshBtn;
+  if (button) { button.disabled = true; button.textContent = "提交中..."; }
+  try {
+    const result = await inviteApiFetch("/api/drive115/strm/emby-refresh", { method: "POST", body: JSON.stringify({}) });
+    if (!elements.strm115LogModal?.hidden) loadStrm115RunLogs({ silent: true });
+    showToast("已提交 Emby 刷库", 1400);
+  } catch (error) {
+    showToast(`Emby 刷库失败：${error.message || "未知错误"}`, 1800);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = "提交 Emby 刷库"; }
+  }
+}
+
 function renderDrive115Page() {
   renderDrive115Config();
   renderDrive115ParseResult();
   renderDrive115Records();
+  renderStrm115Console();
 }
 
 async function loadDrive115ConfigFromServer(options = {}) {
@@ -9349,6 +9590,7 @@ async function loadDrive115ConfigFromServer(options = {}) {
     appState.envControlledFields = mergeEnvControlledFields(result?.envControlledFields, "drive115Config");
     persistLocalState();
     renderDrive115Page();
+    loadStrm115Config({ silent: true });
     renderEnvControlledState();
     return true;
   } catch (error) {
@@ -12546,6 +12788,9 @@ function switchView(view) {
     renderMoviePilotSearch();
     if (!appState.moviePilotSearch.exploreLoaded && isAdminReady()) loadMoviePilotExplore();
   }
+  if (targetView === "strm-115" && shouldUseLocalProxy()) {
+    loadStrm115Config({ silent: true });
+  }
   if (elements.mainContent) {
     elements.mainContent.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -14762,6 +15007,19 @@ function initEvents() {
   });
   elements.drive115ParseBtn?.addEventListener("click", parseDrive115Link);
   elements.drive115TransferBtn?.addEventListener("click", transferDrive115Link);
+  elements.strm115SaveBtn?.addEventListener("click", saveStrm115Config);
+  elements.strm115PreviewBtn?.addEventListener("click", () => runStrm115Sync("quick_verify"));
+  elements.strm115SyncBtn?.addEventListener("click", () => runStrm115Sync(elements.strm115SyncMode?.value || "safe_incremental"));
+  elements.strm115FullSyncBtn?.addEventListener("click", () => runStrm115Sync("full"));
+  elements.strm115CleanupPreviewBtn?.addEventListener("click", () => previewStrm115Cleanup(false));
+  elements.strm115CleanupConfirmBtn?.addEventListener("click", () => previewStrm115Cleanup(true));
+  elements.strm115EmbyRefreshBtn?.addEventListener("click", refreshStrm115Emby);
+  elements.strm115LogBtn?.addEventListener("click", openStrm115RunLogs);
+  elements.strm115LogRefreshBtn?.addEventListener("click", () => loadStrm115RunLogs());
+  elements.strm115LogCloseBtn?.addEventListener("click", closeStrm115RunLogs);
+  elements.strm115LogModal?.addEventListener("click", (event) => {
+    if (event.target === elements.strm115LogModal) closeStrm115RunLogs();
+  });
   elements.hdhiveSaveBtn?.addEventListener("click", saveHDHiveConfig);
   elements.hdhiveTestBtn?.addEventListener("click", testHDHive);
   elements.hdhiveAuthorizeBtn?.addEventListener("click", authorizeHDHive);
