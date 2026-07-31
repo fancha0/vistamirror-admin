@@ -5,10 +5,13 @@ services:
     restart: unless-stopped
     ports:
       - "8091:8091"
+      # STRM 专用播放端；建议由独立播放域名或反代转发到这里。
+      - "8099:8099"
     environment:
       - TZ=Asia/Shanghai
       - APP_HOST=0.0.0.0
       - APP_PORT=8091
+      - APP_STRM_PLAYBACK_PORT=8099
       - APP_DATA_DIR=/app/data
       - APP_RUNTIME_DIR=/app/runtime
       - APP_ADMIN_AUTH_ENABLED=1

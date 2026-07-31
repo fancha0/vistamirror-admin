@@ -24,6 +24,6 @@ RUN mkdir -p /app/data /app/runtime && \
 
 USER app
 
-EXPOSE 8091
+EXPOSE 8091 8099
 
 CMD ["python3", "dev_server.py"]

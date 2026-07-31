@@ -12,10 +12,13 @@ services:
     restart: unless-stopped
     ports:
       - "8091:8091"
+      # STRM 已签名播放链接专用端口（/d/*）
+      - "8099:8099"
     environment:
       - TZ=Asia/Shanghai
       - APP_HOST=0.0.0.0
       - APP_PORT=8091
+      - APP_STRM_PLAYBACK_PORT=8099
       - APP_DATA_DIR=/app/data
       - APP_RUNTIME_DIR=/app/runtime
       - APP_ADMIN_AUTH_ENABLED=1
@@ -82,7 +85,37 @@ docker compose -f docker-compose.simple.yml up -d
 
 `http://<你的服务器IP或域名>:8091`
 
-## 7) Emby Webhook 回调地址怎么固定成 VistaMirror 自己的域名
+## 7) STRM 播放端与 Emby 配置
+
+STRM 的管理界面仍使用 `8091`；真正给 Emby 使用的签名播放链接走独立的
+`8099` 端口，仅暴露 `/d/*` 路由。不要把 `8091` 直接写进 STRM 的“播放外部地址”。
+
+推荐通过独立域名或反代暴露该端口。例如反向代理的上游为 Docker 宿主机：
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:8099;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_buffering off;
+}
+```
+
+然后在 VistaMirror 的 STRM 页面把“STRM 播放外部地址”设置为该公网地址，例如
+`https://strm.example.com`，保存配置后执行“安全增量同步”以重写 STRM 链接。
+
+如果需要在 STRM 页面提交 Emby 刷新任务，完整版 Compose 或 `.env` 还需填写：
+
+```text
+APP_EMBY_SERVER_URL=http://172.17.0.1:8096
+APP_EMBY_API_KEY=你的_Emby_API_Key
+```
+
+这两个变量仅用于 Emby 刷库与媒体库查询，不参与 115 直链解析或 STRM 播放。若 Emby
+在同一 Docker 网络中，优先将地址改为对应容器服务名，例如 `http://emby:8096`。
+
+## 8) Emby Webhook 回调地址怎么固定成 VistaMirror 自己的域名
 
 如果你是 Docker 部署，并且希望后台生成的 Emby Webhook 地址始终指向 VistaMirror 自己的公网地址，请设置：
 

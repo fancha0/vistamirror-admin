@@ -1503,6 +1503,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def do_HEAD(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path.startswith("/api/strm/115/"):
+            self._handle_strm115_playback(parsed.path, parsed.query)
+            return
+        if not self._enforce_admin_auth(method="HEAD", path=parsed.path):
+            return
+        super().do_HEAD()
+
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
@@ -4087,8 +4096,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         result["status"] = self._strm115_service().status()
         self._send_json(200, result)
 
-    def _handle_strm115_playback(self, path: str, query: str) -> None:
-        file_id = urllib.parse.unquote(path[len("/api/strm/115/"):]).strip()
+    def _handle_strm115_playback(self, path: str, query: str, *, public_path: bool = False) -> None:
+        raw_file_id = urllib.parse.unquote(path[len("/d/"):] if public_path else path[len("/api/strm/115/"):]).strip()
+        file_id = raw_file_id.rsplit(".", 1)[0] if public_path and "." in raw_file_id else raw_file_id
         params = urllib.parse.parse_qs(query, keep_blank_values=False)
         try:
             record = self._strm115_service().resolve_file(
@@ -7861,6 +7871,26 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.wfile.write(content)
 
 
+class StrmPlaybackHandler(AppHandler):
+    """Restricted CMS-style playback listener: signed GET/HEAD only."""
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path.startswith("/d/"):
+            self._handle_strm115_playback(parsed.path, parsed.query, public_path=True)
+            return
+        self._send_json(404, {"ok": False, "error": "STRM 播放端仅提供 /d/ 签名链接。"})
+
+    def do_HEAD(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path.startswith("/d/"):
+            self._handle_strm115_playback(parsed.path, parsed.query, public_path=True)
+            return
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
 def main() -> None:
     global TELEGRAM_COMMAND_SERVICE, ADMIN_AUTH_SERVICE, COVER_STUDIO_SCHEDULER
     parser = argparse.ArgumentParser(description="Run Emby Pulse local proxy server")
@@ -7872,6 +7902,7 @@ def main() -> None:
         env_port = 8080
     parser.add_argument("--host", default=env_host, help=f"Bind host (default: {env_host})")
     parser.add_argument("--port", default=env_port, type=int, help=f"Bind port (default: {env_port})")
+    parser.add_argument("--strm-playback-port", default=max(1, _env_int("APP_STRM_PLAYBACK_PORT", 8099)), type=int, help="Dedicated STRM playback port")
     args = parser.parse_args()
 
     web_root = RUNTIME_DIR if RUNTIME_DIR.exists() else BASE_DIR
@@ -7918,9 +7949,13 @@ def main() -> None:
     COVER_STUDIO_SCHEDULER.start()
     handler_cls = AppHandler
     server = ThreadingHTTPServer((args.host, args.port), handler_cls)
+    playback_server = ThreadingHTTPServer((args.host, args.strm_playback_port), StrmPlaybackHandler)
+    playback_thread = threading.Thread(target=playback_server.serve_forever, name="strm115-playback", daemon=True)
+    playback_thread.start()
     _record_service_start(str(args.host), int(args.port))
     atexit.register(_record_service_stop, "atexit")
     print(f"Emby Pulse local server running at http://{args.host}:{args.port}")
+    print(f"STRM playback listener running at http://{args.host}:{args.strm_playback_port}/d/")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
@@ -7931,6 +7966,8 @@ def main() -> None:
         STRM115_SCHEDULE_STOP.set()
         COVER_STUDIO_SCHEDULE_STOP.set()
         server.server_close()
+        playback_server.shutdown()
+        playback_server.server_close()
         if TELEGRAM_COMMAND_SERVICE is not None:
             TELEGRAM_COMMAND_SERVICE.stop()
         _record_service_stop("shutdown")

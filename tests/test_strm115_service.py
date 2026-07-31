@@ -54,7 +54,7 @@ class Strm115ServiceTests(unittest.TestCase):
             movie_strm = root / "library" / "Films" / "Movie.strm"
             self.assertTrue(movie_strm.exists())
             content = movie_strm.read_text(encoding="utf-8").strip()
-            self.assertIn("/api/strm/115/movie-1?exp=0&sig=", content)
+            self.assertIn("/d/movie-1.mkv?exp=0&sig=", content)
             second = service.sync()
             self.assertEqual(second["summary"]["unchanged"], 2)
             record = service.resolve_file("movie-1", expires="0", signature=content.split("sig=", 1)[1])

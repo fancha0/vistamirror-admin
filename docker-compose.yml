@@ -8,6 +8,7 @@ services:
     environment:
       APP_HOST: ${APP_HOST:-0.0.0.0}
       APP_PORT: ${APP_PORT:-8091}
+      APP_STRM_PLAYBACK_PORT: ${APP_STRM_PLAYBACK_PORT:-8099}
       APP_DATA_DIR: /app/data
       APP_RUNTIME_DIR: /app/runtime
       APP_EMBY_SERVER_URL: ${APP_EMBY_SERVER_URL:-}
@@ -31,6 +32,8 @@ services:
       APP_ADMIN_LOGIN_LOCK_SECONDS: ${APP_ADMIN_LOGIN_LOCK_SECONDS:-900}
     ports:
       - "${APP_PORT:-8091}:${APP_PORT:-8091}"
+      # 仅提供已签名的 /d/* 播放链接；如使用公网反代，请将播放域名转发至此端口。
+      - "${APP_STRM_PLAYBACK_PORT:-8099}:${APP_STRM_PLAYBACK_PORT:-8099}"
     volumes:
       - ./data:/app/data
     healthcheck:

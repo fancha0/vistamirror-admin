@@ -50,6 +50,471 @@
   --brand-title-letter-spacing: 0;
 }
 
+/* --------------------------------------------------------------------------
+   VistaMirror Operations UI System
+   One intentional visual layer for every operational page.  It deliberately
+   sits after the historical page skins, so legacy page-specific rules cannot
+   recreate card-in-card frames or oversized headers.                         */
+body.vistamirror-fig1-skin {
+  --sidebar-width: 272px;
+  --frozen-nav-height: 58px;
+  --bg: #f6f8fc;
+  --panel: #ffffff;
+  --panel-soft: #f8faff;
+  --line: #e6ebf3;
+  --text: #202b40;
+  --muted: #7d899e;
+  --purple: #7056e9;
+  --purple-soft: #f0edff;
+  --blue: #3979f6;
+  --green: #18a96b;
+  --orange: #f59a17;
+  --red: #e55363;
+  --shadow: 0 8px 24px rgba(31, 45, 74, 0.055);
+  --shadow-soft: 0 4px 14px rgba(31, 45, 74, 0.045);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+body.vistamirror-fig1-skin .app-layout {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  background: var(--bg);
+}
+
+/* Navigation remains a navigation surface, not another floating card. */
+body.vistamirror-fig1-skin .sidebar {
+  gap: 14px;
+  padding: 18px 12px 14px;
+  background: #fff;
+  border-right: 1px solid var(--line);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+body.vistamirror-fig1-skin .brand {
+  gap: 10px;
+  min-height: 42px;
+  padding: 2px 8px 6px;
+}
+
+body.vistamirror-fig1-skin .brand-mark {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  border-radius: 11px;
+  box-shadow: 0 7px 18px rgba(90, 92, 232, 0.12);
+}
+
+body.vistamirror-fig1-skin .brand-copy h1 {
+  font-size: 19px;
+  letter-spacing: -0.035em;
+  color: #182337;
+}
+
+body.vistamirror-fig1-skin .sidebar-search {
+  gap: 8px;
+  padding: 9px 10px;
+  min-height: 38px;
+  border-radius: 10px;
+  border-color: #e1e7f0;
+  background: #fbfcff;
+  box-shadow: none;
+}
+
+body.vistamirror-fig1-skin .sidebar-search:hover,
+body.vistamirror-fig1-skin .sidebar-search:focus-within {
+  transform: none;
+  border-color: #cfc7ff;
+  box-shadow: 0 0 0 3px rgba(112, 86, 233, 0.08);
+}
+
+body.vistamirror-fig1-skin .sidebar-search input,
+body.vistamirror-fig1-skin .sidebar-search input::placeholder {
+  font-size: 12px;
+}
+
+body.vistamirror-fig1-skin .sidebar-search em {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: #eef1f7;
+  font-size: 10px;
+}
+
+body.vistamirror-fig1-skin .nav {
+  gap: 2px;
+  padding: 0 2px 12px;
+}
+
+body.vistamirror-fig1-skin .nav-group-title {
+  margin: 16px 8px 5px;
+  color: #9aa5b7;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+body.vistamirror-fig1-skin .nav-item {
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  color: #43506a;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+body.vistamirror-fig1-skin .nav-item:hover {
+  background: #f5f6fb;
+  color: #3d336f;
+}
+
+body.vistamirror-fig1-skin .nav-item.active {
+  background: linear-gradient(90deg, #f1eeff 0%, #faf9ff 100%);
+  color: #6947de;
+  font-weight: 750;
+}
+
+body.vistamirror-fig1-skin .nav-icon {
+  width: 18px;
+  color: currentColor;
+  font-size: 16px;
+}
+
+body.vistamirror-fig1-skin .quality-audit-nav-svg,
+body.vistamirror-fig1-skin .missing-nav-svg {
+  width: 17px;
+  height: 17px;
+  flex-basis: 17px;
+}
+
+body.vistamirror-fig1-skin .sidebar-footer {
+  gap: 8px;
+  padding: 10px 2px 0;
+  border-top: 1px solid var(--line);
+}
+
+body.vistamirror-fig1-skin .sidebar-exit {
+  min-height: 34px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #78859a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The header is deliberately flat: only content panels get an elevated edge. */
+body.vistamirror-fig1-skin .main-content {
+  padding: calc(var(--frozen-nav-height) + 16px) 22px 24px;
+  background: var(--bg);
+}
+
+body.vistamirror-fig1-skin .frozen-navbar {
+  left: var(--sidebar-width);
+  height: var(--frozen-nav-height);
+  padding: 0 22px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom-color: var(--line);
+  box-shadow: none;
+  backdrop-filter: blur(12px);
+}
+
+body.vistamirror-fig1-skin .frozen-navbar::before {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: 13px;
+  width: min(430px, 42vw);
+  height: 32px;
+  border: 1px solid #dfe5ef;
+  border-radius: 9px;
+  background: #fbfcff;
+  pointer-events: none;
+}
+
+body.vistamirror-fig1-skin .frozen-navbar::after {
+  content: "⌕  全局搜索媒体、用户、任务…";
+  position: absolute;
+  left: 34px;
+  top: 21px;
+  color: #9aa5b7;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+body.vistamirror-fig1-skin .nav-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #fff;
+  border-color: #e4e9f1;
+  font-size: 14px;
+  box-shadow: none;
+}
+
+body.vistamirror-fig1-skin .topbar {
+  min-height: 54px;
+  margin: 0;
+  padding: 0 2px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.vistamirror-fig1-skin .topbar-hero { gap: 10px; }
+
+body.vistamirror-fig1-skin .topbar-icon {
+  display: none;
+}
+
+body.vistamirror-fig1-skin .topbar h2 {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+body.vistamirror-fig1-skin .topbar-text {
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+body.vistamirror-fig1-skin .topbar-actions,
+body.vistamirror-fig1-skin .toolbar,
+body.vistamirror-fig1-skin .filter-group,
+body.vistamirror-fig1-skin .detail-actions,
+body.vistamirror-fig1-skin .form-actions,
+body.vistamirror-fig1-skin .route-actions {
+  gap: 8px;
+}
+
+/* Shared work surfaces.  Nested panels inherit the page background instead. */
+body.vistamirror-fig1-skin .view-section,
+body.vistamirror-fig1-skin .config-panel,
+body.vistamirror-fig1-skin .stats-grid {
+  margin-top: 0;
+}
+
+body.vistamirror-fig1-skin .view-section {
+  padding-top: 0;
+}
+
+body.vistamirror-fig1-skin .dashboard-grid {
+  gap: 14px;
+}
+
+body.vistamirror-fig1-skin .panel,
+body.vistamirror-fig1-skin .stat-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+body.vistamirror-fig1-skin .panel {
+  padding: 16px;
+}
+
+body.vistamirror-fig1-skin .panel .panel {
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.vistamirror-fig1-skin .panel-head {
+  min-height: 34px;
+  margin-bottom: 12px;
+}
+
+body.vistamirror-fig1-skin .panel-head h3,
+body.vistamirror-fig1-skin .panel h3 {
+  color: #253149;
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+}
+
+body.vistamirror-fig1-skin .section-label {
+  margin: 0 0 3px;
+  color: #97a3b6;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+body.vistamirror-fig1-skin .stats-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 12px;
+  padding: 0;
+}
+
+body.vistamirror-fig1-skin .stats-grid > .stat-card {
+  position: relative !important;
+  display: grid !important;
+  width: auto !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 112px;
+  margin: 0 !important;
+  padding: 17px 18px !important;
+  overflow: visible !important;
+  clip-path: none !important;
+  white-space: normal !important;
+  transform: none !important;
+}
+
+body.vistamirror-fig1-skin .stat-card::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: var(--purple-soft);
+}
+
+body.vistamirror-fig1-skin .stat-card.accent-green::before { background: #e6f9ef; }
+body.vistamirror-fig1-skin .stat-card.accent-orange::before { background: #fff3df; }
+
+body.vistamirror-fig1-skin .stat-card p {
+  margin: 0 0 6px;
+  color: #7e899d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+body.vistamirror-fig1-skin .stat-card strong {
+  color: #202b40;
+  font-size: 25px;
+  line-height: 1.05;
+  font-weight: 780;
+}
+
+body.vistamirror-fig1-skin .stat-card span {
+  margin-top: 4px;
+  color: #9ba6b8;
+  font-size: 11px;
+}
+
+body.vistamirror-fig1-skin .fig2-stats-wrap,
+body.vistamirror-fig1-skin .fig2-stat-sub,
+body.vistamirror-fig1-skin .fig2-stat-trend {
+  display: none !important;
+}
+
+/* Controls, tables and list rows share the same compact rhythm. */
+body.vistamirror-fig1-skin button:not(.nav-item) {
+  min-height: 32px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+body.vistamirror-fig1-skin button:not(.nav-item):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(48, 58, 91, 0.11);
+}
+
+body.vistamirror-fig1-skin input,
+body.vistamirror-fig1-skin select,
+body.vistamirror-fig1-skin textarea {
+  border-color: #dfe5ef;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+body.vistamirror-fig1-skin input:not([type="checkbox"]):not([type="radio"]),
+body.vistamirror-fig1-skin select {
+  min-height: 34px;
+}
+
+body.vistamirror-fig1-skin .filter-chip,
+body.vistamirror-fig1-skin .filter-button,
+body.vistamirror-fig1-skin .tab-btn {
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border-color: #e4e8f0;
+  background: #f8f9fc;
+  color: #68748b;
+  font-size: 12px;
+}
+
+body.vistamirror-fig1-skin .filter-chip.active,
+body.vistamirror-fig1-skin .filter-button.active,
+body.vistamirror-fig1-skin .tab-btn.active {
+  border-color: #d4cbff;
+  background: var(--purple-soft);
+  color: #6348d7;
+  box-shadow: none;
+}
+
+body.vistamirror-fig1-skin table {
+  border-color: var(--line);
+  font-size: 12px;
+}
+
+body.vistamirror-fig1-skin th {
+  height: 36px;
+  background: #f8faff;
+  color: #8490a4;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+body.vistamirror-fig1-skin td {
+  height: 46px;
+  color: #46536b;
+  border-color: #edf0f5;
+}
+
+body.vistamirror-fig1-skin tr:hover td { background: #fbfcff; }
+
+/* Dense operational screens already contain their own content structure.
+   Remove their extra parent sheet instead of wrapping it in another card. */
+body.vistamirror-fig1-skin #view-workshop > .dashboard-grid > .cover-studio-page-panel,
+body.vistamirror-fig1-skin #view-client-control > .dashboard-grid > .panel,
+body.vistamirror-fig1-skin #view-content-ranking > .dashboard-grid > .panel,
+body.vistamirror-fig1-skin #view-moviepilot-search > .moviepilot-search-shell,
+body.vistamirror-fig1-skin #view-drive-115 > .dashboard-grid > .panel,
+body.vistamirror-fig1-skin #view-strm-115 > .strm-workbench {
+  border-radius: 14px;
+  border-color: var(--line);
+  box-shadow: var(--shadow);
+}
+
+body.vistamirror-fig1-skin #view-workshop .cover-studio-shell,
+body.vistamirror-fig1-skin #view-client-control .client-control-shell,
+body.vistamirror-fig1-skin #view-content-ranking .ranking-shell,
+body.vistamirror-fig1-skin #view-strm-115 .strm-workbench-main,
+body.vistamirror-fig1-skin #view-strm-115 .strm-workbench-sidebar {
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+@media (max-width: 1180px) {
+  body.vistamirror-fig1-skin { --sidebar-width: 232px; }
+  body.vistamirror-fig1-skin .main-content { padding-inline: 16px; }
+  body.vistamirror-fig1-skin .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+
+@media (max-width: 760px) {
+  body.vistamirror-fig1-skin .main-content { padding: calc(var(--frozen-nav-height) + 12px) 12px 18px; }
+  body.vistamirror-fig1-skin .frozen-navbar { left: 0; padding-inline: 12px; }
+  body.vistamirror-fig1-skin .frozen-navbar::before { left: 58px; width: calc(100vw - 164px); }
+  body.vistamirror-fig1-skin .frozen-navbar::after { left: 70px; }
+  body.vistamirror-fig1-skin .topbar { align-items: flex-start; }
+  body.vistamirror-fig1-skin .topbar h2 { font-size: 19px; }
+  body.vistamirror-fig1-skin .topbar-text { display: none; }
+  body.vistamirror-fig1-skin .panel { padding: 12px; border-radius: 12px; }
+  body.vistamirror-fig1-skin .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; }
+  body.vistamirror-fig1-skin .stats-grid > .stat-card { min-height: 94px; padding: 14px !important; }
+  body.vistamirror-fig1-skin .stat-card strong { font-size: 22px; }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -17252,3 +17717,89 @@ body.vistamirror-fig1-skin .stat-card {
     font-size: 13px;
   }
 }
+
+/* Final cascade: normalize legacy visual skins into one compact operations UI. */
+body.vistamirror-fig1-skin {
+  --sidebar-width: 272px;
+  --frozen-nav-height: 58px;
+  --bg: #f6f8fc;
+  --panel: #fff;
+  --panel-soft: #f8faff;
+  --line: #e5eaf2;
+  --text: #202b40;
+  --muted: #7d899e;
+  --purple: #7056e9;
+  --purple-soft: #f0edff;
+  --blue: #3979f6;
+  --shadow: 0 8px 24px rgba(31, 45, 74, .055);
+  --shadow-soft: 0 4px 14px rgba(31, 45, 74, .045);
+  background: var(--bg) !important;
+  color: var(--text);
+  font-size: 14px;
+}
+
+body.vistamirror-fig1-skin .app-layout { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); background: var(--bg); }
+body.vistamirror-fig1-skin .sidebar { gap: 14px; padding: 18px 12px 14px; background: #fff; border-right: 1px solid var(--line); box-shadow: none; backdrop-filter: none; }
+body.vistamirror-fig1-skin .brand { gap: 10px; min-height: 42px; padding: 2px 8px 6px; }
+body.vistamirror-fig1-skin .brand-mark { width: 36px; height: 36px; flex-basis: 36px; border-radius: 11px; box-shadow: 0 7px 18px rgba(90, 92, 232, .12); }
+body.vistamirror-fig1-skin .brand-copy h1 { font-size: 19px; letter-spacing: -.035em; color: #182337; }
+body.vistamirror-fig1-skin .sidebar-search { gap: 8px; min-height: 38px; padding: 9px 10px; border-radius: 10px; border-color: #e1e7f0; background: #fbfcff; box-shadow: none; }
+body.vistamirror-fig1-skin .sidebar-search:hover, body.vistamirror-fig1-skin .sidebar-search:focus-within { transform: none; border-color: #cfc7ff; box-shadow: 0 0 0 3px rgba(112, 86, 233, .08); }
+body.vistamirror-fig1-skin .sidebar-search input, body.vistamirror-fig1-skin .sidebar-search input::placeholder { font-size: 12px; }
+body.vistamirror-fig1-skin .sidebar-search em { padding: 2px 5px; border: 0; border-radius: 5px; background: #eef1f7; font-size: 10px; }
+body.vistamirror-fig1-skin .nav { gap: 2px; padding: 0 2px 12px; }
+body.vistamirror-fig1-skin .nav-group-title { margin: 16px 8px 5px; color: #9aa5b7; font-size: 11px; font-weight: 700; }
+body.vistamirror-fig1-skin .nav-item { gap: 10px; min-height: 36px; padding: 8px 10px; border-radius: 9px; color: #43506a; font-size: 13px; font-weight: 600; }
+body.vistamirror-fig1-skin .nav-item:hover { background: #f5f6fb; color: #3d336f; }
+body.vistamirror-fig1-skin .nav-item.active { background: linear-gradient(90deg, #f1eeff 0%, #faf9ff 100%); color: #6947de; font-weight: 750; }
+body.vistamirror-fig1-skin .nav-icon { width: 18px; color: currentColor; font-size: 16px; }
+body.vistamirror-fig1-skin .quality-audit-nav-svg, body.vistamirror-fig1-skin .missing-nav-svg { width: 17px; height: 17px; flex-basis: 17px; }
+body.vistamirror-fig1-skin .sidebar-footer { gap: 8px; padding: 10px 2px 0; border-top: 1px solid var(--line); }
+body.vistamirror-fig1-skin .sidebar-exit { min-height: 34px; padding: 8px 10px; border-radius: 8px; background: transparent; box-shadow: none; color: #78859a; font-size: 12px; font-weight: 600; }
+
+body.vistamirror-fig1-skin .main-content { padding: calc(var(--frozen-nav-height) + 16px) 22px 24px; background: var(--bg); }
+body.vistamirror-fig1-skin .frozen-navbar { left: var(--sidebar-width); height: var(--frozen-nav-height); padding: 0 22px; background: rgba(255,255,255,.92); border-bottom-color: var(--line); box-shadow: none; backdrop-filter: blur(12px); }
+body.vistamirror-fig1-skin .frozen-navbar::before { content: ""; position: absolute; left: 22px; top: 13px; width: min(430px, 42vw); height: 32px; border: 1px solid #dfe5ef; border-radius: 9px; background: #fbfcff; pointer-events: none; }
+body.vistamirror-fig1-skin .frozen-navbar::after { content: "⌕  全局搜索媒体、用户、任务…"; position: absolute; left: 34px; top: 21px; color: #9aa5b7; font-size: 12px; pointer-events: none; }
+body.vistamirror-fig1-skin .nav-icon-btn { width: 32px; height: 32px; border-radius: 8px; background: #fff; border-color: #e4e9f1; font-size: 14px; box-shadow: none; }
+body.vistamirror-fig1-skin .topbar { min-height: 54px; margin: 0; padding: 0 2px 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+body.vistamirror-fig1-skin .topbar-hero { gap: 10px; }
+body.vistamirror-fig1-skin .topbar-icon { display: none; }
+body.vistamirror-fig1-skin .topbar h2 { font-size: 21px; font-weight: 800; letter-spacing: -.03em; }
+body.vistamirror-fig1-skin .topbar-text { margin-top: 3px; font-size: 12px; font-weight: 500; }
+body.vistamirror-fig1-skin .topbar-actions, body.vistamirror-fig1-skin .toolbar, body.vistamirror-fig1-skin .filter-group, body.vistamirror-fig1-skin .detail-actions, body.vistamirror-fig1-skin .form-actions, body.vistamirror-fig1-skin .route-actions { gap: 8px; }
+
+body.vistamirror-fig1-skin .view-section, body.vistamirror-fig1-skin .config-panel, body.vistamirror-fig1-skin .stats-grid { margin-top: 0; }
+body.vistamirror-fig1-skin .dashboard-grid { gap: 14px; }
+body.vistamirror-fig1-skin .panel, body.vistamirror-fig1-skin .stat-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); }
+body.vistamirror-fig1-skin .panel { padding: 16px; }
+body.vistamirror-fig1-skin .panel .panel { border-color: transparent; border-radius: 10px; background: transparent; box-shadow: none; }
+body.vistamirror-fig1-skin .panel-head { min-height: 34px; margin-bottom: 12px; }
+body.vistamirror-fig1-skin .panel-head h3, body.vistamirror-fig1-skin .panel h3 { color: #253149; font-size: 16px; font-weight: 750; letter-spacing: -.015em; }
+body.vistamirror-fig1-skin .section-label { margin: 0 0 3px; color: #97a3b6; font-size: 11px; font-weight: 700; }
+body.vistamirror-fig1-skin .stats-grid { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 12px; padding: 0; }
+body.vistamirror-fig1-skin .stats-grid > .stat-card { position: relative !important; display: grid !important; width: auto !important; min-width: 0 !important; height: auto !important; min-height: 112px; margin: 0 !important; padding: 17px 18px !important; overflow: visible !important; clip-path: none !important; white-space: normal !important; transform: none !important; }
+body.vistamirror-fig1-skin .stat-card::before { content: ""; position: absolute; top: 16px; right: 16px; width: 28px; height: 28px; border-radius: 10px; background: var(--purple-soft); }
+body.vistamirror-fig1-skin .stat-card.accent-green::before { background: #e6f9ef; }
+body.vistamirror-fig1-skin .stat-card.accent-orange::before { background: #fff3df; }
+body.vistamirror-fig1-skin .stat-card p { margin: 0 0 6px; color: #7e899d; font-size: 12px; font-weight: 600; }
+body.vistamirror-fig1-skin .stat-card strong { color: #202b40; font-size: 25px; line-height: 1.05; font-weight: 780; }
+body.vistamirror-fig1-skin .stat-card span { margin-top: 4px; color: #9ba6b8; font-size: 11px; }
+body.vistamirror-fig1-skin .fig2-stats-wrap, body.vistamirror-fig1-skin .fig2-stat-sub, body.vistamirror-fig1-skin .fig2-stat-trend { display: none !important; }
+
+body.vistamirror-fig1-skin button:not(.nav-item) { min-height: 32px; border-radius: 8px; font-size: 12px; }
+body.vistamirror-fig1-skin button:not(.nav-item):hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(48, 58, 91, .11); }
+body.vistamirror-fig1-skin input, body.vistamirror-fig1-skin select, body.vistamirror-fig1-skin textarea { border-color: #dfe5ef; border-radius: 8px; font-size: 12px; }
+body.vistamirror-fig1-skin input:not([type="checkbox"]):not([type="radio"]), body.vistamirror-fig1-skin select { min-height: 34px; }
+body.vistamirror-fig1-skin .filter-chip, body.vistamirror-fig1-skin .filter-button, body.vistamirror-fig1-skin .tab-btn { min-height: 30px; padding: 5px 10px; border-radius: 7px; border-color: #e4e8f0; background: #f8f9fc; color: #68748b; font-size: 12px; }
+body.vistamirror-fig1-skin .filter-chip.active, body.vistamirror-fig1-skin .filter-button.active, body.vistamirror-fig1-skin .tab-btn.active { border-color: #d4cbff; background: var(--purple-soft); color: #6348d7; box-shadow: none; }
+body.vistamirror-fig1-skin table { border-color: var(--line); font-size: 12px; }
+body.vistamirror-fig1-skin th { height: 36px; background: #f8faff; color: #8490a4; font-size: 11px; font-weight: 700; }
+body.vistamirror-fig1-skin td { height: 46px; color: #46536b; border-color: #edf0f5; }
+body.vistamirror-fig1-skin tr:hover td { background: #fbfcff; }
+
+body.vistamirror-fig1-skin #view-workshop > .dashboard-grid > .cover-studio-page-panel, body.vistamirror-fig1-skin #view-client-control > .dashboard-grid > .panel, body.vistamirror-fig1-skin #view-content-ranking > .dashboard-grid > .panel, body.vistamirror-fig1-skin #view-moviepilot-search > .moviepilot-search-shell, body.vistamirror-fig1-skin #view-drive-115 > .dashboard-grid > .panel, body.vistamirror-fig1-skin #view-strm-115 > .strm-workbench { border-radius: 14px; border-color: var(--line); box-shadow: var(--shadow); }
+body.vistamirror-fig1-skin #view-workshop .cover-studio-shell, body.vistamirror-fig1-skin #view-client-control .client-control-shell, body.vistamirror-fig1-skin #view-content-ranking .ranking-shell, body.vistamirror-fig1-skin #view-strm-115 .strm-workbench-main, body.vistamirror-fig1-skin #view-strm-115 .strm-workbench-sidebar { border-radius: 10px; box-shadow: none; }
+
+@media (max-width: 1180px) { body.vistamirror-fig1-skin { --sidebar-width: 232px; } body.vistamirror-fig1-skin .main-content { padding-inline: 16px; } body.vistamirror-fig1-skin .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+@media (max-width: 760px) { body.vistamirror-fig1-skin .main-content { padding: calc(var(--frozen-nav-height) + 12px) 12px 18px; } body.vistamirror-fig1-skin .frozen-navbar { left: 0; padding-inline: 12px; } body.vistamirror-fig1-skin .frozen-navbar::before { left: 58px; width: calc(100vw - 164px); } body.vistamirror-fig1-skin .frozen-navbar::after { left: 70px; } body.vistamirror-fig1-skin .topbar { align-items: flex-start; } body.vistamirror-fig1-skin .topbar h2 { font-size: 19px; } body.vistamirror-fig1-skin .topbar-text { display: none; } body.vistamirror-fig1-skin .panel { padding: 12px; border-radius: 12px; } body.vistamirror-fig1-skin .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; } body.vistamirror-fig1-skin .stats-grid > .stat-card { min-height: 94px; padding: 14px !important; } body.vistamirror-fig1-skin .stat-card strong { font-size: 22px; } }

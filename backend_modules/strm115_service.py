@@ -166,7 +166,7 @@ class Strm115Service:
                 seen_ids.add(file_id)
                 destination = (output_root / relative_path).with_suffix(".strm")
                 record = {"id": file_id, "name": name, "path": str(relative_path), "pickCode": str(row.get("pickCode") or ""), "sha1": str(row.get("sha1") or ""), "size": int(row.get("size") or 0), "strmPath": str(destination), "updatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-                content = self.signed_stream_url(file_id)
+                content = self.signed_stream_url(file_id, suffix=Path(name).suffix)
                 previous = old_files.get(file_id) if isinstance(old_files.get(file_id), dict) else {}
                 try:
                     if previous.get("sha1") == record["sha1"] and previous.get("path") == record["path"] and destination.exists() and destination.read_text(encoding="utf-8").strip() == content:
@@ -256,13 +256,14 @@ class Strm115Service:
             self._playback_cache[pick_code] = {"url": url, "expiresAt": now + ttl}
         return url, False
 
-    def signed_stream_url(self, file_id: str, *, ttl_seconds: int = 0) -> str:
+    def signed_stream_url(self, file_id: str, *, suffix: str = ".mkv", ttl_seconds: int = 0) -> str:
         # STRM files must remain usable after a server restart and must not require
         # periodic rewrites. exp=0 is a stable HMAC-protected URL; rotating the
         # server-only secret revokes every generated STRM URL immediately.
         expires = 0 if int(ttl_seconds) <= 0 else int(time.time()) + max(300, int(ttl_seconds))
         signature = self._sign(str(file_id), expires)
-        return f"{self.config['publicBaseUrl']}/api/strm/115/{quote(str(file_id), safe='')}?exp={expires}&sig={signature}"
+        safe_suffix = suffix.lower() if suffix.lower() in VIDEO_EXTENSIONS else ".mkv"
+        return f"{self.config['publicBaseUrl']}/d/{quote(str(file_id), safe='')}{safe_suffix}?exp={expires}&sig={signature}"
 
     def resolve_file(self, file_id: str, *, expires: str, signature: str) -> dict[str, Any]:
         try:
