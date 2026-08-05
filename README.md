@@ -87,8 +87,9 @@ docker compose -f docker-compose.simple.yml up -d
 
 ## 7) STRM 播放端与 Emby 配置
 
-STRM 的管理界面仍使用 `8091`；真正给 Emby 使用的签名播放链接走独立的
-`8099` 端口，仅暴露 `/d/*` 路由。不要把 `8091` 直接写进 STRM 的“播放外部地址”。
+STRM 的管理界面仍使用 `8091`；`8099` 是独立的 Emby Web/播放反代端：根路径及
+`/web/*`、Emby API 会转发到已配置的 Emby，`/d/*` 则处理 VistaMirror 的签名 STRM
+链接。不要把 `8091` 直接写进 STRM 的“播放外部地址”。
 
 推荐通过独立域名或反代暴露该端口。例如反向代理的上游为 Docker 宿主机：
 
@@ -112,8 +113,9 @@ APP_EMBY_SERVER_URL=http://172.17.0.1:8096
 APP_EMBY_API_KEY=你的_Emby_API_Key
 ```
 
-这两个变量仅用于 Emby 刷库与媒体库查询，不参与 115 直链解析或 STRM 播放。若 Emby
-在同一 Docker 网络中，优先将地址改为对应容器服务名，例如 `http://emby:8096`。
+`APP_EMBY_SERVER_URL` 同时是 `8099` 反代的上游地址；`APP_EMBY_API_KEY` 仅用于
+Emby 刷库与媒体库查询，不参与浏览器登录、115 直链解析或 STRM 播放。若 Emby在同一
+Docker 网络中，优先将地址改为对应容器服务名，例如 `http://emby:8096`。
 
 ## 8) Emby Webhook 回调地址怎么固定成 VistaMirror 自己的域名
 

@@ -1,9 +1,13 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.request import urlopen
 
 from backend_modules.project_event_logger import append_project_event, read_project_events
 from backend_modules.strm115_service import Strm115Service
+import dev_server
 
 
 class FakeDrive:
@@ -96,6 +100,46 @@ class Strm115ServiceTests(unittest.TestCase):
             self.assertEqual(total, 2)
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0]["action"], "strm115_playback_redirect")
+
+    def test_emby_web_proxy_normalizes_api_base_without_losing_subpath(self):
+        self.assertEqual("http://emby:8096", dev_server._normalize_emby_web_proxy_base("http://emby:8096/emby"))
+        self.assertEqual("https://media.example.test", dev_server._normalize_emby_web_proxy_base("https://media.example.test/"))
+        self.assertEqual("https://proxy.example.test/media", dev_server._normalize_emby_web_proxy_base("https://proxy.example.test/media/emby"))
+        self.assertEqual("", dev_server._normalize_emby_web_proxy_base("emby:8096"))
+
+    def test_dedicated_playback_port_proxies_emby_web_root(self):
+        class UpstreamHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Set-Cookie", "emby-session=test; Path=/")
+                self.end_headers()
+                self.wfile.write(f"emby:{self.path}".encode("utf-8"))
+
+            def log_message(self, *_args):
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), UpstreamHandler)
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+
+        class PlaybackHandler(dev_server.StrmPlaybackHandler):
+            def _configured_emby_web_base(self):
+                return f"http://127.0.0.1:{upstream.server_port}"
+
+        playback = ThreadingHTTPServer(("127.0.0.1", 0), PlaybackHandler)
+        playback_thread = threading.Thread(target=playback.serve_forever, daemon=True)
+        playback_thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{playback.server_port}/web/index.html?start=1", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get("Set-Cookie"), "emby-session=test; Path=/")
+                self.assertEqual(response.read().decode("utf-8"), "emby:/web/index.html?start=1")
+        finally:
+            playback.shutdown()
+            playback.server_close()
+            upstream.shutdown()
+            upstream.server_close()
 
 
 if __name__ == "__main__":

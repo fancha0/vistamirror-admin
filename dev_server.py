@@ -901,6 +901,25 @@ def _apply_emby_env_overrides(raw: Any) -> dict[str, Any]:
     return merged
 
 
+def _normalize_emby_web_proxy_base(raw_url: Any) -> str:
+    """Return the Emby web root for the dedicated STRM playback proxy.
+
+    The normal Emby setting may point at either ``http://host:8096`` or its
+    API base ``http://host:8096/emby``.  A browser-facing proxy must use the
+    web root in both cases so requests such as ``/web/index.html`` stay valid.
+    """
+    value = str(raw_url or "").strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("/emby"):
+        path = path[:-5]
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path.rstrip("/"), "", ""))
+
+
 def _merge_emby_config_for_save(current: Any, submitted: Any) -> dict[str, Any]:
     existing = current if isinstance(current, dict) else {}
     incoming = submitted if isinstance(submitted, dict) else {}
@@ -7872,23 +7891,127 @@ class AppHandler(SimpleHTTPRequestHandler):
 
 
 class StrmPlaybackHandler(AppHandler):
-    """Restricted CMS-style playback listener: signed GET/HEAD only."""
+    """CMS-style Emby web proxy plus restricted signed STRM playback routes."""
+
+    _WEB_PROXY_REQUEST_HEADERS = (
+        "Accept",
+        "Accept-Encoding",
+        "Accept-Language",
+        "Authorization",
+        "Content-Type",
+        "Cookie",
+        "Origin",
+        "Range",
+        "Referer",
+        "User-Agent",
+        "X-Emby-Authorization",
+        "X-Emby-Token",
+    )
+    _WEB_PROXY_RESPONSE_HEADERS = (
+        "Accept-Ranges",
+        "Cache-Control",
+        "Content-Disposition",
+        "Content-Range",
+        "ETag",
+        "Last-Modified",
+        "Location",
+        "Set-Cookie",
+        "WWW-Authenticate",
+    )
+
+    def _configured_emby_web_base(self) -> str:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            config = _apply_emby_env_overrides(store.get("embyConfig"))
+        return _normalize_emby_web_proxy_base(config.get("serverUrl"))
+
+    def _send_web_proxy_error(self, status: int, message: str) -> None:
+        payload = json.dumps({"ok": False, "error": message}, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(payload)
+
+    def _forward_emby_web(self) -> None:
+        base_url = self._configured_emby_web_base()
+        if not base_url:
+            self._send_web_proxy_error(503, "STRM 播放反代未配置 Emby 地址，请在 VistaMirror 设置或 APP_EMBY_SERVER_URL 中填写。")
+            return
+
+        target = f"{base_url}{self.path if self.path.startswith('/') else '/' + self.path}"
+        body: bytes | None = None
+        try:
+            content_length = int(str(self.headers.get("Content-Length") or "0"))
+        except ValueError:
+            content_length = 0
+        if content_length > 0:
+            body = self.rfile.read(content_length)
+
+        headers = {
+            header: value
+            for header in self._WEB_PROXY_REQUEST_HEADERS
+            if (value := self.headers.get(header))
+        }
+        request = urllib.request.Request(target, data=body, method=self.command, headers=headers)
+        try:
+            response = urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=45)
+        except urllib.error.HTTPError as err:
+            response = err
+        except Exception as err:
+            self._log_event(
+                level="warning", module="strm115", action="strm115_emby_web_proxy_failed",
+                message="STRM Emby Web 反代连接失败。", detail={"method": self.command, "path": urllib.parse.urlsplit(self.path).path, "error": str(err)[:240]},
+            )
+            self._send_web_proxy_error(502, "无法连接 Emby，请检查 APP_EMBY_SERVER_URL 与网络连通性。")
+            return
+
+        try:
+            status = int(getattr(response, "status", None) or response.getcode() or 502)
+            self.send_response(status)
+            content_type = response.headers.get("Content-Type") or "application/octet-stream"
+            self.send_header("Content-Type", content_type)
+            content_length_header = response.headers.get("Content-Length")
+            if content_length_header:
+                self.send_header("Content-Length", content_length_header)
+            for header in self._WEB_PROXY_RESPONSE_HEADERS:
+                for value in response.headers.get_all(header, []):
+                    self.send_header(header, value)
+            self.end_headers()
+            if self.command != "HEAD":
+                while chunk := response.read(128 * 1024):
+                    self.wfile.write(chunk)
+        finally:
+            response.close()
+
+    def _handle_request(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path.startswith("/d/"):
+            if self.command not in {"GET", "HEAD"}:
+                self._send_web_proxy_error(405, "STRM 签名链接仅支持 GET 或 HEAD。")
+                return
+            self._handle_strm115_playback(parsed.path, parsed.query, public_path=True)
+            return
+        self._forward_emby_web()
 
     def do_GET(self) -> None:
-        parsed = urllib.parse.urlsplit(self.path)
-        if parsed.path.startswith("/d/"):
-            self._handle_strm115_playback(parsed.path, parsed.query, public_path=True)
-            return
-        self._send_json(404, {"ok": False, "error": "STRM 播放端仅提供 /d/ 签名链接。"})
+        self._handle_request()
 
     def do_HEAD(self) -> None:
-        parsed = urllib.parse.urlsplit(self.path)
-        if parsed.path.startswith("/d/"):
-            self._handle_strm115_playback(parsed.path, parsed.query, public_path=True)
-            return
-        self.send_response(404)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        self._handle_request()
+
+    def do_POST(self) -> None:
+        self._handle_request()
+
+    def do_PUT(self) -> None:
+        self._handle_request()
+
+    def do_PATCH(self) -> None:
+        self._handle_request()
+
+    def do_DELETE(self) -> None:
+        self._handle_request()
 
 
 def main() -> None:
@@ -7955,7 +8078,7 @@ def main() -> None:
     _record_service_start(str(args.host), int(args.port))
     atexit.register(_record_service_stop, "atexit")
     print(f"Emby Pulse local server running at http://{args.host}:{args.port}")
-    print(f"STRM playback listener running at http://{args.host}:{args.strm_playback_port}/d/")
+    print(f"STRM Emby proxy and playback listener running at http://{args.host}:{args.strm_playback_port}/ (signed routes: /d/)")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
