@@ -110,6 +110,7 @@ class Strm115ServiceTests(unittest.TestCase):
     def test_dedicated_playback_port_proxies_emby_web_root(self):
         class UpstreamHandler(BaseHTTPRequestHandler):
             def do_GET(self):
+                type(self).received_accept_encoding = self.headers.get("Accept-Encoding")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Set-Cookie", "emby-session=test; Path=/")
@@ -135,6 +136,7 @@ class Strm115ServiceTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertEqual(response.headers.get("Set-Cookie"), "emby-session=test; Path=/")
                 self.assertEqual(response.read().decode("utf-8"), "emby:/web/index.html?start=1")
+                self.assertEqual(UpstreamHandler.received_accept_encoding, "identity")
         finally:
             playback.shutdown()
             playback.server_close()

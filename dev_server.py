@@ -7895,7 +7895,6 @@ class StrmPlaybackHandler(AppHandler):
 
     _WEB_PROXY_REQUEST_HEADERS = (
         "Accept",
-        "Accept-Encoding",
         "Accept-Language",
         "Authorization",
         "Content-Type",
@@ -7911,6 +7910,7 @@ class StrmPlaybackHandler(AppHandler):
         "Accept-Ranges",
         "Cache-Control",
         "Content-Disposition",
+        "Content-Encoding",
         "Content-Range",
         "ETag",
         "Last-Modified",
@@ -7954,6 +7954,10 @@ class StrmPlaybackHandler(AppHandler):
             for header in self._WEB_PROXY_REQUEST_HEADERS
             if (value := self.headers.get(header))
         }
+        # urllib forwards response bytes unchanged.  Asking Emby for identity
+        # encoding avoids handing a browser gzip/br bytes without the matching
+        # decoder metadata and keeps the Web client assets loadable.
+        headers["Accept-Encoding"] = "identity"
         request = urllib.request.Request(target, data=body, method=self.command, headers=headers)
         try:
             response = urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=45)
