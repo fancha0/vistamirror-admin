@@ -89,6 +89,7 @@ from backend_modules.hdhive_service import (
     normalize_hdhive_config as module_normalize_hdhive_config,
     public_hdhive_config,
 )
+from backend_modules.infra_service import InfraError, InfraService
 from backend_modules.ip_locator import build_ip_display
 from backend_modules.media_identity_service import MediaIdentityService
 from backend_modules.notification_event_factory import PlaybackNotificationEventFactory
@@ -236,6 +237,7 @@ HDHIVE_OAUTH_STATES: dict[str, dict[str, Any]] = {}
 HDHIVE_CHECKIN_STOP = threading.Event()
 COVER_STUDIO_SCHEDULE_STOP = threading.Event()
 _COVER_STUDIO_SERVICE: CoverStudioService | None = None
+_INFRA_SERVICE: InfraService | None = None
 COVER_STUDIO_SCHEDULER: CoverStudioScheduler | None = None
 
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
@@ -325,6 +327,34 @@ def _write_project_event(
         )
     except Exception as err:  # pragma: no cover
         print(f"[project_log] write failed: {err}")
+
+
+def _infra_service() -> InfraService:
+    global _INFRA_SERVICE
+    if _INFRA_SERVICE is None:
+        _INFRA_SERVICE = InfraService(data_dir=DATA_DIR, event_logger=_write_project_event)
+    return _INFRA_SERVICE
+
+
+def _infra_integration_cards() -> list[dict[str, Any]]:
+    with STORE_LOCK:
+        store = _read_store_unlocked()
+        emby = _apply_emby_env_overrides(store.get("embyConfig"))
+        moviepilot = _apply_moviepilot_env_overrides(store.get("moviePilotConfig"))
+        drive115 = _apply_drive115_env_overrides(store.get("drive115Config"))
+    with STRM115_LOCK:
+        strm115 = _read_strm115_config_unlocked()
+    emby_ready = bool(str(emby.get("serverUrl") or "").strip() and str(emby.get("apiKey") or "").strip())
+    moviepilot_ready = bool(moviepilot.get("enabled") and str(moviepilot.get("baseUrl") or "").strip())
+    drive115_ready = bool(drive115.get("enabled") and str(drive115.get("cookie") or "").strip())
+    strm_ready = bool(strm115.get("enabled") and str(strm115.get("sourceCid") or "").strip() and str(strm115.get("outputDir") or "").strip())
+    return [
+        {"id": "builtin-vistamirror", "name": "VistaMirror", "icon": "V", "group": "媒体服务", "status": "online", "detail": "当前管理端", "url": "", "view": "overview"},
+        {"id": "builtin-emby", "name": "Emby", "icon": "▶", "group": "媒体服务", "status": "configured" if emby_ready else "unconfigured", "detail": "已连接" if emby_ready else "未配置", "url": str(emby.get("serverUrl") or "").strip()},
+        {"id": "builtin-moviepilot", "name": "MoviePilot", "icon": "M", "group": "媒体服务", "status": "configured" if moviepilot_ready else "unconfigured", "detail": "已启用" if moviepilot_ready else "未启用", "url": str(moviepilot.get("baseUrl") or "").strip(), "view": "moviepilot-search"},
+        {"id": "builtin-115", "name": "115 网盘", "icon": "☁", "group": "网盘", "status": "configured" if drive115_ready else "unconfigured", "detail": "已登录" if drive115_ready else "未配置", "url": "https://115.com" if drive115_ready else "", "view": "drive-115"},
+        {"id": "builtin-strm", "name": "STRM 直连", "icon": "S", "group": "媒体服务", "status": "configured" if strm_ready else "unconfigured", "detail": "引擎已启用" if strm_ready else "未配置", "url": "", "view": "strm-115"},
+    ]
 
 
 def _cover_studio_service() -> CoverStudioService:
@@ -1490,6 +1520,24 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/logs/download":
             self._handle_project_logs_download()
             return
+        if path == "/api/infra/config":
+            self._handle_infra_config_get()
+            return
+        if path == "/api/infra/summary":
+            self._handle_infra_summary_get(parsed.query)
+            return
+        if path == "/api/infra/host/status":
+            self._handle_infra_host_status_get(parsed.query)
+            return
+        if path == "/api/infra/docker/inventory":
+            self._handle_infra_docker_inventory_get(parsed.query)
+            return
+        if path == "/api/infra/container/logs":
+            self._handle_infra_container_logs_get(parsed.query)
+            return
+        if path == "/api/infra/operations":
+            self._handle_infra_operations_get(parsed.query)
+            return
         if path.startswith("/api/bot/wecom_webhook"):
             self._handle_wecom_verify()
             return
@@ -1549,6 +1597,33 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/bot/config":
             self._handle_bot_config_save()
+            return
+        if path == "/api/infra/hosts/save":
+            self._handle_infra_host_save()
+            return
+        if path == "/api/infra/hosts/test":
+            self._handle_infra_host_test()
+            return
+        if path == "/api/infra/hosts/delete":
+            self._handle_infra_host_delete()
+            return
+        if path == "/api/infra/projects/save":
+            self._handle_infra_project_save()
+            return
+        if path == "/api/infra/projects/delete":
+            self._handle_infra_project_delete()
+            return
+        if path == "/api/infra/containers/action":
+            self._handle_infra_container_action()
+            return
+        if path == "/api/infra/images/pull":
+            self._handle_infra_image_pull()
+            return
+        if path == "/api/infra/compose/action":
+            self._handle_infra_compose_action()
+            return
+        if path == "/api/infra/dashboard/save":
+            self._handle_infra_dashboard_save()
             return
         if path == "/api/notifications/config":
             self._handle_notifications_config_save()
@@ -2687,6 +2762,149 @@ class AppHandler(SimpleHTTPRequestHandler):
             detail=safe,
         )
         print(f"[wecom_webhook] {code}: {message}; config={safe}")
+
+    @staticmethod
+    def _infra_query_value(query: str, key: str, default: str = "") -> str:
+        values = urllib.parse.parse_qs(query, keep_blank_values=True).get(key) or []
+        return str(values[0] if values else default).strip()
+
+    def _infra_response(self, callback) -> None:
+        try:
+            result = callback()
+            payload: dict[str, Any] = {"ok": True}
+            if isinstance(result, dict):
+                payload.update(result)
+            elif result is not None:
+                payload["result"] = result
+            self._send_json(200, payload)
+        except InfraError as err:
+            self._send_json(err.status, {"ok": False, "error": str(err), "code": err.code})
+        except Exception as err:
+            self._send_json(500, {"ok": False, "error": f"基础设施服务异常：{err}", "code": "infra_internal_error"})
+
+    def _handle_infra_config_get(self) -> None:
+        self._infra_response(lambda: {"config": _infra_service().public_config()})
+
+    def _handle_infra_summary_get(self, query: str) -> None:
+        force = self._infra_query_value(query, "force").lower() in {"1", "true", "yes", "on"}
+
+        def action() -> dict[str, Any]:
+            summary = _infra_service().summary(force=force)
+            summary["integrations"] = _infra_integration_cards()
+            return {"summary": summary}
+
+        self._infra_response(action)
+
+    def _handle_infra_host_status_get(self, query: str) -> None:
+        host_id = self._infra_query_value(query, "hostId")
+        self._infra_response(lambda: {"status": _infra_service().host_status(host_id)})
+
+    def _handle_infra_docker_inventory_get(self, query: str) -> None:
+        host_id = self._infra_query_value(query, "hostId")
+        self._infra_response(lambda: {"inventory": _infra_service().docker_inventory(host_id)})
+
+    def _handle_infra_container_logs_get(self, query: str) -> None:
+        host_id = self._infra_query_value(query, "hostId")
+        container = self._infra_query_value(query, "container")
+        try:
+            tail = int(self._infra_query_value(query, "tail", "300"))
+        except ValueError:
+            tail = 300
+        self._infra_response(lambda: {"result": _infra_service().container_logs(host_id, container, tail=tail)})
+
+    def _handle_infra_operations_get(self, query: str) -> None:
+        try:
+            limit = int(self._infra_query_value(query, "limit", "80"))
+        except ValueError:
+            limit = 80
+        self._infra_response(lambda: {"operations": _infra_service().operations.list(limit=limit)})
+
+    def _handle_infra_host_save(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        def action() -> dict[str, Any]:
+            host = _infra_service().save_host(body)
+            self._log_event(module="docker", action="infra_host_save", message="已保存云服务器连接配置。", status=200, detail={"hostId": host.get("id"), "name": host.get("name")})
+            return {"host": host, "config": _infra_service().public_config()}
+
+        self._infra_response(action)
+
+    def _handle_infra_host_test(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        host_id = str(body.get("hostId") or "").strip()
+        self._infra_response(lambda: {"result": _infra_service().test_host(host_id)})
+
+    def _handle_infra_host_delete(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        host_id = str(body.get("hostId") or "").strip()
+
+        def action() -> dict[str, Any]:
+            _infra_service().delete_host(host_id)
+            self._log_event(module="docker", action="infra_host_delete", message="已删除云服务器连接配置。", status=200, detail={"hostId": host_id})
+            return {"config": _infra_service().public_config()}
+
+        self._infra_response(action)
+
+    def _handle_infra_project_save(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        def action() -> dict[str, Any]:
+            project = _infra_service().save_project(body)
+            self._log_event(module="docker", action="infra_project_save", message="已保存 Compose 项目。", status=200, detail={"projectId": project.get("id"), "hostId": project.get("hostId")})
+            return {"project": project, "config": _infra_service().public_config()}
+
+        self._infra_response(action)
+
+    def _handle_infra_project_delete(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        project_id = str(body.get("projectId") or "").strip()
+
+        def action() -> dict[str, Any]:
+            _infra_service().delete_project(project_id)
+            self._log_event(module="docker", action="infra_project_delete", message="已删除 Compose 项目配置。", status=200, detail={"projectId": project_id})
+            return {"config": _infra_service().public_config()}
+
+        self._infra_response(action)
+
+    def _handle_infra_container_action(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        self._infra_response(lambda: {"operation": _infra_service().submit_container_action(str(body.get("hostId") or "").strip(), str(body.get("container") or "").strip(), str(body.get("action") or "").strip())})
+
+    def _handle_infra_image_pull(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        self._infra_response(lambda: {"operation": _infra_service().submit_image_pull(str(body.get("hostId") or "").strip(), str(body.get("image") or "").strip())})
+
+    def _handle_infra_compose_action(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        self._infra_response(lambda: {"operation": _infra_service().submit_compose_action(str(body.get("projectId") or "").strip(), str(body.get("action") or "").strip())})
+
+    def _handle_infra_dashboard_save(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        def action() -> dict[str, Any]:
+            result = _infra_service().save_dashboard(body)
+            self._log_event(module="docker", action="infra_dashboard_save", message="已保存服务导航配置。", status=200, detail={"serviceCardCount": len(result.get("serviceCards") or [])})
+            return {"config": _infra_service().public_config()}
+
+        self._infra_response(action)
 
     def _handle_bot_config_get(self) -> None:
         handle_bot_config_get(

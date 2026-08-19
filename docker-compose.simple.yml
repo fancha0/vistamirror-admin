@@ -3,6 +3,8 @@ services:
     image: lishiya003/vistamirror-admin:latest
     container_name: vistamirror-admin
     restart: unless-stopped
+    # Docker Socket 属于 root；用于本机 Docker 自动发现与容器管理。
+    user: "0:0"
     ports:
       - "8091:8091"
       # STRM 专用播放端；建议由独立播放域名或反代转发到这里。
@@ -17,8 +19,13 @@ services:
       - APP_ADMIN_AUTH_ENABLED=1
       - APP_ADMIN_USERNAME=admin
       - APP_ADMIN_PASSWORD=admin123
+      # 必填于密码/私钥 SSH 登录；请替换为 `openssl rand -hex 32` 生成的固定值。
+      - APP_INFRA_MASTER_KEY=请替换为长期不变的随机密钥
       - VISTAMIRROR_PUBLIC_BASE_URL=
       - APP_HDHIVE_AUTH_MODE=broker
       - APP_HDHIVE_BROKER_URL=
     volumes:
       - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 使用“密钥路径”SSH 认证时，取消注释并在页面填写 /app/ssh/对应文件名。
+      # - ./ssh:/app/ssh:ro

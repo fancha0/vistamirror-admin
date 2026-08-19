@@ -8,7 +8,8 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260730-operations-ui-1">
+  <link rel="stylesheet" href="styles.css?v=20260819-infra-1">
+  <link rel="stylesheet" href="infra.css?v=20260819-infra-1">
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -72,6 +73,11 @@
         <button class="nav-item" data-view="drive-115" type="button"><span class="nav-icon">📦</span>115网盘</button>
         <button class="nav-item" data-view="strm-115" type="button"><span class="nav-icon">▶</span>STRM 直连</button>
         <button class="nav-item" data-view="hdhive" type="button"><span class="nav-icon">🪺</span>影巢搜索</button>
+        <p class="nav-group-title">基础设施</p>
+        <button class="nav-item" data-view="infra-overview" type="button"><span class="nav-icon">◈</span>资源总览</button>
+        <button class="nav-item" data-view="infra-docker" type="button"><span class="nav-icon">▣</span>Docker 管理</button>
+        <button class="nav-item" data-view="infra-hosts" type="button"><span class="nav-icon">⌁</span>云服务器</button>
+        <button class="nav-item" data-view="service-nav" type="button"><span class="nav-icon">⌘</span>服务导航</button>
         <p class="nav-group-title">用户与终端</p>
         <button class="nav-item" data-view="user-center" type="button"><span class="nav-icon">👥</span>用户管理</button>
         <button class="nav-item" data-view="client-control" type="button"><span class="nav-icon">🖥</span>客户端管控</button>
@@ -1899,6 +1905,98 @@
         </div>
       </section>
 
+      <section id="view-infra-overview" class="view-section infra-view">
+        <div class="infra-page-shell">
+          <header class="infra-page-head">
+            <div>
+              <p class="infra-eyebrow">INFRASTRUCTURE / OVERVIEW</p>
+              <h2>资源总览</h2>
+              <p>聚合服务器资源、Docker 项目、操作队列与服务可用性。</p>
+            </div>
+            <button class="infra-btn infra-btn-primary" type="button" data-infra-action="refresh-summary">刷新状态</button>
+          </header>
+          <div id="infra-overview-metrics" class="infra-metric-grid"></div>
+          <div class="infra-overview-grid">
+            <section class="infra-card infra-card-span-2">
+              <div class="infra-card-head"><div><span>SERVER FLEET</span><h3>服务器状态</h3></div><button class="infra-link-btn" type="button" data-infra-view="infra-hosts">管理服务器</button></div>
+              <div id="infra-overview-hosts" class="infra-host-health-grid"></div>
+            </section>
+            <section class="infra-card">
+              <div class="infra-card-head"><div><span>OPERATION QUEUE</span><h3>最近操作</h3></div><button class="infra-link-btn" type="button" data-infra-view="infra-docker">进入 Docker</button></div>
+              <div id="infra-overview-operations" class="infra-operation-list"></div>
+            </section>
+            <section class="infra-card infra-card-span-3">
+              <div class="infra-card-head"><div><span>SERVICE HEALTH</span><h3>服务可用性</h3></div><button class="infra-link-btn" type="button" data-infra-view="service-nav">打开导航页</button></div>
+              <div id="infra-overview-services" class="infra-service-mini-grid"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-infra-docker" class="view-section infra-view">
+        <div class="infra-page-shell">
+          <header class="infra-page-head infra-page-head-row">
+            <div>
+              <p class="infra-eyebrow">DOCKER / COMPOSE</p>
+              <h2>Docker 管理</h2>
+              <p>按服务器集中查看项目、容器和镜像，所有变更进入可追踪操作队列。</p>
+            </div>
+            <div class="infra-toolbar">
+              <select id="infra-docker-host-select" class="infra-select" aria-label="选择服务器"></select>
+              <button class="infra-btn" type="button" data-infra-action="refresh-docker">刷新</button>
+              <button class="infra-btn" type="button" data-infra-action="pull-image">拉取镜像</button>
+              <button class="infra-btn infra-btn-primary" type="button" data-infra-action="add-project">添加 Compose</button>
+            </div>
+          </header>
+          <div class="infra-tabs" role="tablist" aria-label="Docker 数据类型">
+            <button class="active" type="button" data-infra-docker-tab="projects">Compose 项目</button>
+            <button type="button" data-infra-docker-tab="containers">容器</button>
+            <button type="button" data-infra-docker-tab="images">镜像</button>
+          </div>
+          <section class="infra-card infra-docker-panel">
+            <div id="infra-docker-content" class="infra-table-shell"></div>
+          </section>
+          <section class="infra-card infra-queue-card">
+            <div class="infra-card-head"><div><span>AUDIT TRAIL</span><h3>操作队列</h3></div><span id="infra-operation-live" class="infra-live-badge">自动刷新</span></div>
+            <div id="infra-docker-operations" class="infra-operation-table"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="view-infra-hosts" class="view-section infra-view">
+        <div class="infra-page-shell">
+          <header class="infra-page-head infra-page-head-row">
+            <div>
+              <p class="infra-eyebrow">SSH / SERVER FLEET</p>
+              <h2>云服务器</h2>
+              <p>通过加密 SSH 凭据管理 NAS 与云服务器，并校验主机指纹。</p>
+            </div>
+            <button class="infra-btn infra-btn-primary" type="button" data-infra-action="add-host">添加服务器</button>
+          </header>
+          <div id="infra-encryption-warning" class="infra-notice" hidden></div>
+          <div id="infra-host-list" class="infra-host-list"></div>
+        </div>
+      </section>
+
+      <section id="view-service-nav" class="view-section infra-view service-nav-view">
+        <div id="infra-service-nav-shell" class="infra-page-shell service-nav-shell">
+          <header class="infra-page-head infra-page-head-row service-nav-head">
+            <div>
+              <p class="infra-eyebrow">SERVICE LAUNCHPAD</p>
+              <h2>服务导航</h2>
+              <p>统一打开媒体服务、网盘、下载器与日常运维入口。</p>
+            </div>
+            <button class="infra-btn" type="button" data-infra-action="customize-services">自定义</button>
+          </header>
+          <div class="infra-service-search-row">
+            <input id="infra-service-search" type="search" placeholder="搜索服务名称、分组或标签…">
+            <div id="infra-service-groups" class="infra-chip-row"></div>
+          </div>
+          <div id="infra-service-grid" class="infra-service-grid"></div>
+          <div id="infra-desktop-pet" class="infra-desktop-pet" hidden aria-hidden="true"><span></span><i></i></div>
+        </div>
+      </section>
+
       <section id="view-about-support" class="view-section">
         <div class="dashboard-grid logs-grid">
           <section class="panel">
@@ -1927,6 +2025,16 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="infra-modal" class="infra-modal" hidden>
+    <section class="infra-modal-panel" role="dialog" aria-modal="true" aria-labelledby="infra-modal-title">
+      <header class="infra-modal-head">
+        <div><p id="infra-modal-eyebrow" class="infra-eyebrow">CONFIGURATION</p><h3 id="infra-modal-title">配置</h3></div>
+        <button class="infra-modal-close" type="button" data-infra-action="close-modal" aria-label="关闭">×</button>
+      </header>
+      <div id="infra-modal-body" class="infra-modal-body"></div>
+    </section>
   </div>
 
   <div id="global-toast" class="global-toast" hidden></div>
@@ -2372,7 +2480,8 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260723-moviepilot-workbench-1"></script>
+  <script src="script.js?v=20260819-infra-1"></script>
+  <script src="infra.js?v=20260819-infra-1"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

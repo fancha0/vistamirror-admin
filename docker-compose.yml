@@ -3,6 +3,8 @@ services:
     image: ${IMAGE_NAME:-lishiya003/vistamirror-admin:latest}
     container_name: vistamirror-admin
     restart: unless-stopped
+    # Docker Socket 属于 root；开启本机 Docker 自动管理时需保留此用户设置。
+    user: "0:0"
     env_file:
       - .env
     environment:
@@ -30,12 +32,18 @@ services:
       APP_ADMIN_SESSION_TTL_SECONDS: ${APP_ADMIN_SESSION_TTL_SECONDS:-86400}
       APP_ADMIN_LOGIN_MAX_FAILS: ${APP_ADMIN_LOGIN_MAX_FAILS:-5}
       APP_ADMIN_LOGIN_LOCK_SECONDS: ${APP_ADMIN_LOGIN_LOCK_SECONDS:-900}
+      # 用于加密多服务器 SSH 密码/私钥；生产环境请设置为足够长的随机值并保持不变。
+      APP_INFRA_MASTER_KEY: ${APP_INFRA_MASTER_KEY:-}
     ports:
       - "${APP_PORT:-8091}:${APP_PORT:-8091}"
       # 仅提供已签名的 /d/* 播放链接；如使用公网反代，请将播放域名转发至此端口。
       - "${APP_STRM_PLAYBACK_PORT:-8099}:${APP_STRM_PLAYBACK_PORT:-8099}"
     volumes:
       - ./data:/app/data
+      # 本机 Docker 自动发现、容器日志与预设启停操作。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 如使用“密钥路径”认证，可取消注释并在页面填写 /app/ssh/对应文件名。
+      # - ./ssh:/app/ssh:ro
     healthcheck:
       test:
         [

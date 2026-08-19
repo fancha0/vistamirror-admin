@@ -10,6 +10,8 @@ services:
     image: lishiya003/vistamirror-admin:latest
     container_name: vistamirror-admin
     restart: unless-stopped
+    # 允许读取宿主机 Docker Socket；只建议用于受信任的内网管理环境。
+    user: "0:0"
     ports:
       - "8091:8091"
       # STRM 已签名播放链接专用端口（/d/*）
@@ -24,8 +26,11 @@ services:
       - APP_ADMIN_AUTH_ENABLED=1
       - APP_ADMIN_USERNAME=admin
       - APP_ADMIN_PASSWORD=admin123
+      # 用于加密保存 SSH 密码/私钥，请替换并长期保持不变。
+      - APP_INFRA_MASTER_KEY=请替换为随机密钥
     volumes:
       - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
 ```
 
 启动（复制即用）：
@@ -72,7 +77,34 @@ docker compose -f docker-compose.simple.yml up -d --force-recreate
 - 完整版里像 `${APP_PORT:-8091}` 的写法不是乱码，而是变量默认值语法。
 - 含义：如果没设置 `APP_PORT`，就用默认值 `8091`。
 
-## 5) 回滚镜像版本
+## 5) Docker 与云服务器工作台
+
+侧边栏的“资源总览 / Docker 管理 / 云服务器 / 服务导航”用于集中查看主机资源、
+Compose 项目、容器、镜像和内部服务。挂载 `/var/run/docker.sock` 后，系统会自动出现
+“本机 Docker”，无需配置 SSH，即可查看本机容器、镜像、Compose 标签、日志并执行预设
+启停动作。远程服务器才需要在“云服务器”中添加 SSH。
+
+Docker Socket 由 root 管理，因此 Compose 需要同时包含：
+
+```yaml
+user: "0:0"
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+```
+
+这相当于把本机 Docker 管理权限交给 VistaMirror，只应部署在受信任的内网环境。首次使用
+远程 SSH 的密码或私钥认证前，再生成并固定基础设施主密钥：
+
+```bash
+openssl rand -hex 32
+```
+
+把结果写入 Compose 的 `APP_INFRA_MASTER_KEY` 后重建容器。该值只用于服务端加密保存
+SSH 密码和私钥，不会返回前端；以后更换密钥会导致旧凭据无法解密，需要重新录入。
+推荐优先使用 SSH Agent 或只读挂载的密钥路径。远程操作只开放预设的容器和 Compose
+动作，不提供任意命令输入，也不会删除数据卷。
+
+## 6) 回滚镜像版本
 
 把 `image` 改成目标 tag（例如 `lishiya003/vistamirror-admin:v0.1.0`），然后执行：
 
@@ -81,11 +113,11 @@ docker compose -f docker-compose.simple.yml pull
 docker compose -f docker-compose.simple.yml up -d
 ```
 
-## 6) 访问地址
+## 7) 访问地址
 
 `http://<你的服务器IP或域名>:8091`
 
-## 7) STRM 播放端与 Emby 配置
+## 8) STRM 播放端与 Emby 配置
 
 STRM 的管理界面仍使用 `8091`；`8099` 是独立的 Emby Web/播放反代端：根路径及
 `/web/*`、Emby API 会转发到已配置的 Emby，`/d/*` 则处理 VistaMirror 的签名 STRM
@@ -117,7 +149,7 @@ APP_EMBY_API_KEY=你的_Emby_API_Key
 Emby 刷库与媒体库查询，不参与浏览器登录、115 直链解析或 STRM 播放。若 Emby在同一
 Docker 网络中，优先将地址改为对应容器服务名，例如 `http://emby:8096`。
 
-## 8) Emby Webhook 回调地址怎么固定成 VistaMirror 自己的域名
+## 9) Emby Webhook 回调地址怎么固定成 VistaMirror 自己的域名
 
 如果你是 Docker 部署，并且希望后台生成的 Emby Webhook 地址始终指向 VistaMirror 自己的公网地址，请设置：
 
@@ -142,7 +174,7 @@ https://VistaMirror.lshiya.top:333/api/v1/webhook?token=vistamirror
 - 新版本优先读取 `VISTAMIRROR_PUBLIC_BASE_URL`。
 - 旧变量 `BOT_PUBLIC_BASE_URL` 仍兼容，但建议后续统一改成 `VISTAMIRROR_PUBLIC_BASE_URL`。
 
-## 8) 影巢一键授权代理
+## 10) 影巢一键授权代理
 
 一键授权需要单独部署公共代理，并在影巢“我的应用”中把固定回调地址登记为：
 

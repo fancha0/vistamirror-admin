@@ -1943,6 +1943,26 @@ const VIEW_META = {
     title: "MoviePilot 搜索",
     subtitle: "通过 MoviePilot MCP 发现影视并管理订阅、下载与服务"
   },
+  "infra-overview": {
+    icon: "◈",
+    title: "资源总览",
+    subtitle: "聚合服务器资源、Docker 项目、操作队列与服务状态"
+  },
+  "infra-docker": {
+    icon: "▣",
+    title: "Docker 管理",
+    subtitle: "集中管理 Compose 项目、容器、镜像与运行日志"
+  },
+  "infra-hosts": {
+    icon: "⌁",
+    title: "云服务器",
+    subtitle: "维护多台 SSH 服务器连接、分组与状态监控"
+  },
+  "service-nav": {
+    icon: "⌘",
+    title: "服务导航",
+    subtitle: "集中打开媒体服务、网盘、下载器和运维入口"
+  },
   invites: {
     icon: "🔗",
     title: "邀请码管理",
@@ -15502,7 +15522,7 @@ async function startPostAuthBootstrap() {
   const FORCE_DESKTOP_LAYOUT = false;
   const mobileQuery = window.matchMedia("(max-width: 768px)");
   const compactQuery = window.matchMedia("(min-width: 769px) and (max-width: 1366px)");
-  const primaryTabViews = new Set(["overview", "workorders", "user-center"]);
+  const primaryTabViews = new Set(["overview", "moviepilot-search", "user-center"]);
   let mounted = false;
   let drawerHideTimer = null;
   let currentMode = "desktop";
@@ -15590,9 +15610,9 @@ async function startPostAuthBootstrap() {
       return;
     }
     const activeView = getActiveNavView();
-    let activeTabKey = "data";
-    if (activeView === "workorders") {
-      activeTabKey = "workorders";
+    let activeTabKey = "home";
+    if (activeView === "moviepilot-search") {
+      activeTabKey = "explore";
     } else if (activeView === "user-center") {
       activeTabKey = "user";
     } else if (activeView && !["overview", "content-ranking", "data-insights", "users", "missing", "dedup", "logs"].includes(activeView)) {
@@ -15657,8 +15677,8 @@ async function startPostAuthBootstrap() {
     bottomBar.hidden = true;
 
     const tabs = [
-      { key: "data", label: "数据", icon: "📈", view: "overview" },
-      { key: "workorders", label: "工单", icon: "🎬", view: "workorders" },
+      { key: "home", label: "首页", icon: "⌂", view: "overview" },
+      { key: "explore", label: "探索", icon: "⌕", view: "moviepilot-search" },
       { key: "user", label: "用户", icon: "👥", view: "user-center" },
       { key: "menu", label: "菜单", icon: "☰", view: "" }
     ];
