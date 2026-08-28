@@ -1604,6 +1604,9 @@ def _get_login_backdrop_payload() -> dict[str, Any]:
         cache = _read_login_backdrop_cache()
         now = time.time()
         fresh = bool(cache) and now - float(cache.get("fetchedAt") or 0) < LOGIN_BACKDROP_CACHE_TTL_SECONDS
+        if fresh and cache and not any(float(p.get("rating") or 0) > 0 for p in cache["posters"]):
+            # 旧版缓存没有评分字段（角标依赖），当作过期处理强制刷新
+            fresh = False
         cooling = now - LOGIN_BACKDROP_LAST_ATTEMPT < LOGIN_BACKDROP_RETRY_SECONDS
         should_fetch = not fresh and not cooling
         if should_fetch:
