@@ -349,6 +349,73 @@ body .admin-auth-card .admin-auth-form .password-field input:focus {
   .auth-backdrop-col {
     animation: none;
   }
+
+  .admin-auth-shell.auth-curtain-exit,
+  .admin-auth-shell.auth-curtain-exit .auth-backdrop-col,
+  .admin-auth-shell.auth-curtain-exit .admin-auth-card,
+  .app-layout.auth-curtain-enter {
+    animation: none !important;
+  }
+}
+
+/* ---------- 登录成功「大幕拉开」退场 ---------- */
+
+.admin-auth-shell.auth-curtain-exit {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  animation: auth-shell-fade 0.45s ease 0.45s forwards;
+}
+
+.admin-auth-shell.auth-curtain-exit .auth-backdrop {
+  opacity: 1;
+  transition: none;
+}
+
+.admin-auth-shell.auth-curtain-exit .auth-backdrop-col {
+  animation: auth-curtain-up 0.85s cubic-bezier(0.6, 0, 0.25, 1) forwards;
+}
+
+.admin-auth-shell.auth-curtain-exit .auth-backdrop-col:nth-child(even) {
+  animation-name: auth-curtain-down;
+}
+
+.admin-auth-shell.auth-curtain-exit .auth-backdrop-tint {
+  animation: auth-shell-fade 0.6s ease 0.3s forwards;
+}
+
+.admin-auth-shell.auth-curtain-exit .admin-auth-card {
+  animation: auth-card-exit 0.55s cubic-bezier(0.5, 0, 0.75, 0.4) forwards;
+}
+
+.app-layout.auth-curtain-enter {
+  animation: auth-app-enter 0.9s cubic-bezier(0.25, 0.6, 0.25, 1) both;
+}
+
+@keyframes auth-curtain-up {
+  from { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(-115%); opacity: 0.4; }
+}
+
+@keyframes auth-curtain-down {
+  from { transform: translateY(-50%); opacity: 1; }
+  to   { transform: translateY(65%); opacity: 0.4; }
+}
+
+@keyframes auth-card-exit {
+  from { transform: scale(1); opacity: 1; }
+  to   { transform: scale(0.92); opacity: 0; }
+}
+
+@keyframes auth-shell-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes auth-app-enter {
+  from { opacity: 0; transform: scale(1.035); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 /* ---------- 移动端：卡片居中，加强白罩 ---------- */

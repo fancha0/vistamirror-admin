@@ -2794,6 +2794,31 @@ function applyAuthUiState({ mode = "loading", user = "" } = {}) {
   appState.authUser = String(user || "");
 }
 
+// 登录成功「大幕拉开」过渡：海报墙列上下滑出、卡片缩退，应用内容淡入
+function playAuthCurtainReveal({ user = "" } = {}) {
+  const shell = elements.authShell;
+  const root = elements.appRoot;
+  const reducedMotion = Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  applyAuthUiState({ mode: "ready", user });
+  if (!shell || !root || reducedMotion || !shell.classList.contains("auth-wall-on")) {
+    return Promise.resolve();
+  }
+  // applyAuthUiState 会把登录壳 display:none，这里重新显示以播放退场动画
+  shell.hidden = false;
+  shell.style.display = "";
+  shell.classList.add("auth-curtain-exit");
+  root.classList.add("auth-curtain-enter");
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      shell.classList.remove("auth-curtain-exit");
+      shell.hidden = true;
+      shell.style.display = "none";
+      root.classList.remove("auth-curtain-enter");
+      resolve();
+    }, 900);
+  });
+}
+
 function onUnauthorizedDetected() {
   if (!appState.authEnabled) {
     return;
@@ -2953,8 +2978,8 @@ async function handleAdminLoginSubmit(event) {
     appState.authUser = String(payload?.user?.name || username);
     elements.authPassword.value = "";
     elements.authForm?.classList.remove("auth-input-error");
-    applyAuthUiState({ mode: "ready", user: appState.authUser });
-    await startPostAuthBootstrap();
+    const curtainReveal = playAuthCurtainReveal({ user: appState.authUser });
+    await Promise.all([curtainReveal, startPostAuthBootstrap()]);
   } catch (error) {
     const errorPayload = error?.payload && typeof error.payload === "object" ? error.payload : {};
     triggerAuthShake();
