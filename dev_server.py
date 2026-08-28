@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Local development server for Emby Pulse UI.
 
@@ -181,6 +181,14 @@ PLAYBACK_EVENT_LOG_FILE = DATA_DIR / "playback_events.jsonl"
 PROJECT_EVENT_LOG_FILE = DATA_DIR / "project_events.jsonl"
 PROJECT_EVENT_STATE_FILE = DATA_DIR / ".project_events_state.json"
 MISSING_SCAN_CACHE_FILE = DATA_DIR / "missing_scan.json"
+LOGIN_BACKDROP_CACHE_FILE = DATA_DIR / "login_backdrop_cache.json"
+LOGIN_BACKDROP_EMBY_CACHE_FILE = DATA_DIR / "login_backdrop_emby_cache.json"
+LOGIN_BACKDROP_IMAGE_DIR = DATA_DIR / "login_backdrop_images"
+LOGIN_BACKDROP_CACHE_TTL_SECONDS = 12 * 3600
+LOGIN_BACKDROP_EMBY_CACHE_TTL_SECONDS = 6 * 3600
+LOGIN_BACKDROP_RETRY_SECONDS = 600
+LOGIN_BACKDROP_LOCK = threading.Lock()
+LOGIN_BACKDROP_LAST_ATTEMPT = 0.0
 MISSING_SCAN_STATE_LOCK = threading.Lock()
 MISSING_SCAN_STATE: dict[str, Any] = {
     "running": False,
@@ -334,27 +342,6 @@ def _infra_service() -> InfraService:
     if _INFRA_SERVICE is None:
         _INFRA_SERVICE = InfraService(data_dir=DATA_DIR, event_logger=_write_project_event)
     return _INFRA_SERVICE
-
-
-def _infra_integration_cards() -> list[dict[str, Any]]:
-    with STORE_LOCK:
-        store = _read_store_unlocked()
-        emby = _apply_emby_env_overrides(store.get("embyConfig"))
-        moviepilot = _apply_moviepilot_env_overrides(store.get("moviePilotConfig"))
-        drive115 = _apply_drive115_env_overrides(store.get("drive115Config"))
-    with STRM115_LOCK:
-        strm115 = _read_strm115_config_unlocked()
-    emby_ready = bool(str(emby.get("serverUrl") or "").strip() and str(emby.get("apiKey") or "").strip())
-    moviepilot_ready = bool(moviepilot.get("enabled") and str(moviepilot.get("baseUrl") or "").strip())
-    drive115_ready = bool(drive115.get("enabled") and str(drive115.get("cookie") or "").strip())
-    strm_ready = bool(strm115.get("enabled") and str(strm115.get("sourceCid") or "").strip() and str(strm115.get("outputDir") or "").strip())
-    return [
-        {"id": "builtin-vistamirror", "name": "VistaMirror", "icon": "V", "group": "媒体服务", "status": "online", "detail": "当前管理端", "url": "", "view": "overview"},
-        {"id": "builtin-emby", "name": "Emby", "icon": "▶", "group": "媒体服务", "status": "configured" if emby_ready else "unconfigured", "detail": "已连接" if emby_ready else "未配置", "url": str(emby.get("serverUrl") or "").strip()},
-        {"id": "builtin-moviepilot", "name": "MoviePilot", "icon": "M", "group": "媒体服务", "status": "configured" if moviepilot_ready else "unconfigured", "detail": "已启用" if moviepilot_ready else "未启用", "url": str(moviepilot.get("baseUrl") or "").strip(), "view": "moviepilot-search"},
-        {"id": "builtin-115", "name": "115 网盘", "icon": "☁", "group": "网盘", "status": "configured" if drive115_ready else "unconfigured", "detail": "已登录" if drive115_ready else "未配置", "url": "https://115.com" if drive115_ready else "", "view": "drive-115"},
-        {"id": "builtin-strm", "name": "STRM 直连", "icon": "S", "group": "媒体服务", "status": "configured" if strm_ready else "unconfigured", "detail": "引擎已启用" if strm_ready else "未配置", "url": "", "view": "strm-115"},
-    ]
 
 
 def _cover_studio_service() -> CoverStudioService:
@@ -829,6 +816,62 @@ def _env_managed_bot_fields() -> list[str]:
     return managed
 
 
+NETWORK_ENV_FIELD_MAP: dict[str, str] = {
+    "proxyUrl": "APP_NETWORK_PROXY_URL",
+}
+
+
+def _normalize_network_config(raw: Any) -> dict[str, Any]:
+    source = raw if isinstance(raw, dict) else {}
+    proxy = str(source.get("proxyUrl") or "").strip()
+    # urllib 原生只支持 http/https 代理；socks 等其他协议一律视为未配置。
+    if proxy and not re.match(r"^https?://", proxy, flags=re.IGNORECASE):
+        proxy = ""
+    return {"proxyUrl": proxy}
+
+
+def _apply_network_env_overrides(raw: Any) -> dict[str, Any]:
+    merged = _normalize_network_config(raw)
+    for field, env_name in NETWORK_ENV_FIELD_MAP.items():
+        env_value = _env_override_value(env_name)
+        if env_value:
+            merged[field] = _normalize_network_config({field: env_value}).get(field) or ""
+    return merged
+
+
+def _env_managed_network_fields() -> list[str]:
+    managed: list[str] = []
+    for field, env_name in NETWORK_ENV_FIELD_MAP.items():
+        if _env_override_value(env_name):
+            managed.append(field)
+    return managed
+
+
+def _network_proxy_url() -> str:
+    try:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            config = _apply_network_env_overrides(store.get("networkConfig"))
+    except Exception:
+        config = _apply_network_env_overrides(None)
+    return str(config.get("proxyUrl") or "").strip()
+
+
+def _urlopen_global(request: urllib.request.Request, *, timeout: float, context: ssl.SSLContext | None = None):
+    """urlopen honoring the global network proxy (TMDB and other public Internet calls)."""
+    proxy = _network_proxy_url()
+    handlers: list[Any] = []
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    if proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    if handlers:
+        return urllib.request.build_opener(*handlers).open(request, timeout=timeout)
+    if context is not None:
+        return urllib.request.urlopen(request, context=context, timeout=timeout)
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 def _env_managed_ai_fields() -> list[str]:
     return env_managed_ai_fields()
 
@@ -1162,6 +1205,7 @@ def _read_store_unlocked() -> dict[str, Any]:
             default_drive115_config=_default_drive115_config,
             default_hdhive_config=_default_hdhive_config,
             default_library_directory_config=_default_library_directory_config,
+            default_network_config=lambda: _normalize_network_config(None),
             sync_notification_config_to_bot_config=sync_notification_config_to_bot_config,
         )
 
@@ -1177,11 +1221,389 @@ def _read_store_unlocked() -> dict[str, Any]:
         normalize_drive115_config=_normalize_drive115_config,
         normalize_hdhive_config=_normalize_hdhive_config,
         normalize_library_directory_config=_normalize_library_directory_config,
+        normalize_network_config=_normalize_network_config,
     )
 
 
 def _write_store_unlocked(store: dict[str, Any]) -> None:
     app_store.write_store_unlocked(path=_store_path(), store=store)
+
+
+def _read_login_backdrop_cache() -> dict[str, Any]:
+    try:
+        payload = json.loads(LOGIN_BACKDROP_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    posters = payload.get("posters")
+    if not isinstance(posters, list):
+        return {}
+    safe_posters = []
+    for item in posters:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not re.fullmatch(r"/[A-Za-z0-9_-]+\.(?:jpg|png|webp)", path):
+            # 兼容旧版缓存：从完整 url 里提取 poster path
+            url = str(item.get("url") or "").strip()
+            match = re.search(r"(/[A-Za-z0-9_-]+\.(?:jpg|png|webp))$", url)
+            path = match.group(1) if match else ""
+        if not path:
+            continue
+        safe_posters.append({
+            "path": path,
+            "title": str(item.get("title") or "").strip(),
+            "mediaType": "tv" if item.get("mediaType") == "tv" else "movie",
+        })
+    if not safe_posters:
+        return {}
+    return {
+        "fetchedAt": float(payload.get("fetchedAt") or 0),
+        "posters": safe_posters,
+    }
+
+
+def _write_login_backdrop_cache(posters: list[dict[str, Any]]) -> None:
+    payload = {"fetchedAt": time.time(), "posters": posters}
+    try:
+        LOGIN_BACKDROP_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = LOGIN_BACKDROP_CACHE_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(LOGIN_BACKDROP_CACHE_FILE)
+    except OSError:
+        pass
+
+
+def _login_backdrop_public_posters(posters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose posters through the same-origin image proxy so browsers never need
+    direct access to image.tmdb.org (often unreachable from CN networks)."""
+    public: list[dict[str, Any]] = []
+    for item in posters:
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        public.append({
+            "url": f"/api/public/login-backdrop/image?p={urllib.parse.quote(path)}",
+            "title": str(item.get("title") or "").strip(),
+            "mediaType": str(item.get("mediaType") or "movie"),
+        })
+    return public
+
+
+def _fetch_tmdb_image_bytes(poster_path: str) -> bytes | None:
+    request = urllib.request.Request(
+        f"https://image.tmdb.org/t/p/w342{poster_path}",
+        headers={"Accept": "image/*", "User-Agent": "Vistamirror/1.0"},
+    )
+    try:
+        with _urlopen_global(request, timeout=15) as response:
+            return response.read(3 * 1024 * 1024)
+    except Exception:
+        return None
+
+
+def _load_login_backdrop_image(poster_path: str) -> bytes | None:
+    """Fetch one TMDB poster server-side with a permanent on-disk cache."""
+    if not re.fullmatch(r"/[A-Za-z0-9_-]+\.(?:jpg|png|webp)", poster_path or ""):
+        return None
+    safe_name = hashlib.sha1(poster_path.encode("utf-8")).hexdigest() + pathlib.Path(poster_path).suffix
+    cache_file = LOGIN_BACKDROP_IMAGE_DIR / safe_name
+    cached = _read_login_backdrop_image_cache(cache_file)
+    if cached is not None:
+        return cached
+    # 与趋势接口同理：DNS 被污染时 getaddrinfo 不受 timeout 约束，用线程做硬超时。
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        content = executor.submit(_fetch_tmdb_image_bytes, poster_path).result(timeout=18)
+    except Exception:
+        content = None
+    finally:
+        executor.shutdown(wait=False)
+    if not content:
+        return None
+    return _write_login_backdrop_image_cache(cache_file, content)
+
+
+def _read_login_backdrop_image_cache(cache_file: pathlib.Path) -> bytes | None:
+    try:
+        if cache_file.is_file() and cache_file.stat().st_size > 0:
+            return cache_file.read_bytes()
+    except OSError:
+        pass
+    return None
+
+
+def _write_login_backdrop_image_cache(cache_file: pathlib.Path, content: bytes) -> bytes | None:
+    if not content:
+        return None
+    try:
+        LOGIN_BACKDROP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = cache_file.with_suffix(".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(cache_file)
+    except OSError:
+        pass
+    return content
+
+
+def _load_login_backdrop_emby_image(item_id: str, tag: str) -> bytes | None:
+    """Fetch one Emby primary poster via the configured server, disk-cached.
+
+    Lets the login wall work even when TMDB is unreachable: browsers only talk
+    to VistaMirror, never to Emby directly, and the API key stays server-side.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9]{1,64}", item_id or ""):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", tag or ""):
+        return None
+    with STORE_LOCK:
+        store = _read_store_unlocked()
+        emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
+    server_url = str(emby_config.get("serverUrl") or "").strip().rstrip("/")
+    api_key = str(emby_config.get("apiKey") or "").strip()
+    if not server_url or not api_key:
+        return None
+    cache_key = f"emby:{item_id}:{tag}"
+    cache_file = LOGIN_BACKDROP_IMAGE_DIR / (hashlib.sha1(cache_key.encode("utf-8")).hexdigest() + ".jpg")
+    cached = _read_login_backdrop_image_cache(cache_file)
+    if cached is not None:
+        return cached
+    api_base = server_url if server_url.lower().endswith("/emby") else f"{server_url}/emby"
+    query = urllib.parse.urlencode({"tag": tag, "maxWidth": 342, "quality": 90})
+    request = urllib.request.Request(
+        f"{api_base}/Items/{item_id}/Images/Primary?{query}",
+        headers={"X-Emby-Token": api_key, "Accept": "image/*", "User-Agent": "Vistamirror/1.0"},
+    )
+    ssl_ctx = ssl._create_unverified_context()
+    try:
+        with urllib.request.urlopen(request, context=ssl_ctx, timeout=15) as response:
+            content = response.read(3 * 1024 * 1024)
+    except Exception:
+        return None
+    return _write_login_backdrop_image_cache(cache_file, content)
+
+
+def _read_login_backdrop_emby_cache() -> dict[str, Any]:
+    try:
+        payload = json.loads(LOGIN_BACKDROP_EMBY_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("posters"), list):
+        return {}
+    safe = []
+    for item in payload["posters"]:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("embyId") or "").strip()
+        tag = str(item.get("tag") or "").strip()
+        if not item_id or not tag:
+            continue
+        safe.append({
+            "embyId": item_id,
+            "tag": tag,
+            "title": str(item.get("title") or "").strip(),
+            "mediaType": "tv" if item.get("mediaType") == "tv" else "movie",
+        })
+    if not safe:
+        return {}
+    return {"fetchedAt": float(payload.get("fetchedAt") or 0), "posters": safe}
+
+
+def _write_login_backdrop_emby_cache(posters: list[dict[str, Any]]) -> None:
+    payload = {"fetchedAt": time.time(), "posters": posters}
+    try:
+        LOGIN_BACKDROP_EMBY_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = LOGIN_BACKDROP_EMBY_CACHE_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(LOGIN_BACKDROP_EMBY_CACHE_FILE)
+    except OSError:
+        pass
+
+
+def _fetch_emby_library_posters(server_url: str, api_key: str, *, limit: int = 60) -> list[dict[str, Any]]:
+    api_base = server_url if server_url.lower().endswith("/emby") else f"{server_url}/emby"
+    query = urllib.parse.urlencode({
+        "IncludeItemTypes": "Movie,Series",
+        "Recursive": "true",
+        "ImageTypes": "Primary",
+        "SortBy": "Random",
+        "Limit": max(limit * 2, 120),
+        "Fields": "Name",
+    })
+    request = urllib.request.Request(
+        f"{api_base}/Items?{query}",
+        headers={"X-Emby-Token": api_key, "Accept": "application/json", "User-Agent": "Vistamirror/1.0"},
+    )
+    ssl_ctx = ssl._create_unverified_context()
+    with urllib.request.urlopen(request, context=ssl_ctx, timeout=15) as response:
+        result = json.loads(response.read().decode("utf-8", errors="replace"))
+    items = result.get("Items") if isinstance(result, dict) else None
+    if not isinstance(items, list):
+        raise RuntimeError("Emby 返回了无法识别的响应。")
+    posters: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("Id") or "").strip()
+        tags = item.get("ImageTags") if isinstance(item.get("ImageTags"), dict) else {}
+        tag = str(tags.get("Primary") or "").strip()
+        if not item_id or not tag or item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+        posters.append({
+            "embyId": item_id,
+            "tag": tag,
+            "title": str(item.get("Name") or "").strip(),
+            "mediaType": "tv" if item.get("Type") == "Series" else "movie",
+        })
+        if len(posters) >= limit:
+            break
+    if not posters:
+        raise RuntimeError("Emby 媒体库中没有可用的海报。")
+    return posters
+
+
+def _get_login_backdrop_emby_payload(emby_config: dict[str, Any]) -> dict[str, Any]:
+    """Fallback poster source: the user's own Emby library."""
+    server_url = str(emby_config.get("serverUrl") or "").strip().rstrip("/")
+    api_key = str(emby_config.get("apiKey") or "").strip()
+    if not server_url or not api_key:
+        return {"ok": True, "configured": False, "posters": []}
+    with LOGIN_BACKDROP_LOCK:
+        cache = _read_login_backdrop_emby_cache()
+        now = time.time()
+        if cache and now - float(cache.get("fetchedAt") or 0) < LOGIN_BACKDROP_EMBY_CACHE_TTL_SECONDS:
+            posters = cache["posters"]
+        else:
+            try:
+                posters = _fetch_emby_library_posters(server_url, api_key)
+            except Exception:
+                posters = cache["posters"] if cache else []
+            else:
+                _write_login_backdrop_emby_cache(posters)
+        public = []
+        for item in posters:
+            public.append({
+                "url": "/api/public/login-backdrop/image?src=emby&id={}&tag={}".format(
+                    urllib.parse.quote(item["embyId"]), urllib.parse.quote(item["tag"])),
+                "title": item["title"],
+                "mediaType": item["mediaType"],
+            })
+        return {"ok": True, "configured": bool(public), "posters": public, "source": "emby"}
+
+
+def _fetch_tmdb_trending_posters(token: str, language: str, region: str) -> list[dict[str, Any]]:
+    """Collect up to 3 trending pages (deduped) so each wall column gets ~10
+    unique posters before the seamless-loop copy kicks in."""
+    posters: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for page in (1, 2, 3):
+        query = urllib.parse.urlencode({"language": language, "region": region, "page": page})
+        request = urllib.request.Request(
+            f"https://api.themoviedb.org/3/trending/all/week?{query}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "Accept-Language": language,
+                "User-Agent": "Vistamirror/1.0",
+            },
+        )
+        with _urlopen_global(request, timeout=12) as response:
+            result = json.loads(response.read().decode("utf-8", errors="replace"))
+        items = result.get("results") if isinstance(result, dict) else None
+        if not isinstance(items, list):
+            raise RuntimeError("TMDB 返回了无法识别的响应。")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            media_type = str(item.get("media_type") or "")
+            if media_type not in {"movie", "tv"}:
+                continue
+            poster_path = str(item.get("poster_path") or "").strip()
+            if not poster_path.startswith("/") or poster_path in seen_paths:
+                continue
+            seen_paths.add(poster_path)
+            title = str(item.get("title") or item.get("name") or "").strip()
+            posters.append({
+                "path": poster_path,
+                "title": title,
+                "mediaType": media_type,
+            })
+            if len(posters) >= 60:
+                return posters
+    if not posters:
+        raise RuntimeError("TMDB 趋势列表中没有可用的海报。")
+    return posters
+
+
+def _fetch_tmdb_trending_posters_bounded(token: str, language: str, region: str, *, hard_timeout: float = 15.0) -> list[dict[str, Any]] | None:
+    """TMDB fetch with a wall-clock cap.
+
+    ``urlopen``'s timeout does not cover DNS resolution; on networks where the
+    domain is poisoned/blocked ``getaddrinfo`` can hang forever and wedge every
+    request queued behind the backdrop lock. Run the fetch in a worker thread
+    and give up after ``hard_timeout`` seconds instead. The orphaned thread
+    dies on its own once the OS finally errors the lookup; attempts are
+    rate-limited by LOGIN_BACKDROP_RETRY_SECONDS so leaks stay bounded."""
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(_fetch_tmdb_trending_posters, token, language, region)
+        return future.result(timeout=hard_timeout)
+    except Exception:
+        return None
+    finally:
+        executor.shutdown(wait=False)
+
+
+def _get_login_backdrop_payload() -> dict[str, Any]:
+    """Public login-page backdrop: cached TMDB trending posters, never leaks the token.
+
+    Falls back to the user's own Emby library when TMDB is not configured or
+    unreachable, so the wall works on isolated networks too."""
+    global LOGIN_BACKDROP_LAST_ATTEMPT
+    with STORE_LOCK:
+        store = _read_store_unlocked()
+        emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
+    token = str(emby_config.get("tmdbToken") or "").strip()
+    language = str(emby_config.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN"
+    region = str(emby_config.get("tmdbRegion") or "CN").strip().upper() or "CN"
+    if not token:
+        return _get_login_backdrop_emby_payload(emby_config)
+
+    def _respond(posters: list[dict[str, Any]], **flags: Any) -> dict[str, Any]:
+        payload = {"ok": True, "configured": True, "posters": _login_backdrop_public_posters(posters), "source": "tmdb"}
+        payload.update(flags)
+        return payload
+
+    # Only cheap cache/lock bookkeeping here; never hold the lock across network I/O.
+    with LOGIN_BACKDROP_LOCK:
+        cache = _read_login_backdrop_cache()
+        now = time.time()
+        fresh = bool(cache) and now - float(cache.get("fetchedAt") or 0) < LOGIN_BACKDROP_CACHE_TTL_SECONDS
+        cooling = now - LOGIN_BACKDROP_LAST_ATTEMPT < LOGIN_BACKDROP_RETRY_SECONDS
+        should_fetch = not fresh and not cooling
+        if should_fetch:
+            LOGIN_BACKDROP_LAST_ATTEMPT = now
+
+    if fresh:
+        return _respond(cache["posters"], cached=True)
+    if cooling:
+        if cache:
+            return _respond(cache["posters"], stale=True)
+        return _get_login_backdrop_emby_payload(emby_config)
+
+    posters = _fetch_tmdb_trending_posters_bounded(token, language, region)
+    if not posters:
+        if cache:
+            return _respond(cache["posters"], stale=True)
+        emby_payload = _get_login_backdrop_emby_payload(emby_config)
+        if emby_payload.get("posters"):
+            return emby_payload
+        return {"ok": True, "configured": True, "posters": [], "error": "upstream"}
+    _write_login_backdrop_cache(posters)
+    return _respond(posters)
 
 
 def _read_strm115_config_unlocked() -> dict[str, Any]:
@@ -1432,6 +1854,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/strm/115/"):
             self._handle_strm115_playback(path, parsed.query)
             return
+        # Login-page poster wall: public by design; only returns TMDB image CDN
+        # URLs, the TMDB token stays server-side.
+        if path == "/api/public/login-backdrop":
+            self._handle_login_backdrop()
+            return
+        if path == "/api/public/login-backdrop/image":
+            self._handle_login_backdrop_image(parsed.query)
+            return
         if not self._enforce_admin_auth(method="GET", path=path):
             return
 
@@ -1459,6 +1889,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/moviepilot/config":
             self._handle_moviepilot_config_get()
+            return
+        if path == "/api/network/config":
+            self._handle_network_config_get()
             return
         if path == "/api/moviepilot/capabilities":
             self._handle_moviepilot_capabilities()
@@ -1523,14 +1956,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/infra/config":
             self._handle_infra_config_get()
             return
-        if path == "/api/infra/summary":
-            self._handle_infra_summary_get(parsed.query)
-            return
         if path == "/api/infra/host/status":
             self._handle_infra_host_status_get(parsed.query)
             return
         if path == "/api/infra/docker/inventory":
             self._handle_infra_docker_inventory_get(parsed.query)
+            return
+        if path == "/api/infra/docker/stats":
+            self._handle_infra_docker_stats_get(parsed.query)
             return
         if path == "/api/infra/container/logs":
             self._handle_infra_container_logs_get(parsed.query)
@@ -1622,9 +2055,6 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/infra/compose/action":
             self._handle_infra_compose_action()
             return
-        if path == "/api/infra/dashboard/save":
-            self._handle_infra_dashboard_save()
-            return
         if path == "/api/notifications/config":
             self._handle_notifications_config_save()
             return
@@ -1639,6 +2069,12 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/moviepilot/config":
             self._handle_moviepilot_config_save()
+            return
+        if path == "/api/network/config":
+            self._handle_network_config_save()
+            return
+        if path == "/api/network/test":
+            self._handle_network_test()
             return
         if path == "/api/moviepilot/test":
             self._handle_moviepilot_config_test()
@@ -2785,16 +3221,6 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _handle_infra_config_get(self) -> None:
         self._infra_response(lambda: {"config": _infra_service().public_config()})
 
-    def _handle_infra_summary_get(self, query: str) -> None:
-        force = self._infra_query_value(query, "force").lower() in {"1", "true", "yes", "on"}
-
-        def action() -> dict[str, Any]:
-            summary = _infra_service().summary(force=force)
-            summary["integrations"] = _infra_integration_cards()
-            return {"summary": summary}
-
-        self._infra_response(action)
-
     def _handle_infra_host_status_get(self, query: str) -> None:
         host_id = self._infra_query_value(query, "hostId")
         self._infra_response(lambda: {"status": _infra_service().host_status(host_id)})
@@ -2802,6 +3228,10 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _handle_infra_docker_inventory_get(self, query: str) -> None:
         host_id = self._infra_query_value(query, "hostId")
         self._infra_response(lambda: {"inventory": _infra_service().docker_inventory(host_id)})
+
+    def _handle_infra_docker_stats_get(self, query: str) -> None:
+        host_id = self._infra_query_value(query, "hostId")
+        self._infra_response(lambda: {"stats": _infra_service().docker_stats(host_id)})
 
     def _handle_infra_container_logs_get(self, query: str) -> None:
         host_id = self._infra_query_value(query, "hostId")
@@ -2826,7 +3256,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         def action() -> dict[str, Any]:
             host = _infra_service().save_host(body)
-            self._log_event(module="docker", action="infra_host_save", message="已保存云服务器连接配置。", status=200, detail={"hostId": host.get("id"), "name": host.get("name")})
+            self._log_event(module="docker", action="infra_host_save", message="已保存远程 Docker 主机连接配置。", status=200, detail={"hostId": host.get("id"), "name": host.get("name")})
             return {"host": host, "config": _infra_service().public_config()}
 
         self._infra_response(action)
@@ -2846,7 +3276,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         def action() -> dict[str, Any]:
             _infra_service().delete_host(host_id)
-            self._log_event(module="docker", action="infra_host_delete", message="已删除云服务器连接配置。", status=200, detail={"hostId": host_id})
+            self._log_event(module="docker", action="infra_host_delete", message="已删除远程 Docker 主机连接配置。", status=200, detail={"hostId": host_id})
             return {"config": _infra_service().public_config()}
 
         self._infra_response(action)
@@ -2893,18 +3323,6 @@ class AppHandler(SimpleHTTPRequestHandler):
         if body is None:
             return
         self._infra_response(lambda: {"operation": _infra_service().submit_compose_action(str(body.get("projectId") or "").strip(), str(body.get("action") or "").strip())})
-
-    def _handle_infra_dashboard_save(self) -> None:
-        body = self._read_json_body()
-        if body is None:
-            return
-
-        def action() -> dict[str, Any]:
-            result = _infra_service().save_dashboard(body)
-            self._log_event(module="docker", action="infra_dashboard_save", message="已保存服务导航配置。", status=200, detail={"serviceCardCount": len(result.get("serviceCards") or [])})
-            return {"config": _infra_service().public_config()}
-
-        self._infra_response(action)
 
     def _handle_bot_config_get(self) -> None:
         handle_bot_config_get(
@@ -3197,6 +3615,93 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "envControlledFields": _env_controlled_fields_payload(),
             },
         )
+
+    def _handle_network_config_get(self) -> None:
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            config = _apply_network_env_overrides(store.get("networkConfig"))
+        self._send_json(200, {
+            "ok": True,
+            "config": config,
+            "envManaged": _env_managed_network_fields(),
+        })
+
+    def _handle_network_config_save(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        raw_config = payload.get("networkConfig") if isinstance(payload, dict) else payload
+        if _env_managed_network_fields():
+            self._send_json(400, {"ok": False, "error": "该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。"})
+            return
+        proxy_raw = str((raw_config or {}).get("proxyUrl") or "").strip()
+        if proxy_raw and not re.match(r"^https?://", proxy_raw, flags=re.IGNORECASE):
+            self._send_json(400, {"ok": False, "error": "仅支持 http:// 或 https:// 代理地址（urllib 原生不支持 socks5）。"})
+            return
+        config = _normalize_network_config({"proxyUrl": proxy_raw})
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            store["networkConfig"] = config
+            _write_store_unlocked(store)
+        self._log_event(
+            level="info",
+            module="system",
+            action="network_config_saved",
+            message="全局网络代理配置已保存。" if config["proxyUrl"] else "全局网络代理已关闭。",
+            detail={"proxyEnabled": bool(config["proxyUrl"])},
+        )
+        self._send_json(200, {"ok": True, "config": config, "envManaged": []})
+
+    def _handle_network_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        submitted = str((payload or {}).get("proxyUrl") or "").strip()
+        if submitted and not re.match(r"^https?://", submitted, flags=re.IGNORECASE):
+            self._send_json(400, {"ok": False, "status": "invalid_proxy", "error": "仅支持 http:// 或 https:// 代理地址。"})
+            return
+        proxy = submitted or _network_proxy_url()
+
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            emby_config = _apply_emby_env_overrides(store.get("embyConfig"))
+        token = str(emby_config.get("tmdbToken") or "").strip()
+
+        # 有 TMDB Token 时测 API，否则测 TMDB 官网连通性；目标都是墙外站点。
+        if token:
+            request = urllib.request.Request(
+                "https://api.themoviedb.org/3/configuration",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "Vistamirror/1.0"},
+            )
+            target = "TMDB API"
+        else:
+            request = urllib.request.Request(
+                "https://www.themoviedb.org/robots.txt",
+                headers={"User-Agent": "Vistamirror/1.0"},
+            )
+            target = "TMDB 官网"
+
+        handlers: list[Any] = []
+        if proxy:
+            handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        opener = urllib.request.build_opener(*handlers) if handlers else urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        started = time.time()
+        try:
+            with opener.open(request, timeout=12) as response:
+                response.read(64 * 1024)
+        except urllib.error.HTTPError as err:
+            # 能到达目标站（即便 401/404）也算代理链路通
+            if err.code in {401, 403, 404}:
+                elapsed_ms = int((time.time() - started) * 1000)
+                self._send_json(200, {"ok": True, "status": "connected", "message": f"代理链路正常，{target}可达。", "elapsedMs": elapsed_ms, "proxyUsed": bool(proxy)})
+                return
+            self._send_json(502, {"ok": False, "status": "upstream_error", "error": f"{target} 返回 HTTP {err.code}。"})
+            return
+        except Exception as err:
+            self._send_json(502, {"ok": False, "status": "network_error", "error": f"无法连接 {target}：{type(err).__name__}。请检查代理地址或代理服务状态。"})
+            return
+        elapsed_ms = int((time.time() - started) * 1000)
+        self._send_json(200, {"ok": True, "status": "connected", "message": f"代理链路正常，{target}可达。", "elapsedMs": elapsed_ms, "proxyUsed": bool(proxy)})
 
     def _handle_moviepilot_config_save(self) -> None:
         payload = self._read_json_body()
@@ -4094,6 +4599,37 @@ class AppHandler(SimpleHTTPRequestHandler):
         )
         self._send_json(200 if result.get("ok") else 422, result)
 
+    def _handle_login_backdrop(self) -> None:
+        payload = _get_login_backdrop_payload()
+        if payload.get("error") == "upstream":
+            _write_project_event(
+                level="warning", module="system", action="login_backdrop_refresh_failed",
+                message="登录页 TMDB 海报墙刷新失败，将使用缓存或渐变兜底。",
+            )
+        self._send_json(200, payload, extra_headers={"Cache-Control": "public, max-age=900"})
+
+    def _handle_login_backdrop_image(self, query: str) -> None:
+        params = urllib.parse.parse_qs(query)
+        source = str((params.get("src") or ["tmdb"])[0])
+        if source == "emby":
+            item_id = str((params.get("id") or [""])[0])
+            tag = str((params.get("tag") or [""])[0])
+            content = _load_login_backdrop_emby_image(item_id, tag)
+        else:
+            poster_path = str((params.get("p") or [""])[0])
+            content = _load_login_backdrop_image(poster_path)
+        if content is None:
+            self._send_json(404, {"ok": False, "error": "海报图片不可用。"})
+            return
+        suffix = pathlib.Path(str((params.get("p") or [""])[0])).suffix.lower()
+        content_type = "image/png" if suffix == ".png" else ("image/webp" if suffix == ".webp" else "image/jpeg")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=604800, immutable")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
     def _handle_tmdb_test(self) -> None:
         payload = self._read_json_body()
         if payload is None:
@@ -4122,7 +4658,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         )
         started = time.time()
         try:
-            with urllib.request.urlopen(request, timeout=12) as response:
+            with _urlopen_global(request, timeout=12) as response:
                 result = json.loads(response.read().decode("utf-8", errors="replace"))
             if not isinstance(result, dict) or not isinstance(result.get("images"), dict):
                 raise RuntimeError("TMDB 返回了无法识别的响应。")

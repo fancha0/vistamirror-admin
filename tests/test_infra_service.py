@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 
-from backend_modules.infra_service import InfraCredentialCipher, InfraError, InfraService
+from backend_modules.infra_service import InfraCredentialCipher, InfraError, InfraService, LocalDockerClient
 
 
 class FakeRunner:
@@ -38,6 +38,12 @@ class FakeLocalDocker:
             "images": [{"Repository": "emby", "Tag": "latest", "ID": "sha256:one", "Size": "1 GB"}],
             "compose": [{"Name": "media", "Containers": 1, "Status": "running", "Source": "Docker Socket"}],
         }
+
+    def containers(self) -> list[dict]:
+        return [{"ID": "container-one", "Names": "emby", "State": "running"}]
+
+    def stats(self, containers: list[dict]) -> dict[str, dict]:
+        return {"container-one": {"CPUPerc": "0.25%", "MemUsage": "100 MB / 1 GB", "MemPerc": "9.77%"}}
 
     def logs(self, container: str, *, tail: int) -> str:
         return f"{container} tail={tail}"
@@ -120,12 +126,31 @@ class InfraServiceTests(unittest.TestCase):
                 "docker ps": {"exitCode": 0, "stdout": '{"Names":"emby","State":"running"}\n', "stderr": ""},
                 "docker image": {"exitCode": 0, "stdout": '[{"Repository":"emby","Tag":"latest"}]', "stderr": ""},
                 "docker compose": {"exitCode": 0, "stdout": '[{"Name":"media","Status":"running(1)"}]', "stderr": ""},
+                "docker stats": {"exitCode": 0, "stdout": '{"Name":"emby","Container":"abc","CPUPerc":"0.24%","MemUsage":"122 MiB / 1 GiB","MemPerc":"11.9%"}\n', "stderr": ""},
             }
         )
         inventory = self.service.docker_inventory("nas01")
+        stats = self.service.docker_stats("nas01")
         self.assertEqual(inventory["containers"][0]["Names"], "emby")
+        self.assertNotIn("CPUPerc", inventory["containers"][0])
+        self.assertEqual(stats["stats"][0]["CPUPerc"], "0.24%")
+        self.assertEqual(stats["stats"][0]["MemPerc"], "11.9%")
         self.assertEqual(inventory["images"][0]["Tag"], "latest")
         self.assertEqual(inventory["compose"][0]["Name"], "media")
+
+    def test_local_docker_stats_calculates_cpu_and_memory(self) -> None:
+        stats = LocalDockerClient._container_stats(
+            {
+                "cpu_stats": {"system_cpu_usage": 2000, "online_cpus": 2, "cpu_usage": {"total_usage": 1200}},
+                "precpu_stats": {"system_cpu_usage": 1000, "cpu_usage": {"total_usage": 1000}},
+                "memory_stats": {"usage": 600, "limit": 1000, "stats": {"inactive_file": 100}},
+                "pids_stats": {"current": 7},
+            }
+        )
+        self.assertEqual(stats["CPUPerc"], "40.00%")
+        self.assertEqual(stats["MemoryUsageBytes"], 500)
+        self.assertEqual(stats["MemPerc"], "50.00%")
+        self.assertEqual(stats["PIDs"], 7)
 
     def test_container_target_rejects_shell_injection(self) -> None:
         with self.assertRaises(InfraError):
@@ -148,12 +173,6 @@ class InfraServiceTests(unittest.TestCase):
         self.assertIn("docker compose -f", self.runners["nas01"].commands[-1])
         self.assertIn("pull", self.runners["nas01"].commands[-1])
 
-    def test_service_card_only_accepts_http_urls(self) -> None:
-        with self.assertRaises(InfraError):
-            self.service.save_dashboard(
-                {"dashboard": {}, "serviceCards": [{"name": "bad", "url": "file:///etc/passwd"}]}
-            )
-
     def test_local_docker_is_automatically_discovered_and_operated(self) -> None:
         local = FakeLocalDocker()
         self.service._local_docker = lambda: local  # type: ignore[method-assign]
@@ -161,6 +180,7 @@ class InfraServiceTests(unittest.TestCase):
         self.assertEqual(config["hosts"][0]["id"], "local-docker")
         self.assertEqual(self.service.host_status("local-docker")["hostname"], "nas-local")
         self.assertEqual(self.service.docker_inventory("local-docker")["containers"][0]["Names"], "emby")
+        self.assertEqual(self.service.docker_stats("local-docker")["stats"][0]["CPUPerc"], "0.25%")
         operation = self.service.submit_container_action("local-docker", "emby", "restart")
         deadline = time.monotonic() + 2
         current = {}

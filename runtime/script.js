@@ -17,6 +17,45 @@ const STORAGE_KEYS = {
   sidebarCollapsed: "vistamirrorSidebarCollapsed"
 };
 
+const SIDEBAR_NAV_ICONS = {
+  overview: '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>',
+  "content-ranking": '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16M17 4v16M3 9h4M17 9h4M3 15h4M17 15h4"></path>',
+  users: '<path d="M9 5h6M9 3h6v4H9zM6 5H5a2 2 0 0 0-2 2v13h18V7a2 2 0 0 0-2-2h-1"></path><path d="m8 14 2.5 2.5L16 11"></path>',
+  missing: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h7M14 2v6h6M16 15l5 5M21 15l-5 5"></path>',
+  logs: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"></path>',
+  "moviepilot-search": '<circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path>',
+  "drive-115": '<rect x="3" y="4" width="18" height="6" rx="2"></rect><rect x="3" y="14" width="18" height="6" rx="2"></rect><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"></path>',
+  "strm-115": '<circle cx="12" cy="12" r="9"></circle><path d="m10 8 6 4-6 4z"></path>',
+  hdhive: '<path d="m12 2 8 5v10l-8 5-8-5V7z"></path><circle cx="12" cy="12" r="3"></circle><path d="M12 2v7M4 7l6 3M20 7l-6 3M4 17l6-3M20 17l-6-3M12 15v7"></path>',
+  "infra-docker": '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M8 5v14M13 5v14M18 5v14"></path>',
+  "user-center": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path>',
+  "client-control": '<rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8M12 17v4"></path>',
+  "bot-assistant": '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path>',
+  "media-config": '<path d="M4 19.5V5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2.5M8 7h6M8 11h6"></path>',
+  "ai-config": '<rect x="4" y="7" width="16" height="13" rx="3"></rect><path d="M12 3v4M8 12h.01M16 12h.01M8 16h8"></path>',
+  "task-center": '<path d="m9 11 3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>',
+  workshop: '<path d="m15 4 5 5L7 22H2v-5zM6 15l5 5M6 3v4M4 5h4M19 14v4M17 16h4"></path>',
+  home: '<path d="m3 11 9-8 9 8M5 10v10h14V10M9 20v-6h6v6"></path>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"></path>'
+};
+
+function navigationIconMarkup(key) {
+  const shapes = SIDEBAR_NAV_ICONS[key] || SIDEBAR_NAV_ICONS.menu;
+  return `<svg class="navigation-line-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${shapes}</svg>`;
+}
+
+function installMonochromeNavigationIcons() {
+  document.querySelectorAll(".sidebar .nav-item[data-view]").forEach((item) => {
+    const icon = item.querySelector(".nav-icon");
+    if (!icon) return;
+    icon.classList.remove("nav-icon-svg");
+    icon.innerHTML = navigationIconMarkup(item.dataset.view || "menu");
+    icon.setAttribute("aria-hidden", "true");
+  });
+}
+
+installMonochromeNavigationIcons();
+
 const DEFAULT_BOT_CONFIG = {
   enableCore: true,
   enablePlayback: true,
@@ -1388,6 +1427,7 @@ const elements = {
   authPassword: document.getElementById("admin-auth-password"),
   authRemember: document.getElementById("admin-auth-remember"),
   authError: document.getElementById("admin-auth-error"),
+  authCapslock: document.getElementById("admin-auth-capslock"),
   authSubmit: document.getElementById("admin-auth-submit"),
   adminCredentialForm: document.getElementById("admin-credential-form"),
   adminCredentialCurrentUsername: document.getElementById("admin-credential-current-username"),
@@ -1432,6 +1472,10 @@ const elements = {
   tmdbStatusTip: document.getElementById("tmdb-status-tip"),
   tmdbTokenHint: document.getElementById("tmdb-token-hint"),
   tmdbTestBtn: document.getElementById("tmdb-test-btn"),
+  networkProxyUrl: document.getElementById("network-proxy-url"),
+  networkTestBtn: document.getElementById("network-test-btn"),
+  networkSaveBtn: document.getElementById("network-save-btn"),
+  networkProxyHint: document.getElementById("network-proxy-hint"),
   aiEnabled: document.getElementById("ai-enabled"),
   aiBaseUrl: document.getElementById("ai-base-url"),
   aiApiKey: document.getElementById("ai-api-key"),
@@ -1943,25 +1987,10 @@ const VIEW_META = {
     title: "MoviePilot 搜索",
     subtitle: "通过 MoviePilot MCP 发现影视并管理订阅、下载与服务"
   },
-  "infra-overview": {
-    icon: "◈",
-    title: "资源总览",
-    subtitle: "聚合服务器资源、Docker 项目、操作队列与服务状态"
-  },
   "infra-docker": {
     icon: "▣",
     title: "Docker 管理",
     subtitle: "集中管理 Compose 项目、容器、镜像与运行日志"
-  },
-  "infra-hosts": {
-    icon: "⌁",
-    title: "云服务器",
-    subtitle: "维护多台 SSH 服务器连接、分组与状态监控"
-  },
-  "service-nav": {
-    icon: "⌘",
-    title: "服务导航",
-    subtitle: "集中打开媒体服务、网盘、下载器和运维入口"
   },
   invites: {
     icon: "🔗",
@@ -2793,7 +2822,10 @@ async function inviteApiFetch(path, options = {}) {
   }
   if (!response.ok) {
     if (body && typeof body === "object" && body.error) {
-      throw new Error(body.error);
+      const apiError = new Error(body.error);
+      apiError.status = response.status;
+      apiError.payload = body;
+      throw apiError;
     }
     throw new Error(typeof body === "string" ? body : `请求失败 ${response.status}`);
   }
@@ -2850,6 +2882,49 @@ async function bootstrapAdminAuth() {
   }
 }
 
+let authLockTimer = null;
+
+function startAuthLockCountdown(seconds) {
+  if (authLockTimer) {
+    clearInterval(authLockTimer);
+    authLockTimer = null;
+  }
+  let remaining = Math.max(1, Number(seconds) || 0);
+  if (elements.authSubmit) {
+    elements.authSubmit.disabled = true;
+  }
+  const tick = () => {
+    if (remaining <= 0) {
+      clearInterval(authLockTimer);
+      authLockTimer = null;
+      if (elements.authSubmit) {
+        elements.authSubmit.disabled = false;
+      }
+      setAuthError("");
+      return;
+    }
+    setAuthError(`登录失败次数过多，请 ${remaining} 秒后再试。`);
+    remaining -= 1;
+  };
+  tick();
+  authLockTimer = setInterval(tick, 1000);
+}
+
+function triggerAuthShake() {
+  const card = document.querySelector(".admin-auth-card");
+  const form = elements.authForm;
+  if (form) {
+    form.classList.add("auth-input-error");
+  }
+  if (!card) {
+    return;
+  }
+  card.classList.remove("auth-shake");
+  // 强制 reflow 以便连续失败时动画能重新触发
+  void card.offsetWidth;
+  card.classList.add("auth-shake");
+}
+
 async function handleAdminLoginSubmit(event) {
   event.preventDefault();
   if (!elements.authUsername || !elements.authPassword || !elements.authSubmit) {
@@ -2860,10 +2935,13 @@ async function handleAdminLoginSubmit(event) {
   const rememberMe = Boolean(elements.authRemember?.checked);
   if (!username || !password) {
     setAuthError("请输入管理员账号和密码。");
+    triggerAuthShake();
     return;
   }
 
   elements.authSubmit.disabled = true;
+  elements.authSubmit.classList.add("is-loading");
+  elements.authSubmit.textContent = "登录中…";
   setAuthError("");
   try {
     const payload = await inviteApiFetch("/api/auth/login", {
@@ -2874,12 +2952,25 @@ async function handleAdminLoginSubmit(event) {
     appState.authenticated = Boolean(payload?.ok);
     appState.authUser = String(payload?.user?.name || username);
     elements.authPassword.value = "";
+    elements.authForm?.classList.remove("auth-input-error");
     applyAuthUiState({ mode: "ready", user: appState.authUser });
     await startPostAuthBootstrap();
   } catch (error) {
-    setAuthError(String(error?.message || "登录失败，请稍后重试。"));
+    const errorPayload = error?.payload && typeof error.payload === "object" ? error.payload : {};
+    triggerAuthShake();
+    if (errorPayload.locked && Number(errorPayload.retryAfter) > 0) {
+      startAuthLockCountdown(Number(errorPayload.retryAfter));
+      return;
+    }
+    const remaining = Number(errorPayload.remaining);
+    const baseMessage = String(error?.message || "登录失败，请稍后重试。");
+    setAuthError(Number.isFinite(remaining) && remaining > 0 ? `${baseMessage}（还可尝试 ${remaining} 次）` : baseMessage);
   } finally {
-    elements.authSubmit.disabled = false;
+    if (!authLockTimer) {
+      elements.authSubmit.disabled = false;
+    }
+    elements.authSubmit.classList.remove("is-loading");
+    elements.authSubmit.innerHTML = '登录 <span class="admin-auth-submit-arrow">→</span>';
   }
 }
 
@@ -14428,6 +14519,17 @@ function setSidebarCollapsed(collapsed) {
 
 function initEvents() {
   elements.authForm?.addEventListener("submit", handleAdminLoginSubmit);
+  if (elements.authPassword && elements.authCapslock) {
+    const syncCapslockHint = (event) => {
+      const on = Boolean(event.getModifierState && event.getModifierState("CapsLock"));
+      elements.authCapslock.hidden = !on;
+    };
+    elements.authPassword.addEventListener("keydown", syncCapslockHint);
+    elements.authPassword.addEventListener("keyup", syncCapslockHint);
+    elements.authPassword.addEventListener("blur", () => {
+      elements.authCapslock.hidden = true;
+    });
+  }
   elements.adminCredentialForm?.addEventListener("submit", handleAdminCredentialSubmit);
   globalSearchModal.mount();
   syncSidebarCollapseState();
@@ -14551,6 +14653,8 @@ function initEvents() {
     refreshTmdbUiState();
   });
   elements.tmdbTestBtn?.addEventListener("click", () => testTmdbConnection({ silent: false }));
+  elements.networkSaveBtn?.addEventListener("click", () => saveNetworkConfig());
+  elements.networkTestBtn?.addEventListener("click", () => testNetworkConnection());
   [
     elements.aiEnabled,
     elements.aiBaseUrl,
@@ -15447,6 +15551,100 @@ function hydrateInputs() {
   renderCoverStudioSettings();
   renderLibraryDirectorySettings();
   renderEnvControlledState();
+  loadNetworkConfig();
+}
+
+async function loadNetworkConfig() {
+  if (!elements.networkProxyUrl) {
+    return;
+  }
+  try {
+    const result = await inviteApiFetch("/api/network/config");
+    const proxyUrl = String(result?.config?.proxyUrl || "");
+    const envManaged = Array.isArray(result?.envManaged) ? result.envManaged : [];
+    elements.networkProxyUrl.value = proxyUrl;
+    const locked = envManaged.includes("proxyUrl");
+    elements.networkProxyUrl.disabled = locked;
+    if (elements.networkSaveBtn) {
+      elements.networkSaveBtn.disabled = locked;
+    }
+    if (elements.networkProxyHint) {
+      elements.networkProxyHint.className = locked
+        ? "tmdb-token-hint is-warning"
+        : "tmdb-token-hint";
+      elements.networkProxyHint.textContent = locked
+        ? "该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。"
+        : proxyUrl
+          ? "代理已启用，公网请求（TMDB、登录海报墙等）将走代理。"
+          : "未配置代理，公网请求将直接连接。";
+    }
+  } catch (error) {
+    if (elements.networkProxyHint) {
+      elements.networkProxyHint.className = "tmdb-token-hint is-warning";
+      elements.networkProxyHint.textContent = error.message || "代理配置读取失败。";
+    }
+  }
+}
+
+async function saveNetworkConfig() {
+  if (!elements.networkProxyUrl || !elements.networkSaveBtn) {
+    return;
+  }
+  elements.networkSaveBtn.disabled = true;
+  try {
+    const result = await inviteApiFetch("/api/network/config", {
+      method: "POST",
+      body: JSON.stringify({ networkConfig: { proxyUrl: String(elements.networkProxyUrl.value || "").trim() } })
+    });
+    const proxyUrl = String(result?.config?.proxyUrl || "");
+    if (elements.networkProxyHint) {
+      elements.networkProxyHint.className = "tmdb-token-hint is-ok";
+      elements.networkProxyHint.textContent = proxyUrl
+        ? "代理已启用，公网请求（TMDB、登录海报墙等）将走代理。"
+        : "未配置代理，公网请求将直接连接。";
+    }
+    showToast(proxyUrl ? "代理配置已保存" : "已关闭全局代理", 1200);
+  } catch (error) {
+    if (elements.networkProxyHint) {
+      elements.networkProxyHint.className = "tmdb-token-hint is-warning";
+      elements.networkProxyHint.textContent = error.message || "代理配置保存失败。";
+    }
+    showToast("代理配置保存失败", 1200);
+  } finally {
+    elements.networkSaveBtn.disabled = false;
+  }
+}
+
+async function testNetworkConnection() {
+  if (!elements.networkTestBtn) {
+    return;
+  }
+  elements.networkTestBtn.disabled = true;
+  elements.networkTestBtn.textContent = "测试中...";
+  if (elements.networkProxyHint) {
+    elements.networkProxyHint.className = "tmdb-token-hint is-warning";
+    elements.networkProxyHint.textContent = "正在通过代理测试 TMDB 连通性...";
+  }
+  try {
+    const result = await inviteApiFetch("/api/network/test", {
+      method: "POST",
+      body: JSON.stringify({ proxyUrl: String(elements.networkProxyUrl?.value || "").trim() })
+    });
+    if (elements.networkProxyHint) {
+      elements.networkProxyHint.className = "tmdb-token-hint is-ok";
+      elements.networkProxyHint.textContent = result?.message || "代理链路正常。";
+    }
+    showToast("代理连接正常", 1200);
+  } catch (error) {
+    if (elements.networkProxyHint) {
+      elements.networkProxyHint.className = "tmdb-token-hint is-warning";
+      elements.networkProxyHint.textContent = error.message || "代理连接测试失败。";
+    }
+    showToast("代理连接测试失败", 1200);
+  } finally {
+    elements.networkTestBtn.disabled = false;
+    elements.networkTestBtn.textContent = "测试连接";
+  }
 }
 
 initEvents();
@@ -15677,10 +15875,10 @@ async function startPostAuthBootstrap() {
     bottomBar.hidden = true;
 
     const tabs = [
-      { key: "home", label: "首页", icon: "⌂", view: "overview" },
-      { key: "explore", label: "探索", icon: "⌕", view: "moviepilot-search" },
-      { key: "user", label: "用户", icon: "👥", view: "user-center" },
-      { key: "menu", label: "菜单", icon: "☰", view: "" }
+      { key: "home", label: "首页", icon: "home", view: "overview" },
+      { key: "explore", label: "探索", icon: "moviepilot-search", view: "moviepilot-search" },
+      { key: "user", label: "用户", icon: "user-center", view: "user-center" },
+      { key: "menu", label: "菜单", icon: "menu", view: "" }
     ];
 
     tabs.forEach((tab) => {
@@ -15689,7 +15887,7 @@ async function startPostAuthBootstrap() {
       button.className = "mobile-tab-btn";
       button.setAttribute("data-mobile-tab", tab.key);
       button.setAttribute("aria-selected", "false");
-      button.innerHTML = `<span class="mobile-tab-icon">${tab.icon}</span><span class="mobile-tab-label">${tab.label}</span>`;
+      button.innerHTML = `<span class="mobile-tab-icon">${navigationIconMarkup(tab.icon)}</span><span class="mobile-tab-label">${tab.label}</span>`;
 
       button.addEventListener("click", () => {
         if (tab.key === "menu") {
@@ -15798,10 +15996,10 @@ async function startPostAuthBootstrap() {
       menuButton.className = "mobile-menu-item";
       menuButton.setAttribute("data-mobile-menu-view", view);
 
-      const iconText = node.querySelector(".nav-icon")?.textContent?.trim() || "•";
-      const labelText = node.textContent?.replace(iconText, "").trim() || view;
+      const iconMarkup = node.querySelector(".nav-icon")?.innerHTML || navigationIconMarkup("menu");
+      const labelText = node.textContent?.trim() || view;
       menuButton.innerHTML = `
-        <span class="mobile-menu-item-icon">${iconText}</span>
+        <span class="mobile-menu-item-icon">${iconMarkup}</span>
         <span class="mobile-menu-item-label">${labelText}</span>
         <span class="mobile-menu-item-arrow">›</span>
       `;

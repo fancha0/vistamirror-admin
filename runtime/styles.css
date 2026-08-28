@@ -767,8 +767,27 @@ body {
 .nav-icon {
   width: 24px;
   text-align: center;
-  font-size: 20px;
   line-height: 1;
+}
+
+.nav-icon,
+.mobile-menu-item-icon,
+.mobile-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navigation-line-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .nav-icon-svg {
@@ -15053,10 +15072,15 @@ body.compact-app-mode .mobile-menu-item:focus-visible {
 
 body.compact-app-mode .mobile-menu-item-icon {
   width: 24px;
-  color: #4b75d3;
-  font-size: 16px;
+  color: currentColor;
   line-height: 1;
   text-align: center;
+}
+
+body.compact-app-mode .mobile-menu-item-icon .navigation-line-icon,
+body.compact-app-mode .mobile-tab-icon .navigation-line-icon {
+  width: 18px;
+  height: 18px;
 }
 
 body.compact-app-mode .mobile-menu-item-label {
@@ -16985,30 +17009,28 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 }
 
 /* =========================================================
-   Solid application surfaces
-   Keep modal scrims for focus, but remove the always-on glass treatment
-   from the application shell and reusable content cards.
+   iOS-inspired material system
+   Blur is limited to the application shell and top-level surfaces. Nested
+   cards stay translucent but unblurred so scrolling remains inexpensive.
    ========================================================= */
 :root {
-  --sidebar-bg: #ffffff;
-  --glass-surface-bg: #ffffff;
-  --glass-surface-bg-soft: #ffffff;
-  --glass-surface-bg-strong: #ffffff;
-  --glass-elevated-bg: #ffffff;
-  --glass-border: #e5eaf2;
-  --glass-border-soft: #dfe6f0;
-  --glass-highlight: transparent;
-  --glass-blur: 0px;
-  --glass-blur-strong: 0px;
-  --glass-shadow-surface: 0 4px 14px rgba(31, 42, 61, 0.05);
-  --glass-shadow-elevated: 0 10px 26px rgba(31, 42, 61, 0.1);
+  --sidebar-bg: rgba(248, 250, 255, 0.72);
+  --glass-surface-bg: rgba(255, 255, 255, 0.72);
+  --glass-surface-bg-soft: rgba(255, 255, 255, 0.66);
+  --glass-surface-bg-strong: rgba(250, 252, 255, 0.78);
+  --glass-elevated-bg: rgba(255, 255, 255, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.72);
+  --glass-border-soft: rgba(185, 198, 221, 0.42);
+  --glass-highlight: rgba(255, 255, 255, 0.78);
+  --glass-overlay: rgba(38, 46, 68, 0.18);
+  --glass-blur: 16px;
+  --glass-blur-strong: 22px;
+  --glass-shadow-surface: 0 10px 28px rgba(55, 68, 98, 0.08);
+  --glass-shadow-elevated: 0 22px 54px rgba(43, 54, 82, 0.16);
 }
 
 .sidebar,
 .frozen-navbar,
-.topbar,
-.panel,
-.stat-card,
 .profile-menu-panel,
 .glass-surface,
 .glass-elevated,
@@ -17017,37 +17039,65 @@ body.mobile-app-mode .main-content[data-active-view="settings"] #settings-save-b
 .mobile-menu-sheet,
 body.vistamirror-fig1-skin .sidebar,
 body.vistamirror-fig1-skin .frozen-navbar,
-body.vistamirror-fig1-skin .topbar,
-body.vistamirror-fig1-skin .panel,
-body.vistamirror-fig1-skin .stat-card {
-  background: #ffffff !important;
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
+body.vistamirror-fig1-skin .profile-menu-panel,
+body.vistamirror-fig1-skin .user-center-modal-panel,
+body.vistamirror-fig1-skin .mobile-menu-drawer,
+body.vistamirror-fig1-skin .mobile-menu-sheet {
+  background: var(--glass-surface-bg-strong) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(1.24) !important;
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(1.24) !important;
 }
 
 .sidebar,
 .frozen-navbar {
-  box-shadow: none !important;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow-surface) !important;
 }
 
-.topbar,
 .panel,
 .stat-card,
-.profile-menu-panel,
-.glass-surface,
-.glass-elevated,
-.user-center-modal-panel,
-.mobile-menu-drawer,
-.mobile-menu-sheet {
-  border-color: #e1e7f0 !important;
-  box-shadow: 0 4px 14px rgba(31, 42, 61, 0.05) !important;
-}
-
+.config-panel,
 .settings-card,
 .settings-card-tmdb {
-  background: #ffffff !important;
-  border-color: #e1e7f0 !important;
-  box-shadow: none !important;
+  background: var(--glass-surface-bg) !important;
+  border-color: var(--glass-border-soft) !important;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow-surface) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.dashboard-grid > .panel,
+.view-section > .panel,
+.stats-grid > .stat-card,
+.config-main > .config-panel,
+.moviepilot-search-shell,
+.infra-shell {
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.16) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.16) !important;
+}
+
+.user-center-modal-panel,
+.mobile-menu-sheet,
+.glass-elevated {
+  background: var(--glass-elevated-bg) !important;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-shadow-elevated) !important;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .sidebar,
+  .frozen-navbar,
+  .dashboard-grid > .panel,
+  .view-section > .panel,
+  .stats-grid > .stat-card,
+  .config-main > .config-panel,
+  .moviepilot-search-shell,
+  .infra-shell,
+  .user-center-modal-panel,
+  .mobile-menu-drawer,
+  .mobile-menu-sheet {
+    background: rgba(250, 252, 255, 0.96) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
 }
 
 /* =========================================================
@@ -17722,10 +17772,10 @@ body.vistamirror-fig1-skin .stat-card {
 body.vistamirror-fig1-skin {
   --sidebar-width: 248px;
   --frozen-nav-height: 54px;
-  --bg: #f6f8fc;
-  --panel: #fff;
-  --panel-soft: #f8faff;
-  --line: #e5eaf2;
+  --bg: #eef3fb;
+  --panel: var(--glass-surface-bg);
+  --panel-soft: rgba(248, 250, 255, .72);
+  --line: rgba(185, 198, 221, .42);
   --text: #202b40;
   --muted: #7d899e;
   --purple: #7056e9;
@@ -17739,35 +17789,39 @@ body.vistamirror-fig1-skin {
   --ui-control-sm: 34px;
   --ui-control-md: 38px;
   --ui-control-lg: 46px;
-  background: var(--bg) !important;
+  background:
+    radial-gradient(circle at 12% 5%, rgba(154, 230, 255, .34), transparent 30%),
+    radial-gradient(circle at 88% 2%, rgba(212, 192, 255, .34), transparent 31%),
+    radial-gradient(circle at 70% 92%, rgba(178, 237, 226, .24), transparent 29%),
+    linear-gradient(145deg, #f3f7fd 0%, #edf3fb 48%, #f7f4fb 100%) !important;
   color: var(--text);
   font-size: 13px;
 }
 
-body.vistamirror-fig1-skin .app-layout { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); background: var(--bg); }
-body.vistamirror-fig1-skin .sidebar { gap: 10px; padding: 14px 10px 12px; background: #fff; border-right: 1px solid var(--line); box-shadow: none; backdrop-filter: none; }
+body.vistamirror-fig1-skin .app-layout { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); background: transparent; }
+body.vistamirror-fig1-skin .sidebar { gap: 12px; padding: 14px 10px 12px; background: var(--sidebar-bg); border-right: 1px solid var(--glass-border); box-shadow: inset -1px 0 0 rgba(255,255,255,.32), var(--glass-shadow-surface); -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(1.24); backdrop-filter: blur(var(--glass-blur-strong)) saturate(1.24); }
 body.vistamirror-fig1-skin .brand { gap: 9px; min-height: 38px; padding: 1px 7px 4px; }
 body.vistamirror-fig1-skin .brand-mark { width: 34px; height: 34px; flex-basis: 34px; border-radius: 10px; box-shadow: 0 6px 16px rgba(90, 92, 232, .12); }
 body.vistamirror-fig1-skin .brand-copy h1 { font-size: 17px; letter-spacing: -.035em; color: #182337; }
-body.vistamirror-fig1-skin .sidebar-search { gap: 8px; min-height: 38px; padding: 9px 10px; border-radius: 10px; border-color: #e1e7f0; background: #fbfcff; box-shadow: none; }
+body.vistamirror-fig1-skin .sidebar-search { gap: 8px; min-height: 38px; padding: 9px 10px; border-radius: 11px; border-color: rgba(255,255,255,.72); background: rgba(255,255,255,.56); box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 4px 14px rgba(57,72,103,.05); }
 body.vistamirror-fig1-skin .sidebar-search:hover, body.vistamirror-fig1-skin .sidebar-search:focus-within { transform: none; border-color: #cfc7ff; box-shadow: 0 0 0 3px rgba(112, 86, 233, .08); }
 body.vistamirror-fig1-skin .sidebar-search input, body.vistamirror-fig1-skin .sidebar-search input::placeholder { font-size: 12px; }
-body.vistamirror-fig1-skin .sidebar-search em { padding: 2px 5px; border: 0; border-radius: 5px; background: #eef1f7; font-size: 10px; }
-body.vistamirror-fig1-skin .nav { gap: 2px; padding: 0 2px 12px; }
-body.vistamirror-fig1-skin .nav-group-title { margin: 12px 8px 4px; color: #9aa5b7; font-size: 10px; font-weight: 700; }
-body.vistamirror-fig1-skin .nav-item { gap: 9px; min-height: 32px; padding: 7px 9px; border-radius: 8px; color: #43506a; font-size: 12px; font-weight: 600; }
-body.vistamirror-fig1-skin .nav-item:hover { background: #f5f6fb; color: #3d336f; }
-body.vistamirror-fig1-skin .nav-item.active { background: linear-gradient(90deg, #f1eeff 0%, #faf9ff 100%); color: #6947de; font-weight: 750; }
+body.vistamirror-fig1-skin .sidebar-search em { padding: 2px 5px; border: 0; border-radius: 6px; background: rgba(235,239,247,.76); font-size: 10px; }
+body.vistamirror-fig1-skin .nav { gap: 4px !important; padding: 0 2px 14px; }
+body.vistamirror-fig1-skin .nav-group-title { margin: 14px 8px 6px !important; color: #8f9bb0; font-size: 10px !important; font-weight: 700; }
+body.vistamirror-fig1-skin .nav-item { gap: 9px !important; min-height: 34px !important; padding: 8px 10px !important; border: 1px solid transparent; border-radius: 10px !important; color: #43506a; font-size: 12px !important; font-weight: 600; }
+body.vistamirror-fig1-skin .nav-item:hover { background: rgba(255,255,255,.52); border-color: rgba(255,255,255,.58); color: #3d336f; box-shadow: inset 0 1px 0 rgba(255,255,255,.62); }
+body.vistamirror-fig1-skin .nav-item.active { background: rgba(112,86,233,.12); border-color: rgba(130,105,231,.18); color: #6547dc; font-weight: 750; box-shadow: inset 0 1px 0 rgba(255,255,255,.68), 0 5px 14px rgba(91,72,183,.08); }
 body.vistamirror-fig1-skin .nav-icon { width: 18px; color: currentColor; font-size: 16px; }
 body.vistamirror-fig1-skin .quality-audit-nav-svg, body.vistamirror-fig1-skin .missing-nav-svg { width: 17px; height: 17px; flex-basis: 17px; }
 body.vistamirror-fig1-skin .sidebar-footer { gap: 8px; padding: 10px 2px 0; border-top: 1px solid var(--line); }
 body.vistamirror-fig1-skin .sidebar-exit { min-height: 34px; padding: 8px 10px; border-radius: 8px; background: transparent; box-shadow: none; color: #78859a; font-size: 12px; font-weight: 600; }
 
-body.vistamirror-fig1-skin .main-content { padding: calc(var(--frozen-nav-height) + 12px) 16px 20px; background: var(--bg); }
-body.vistamirror-fig1-skin .frozen-navbar { left: var(--sidebar-width); height: var(--frozen-nav-height); padding: 0 16px; background: rgba(255,255,255,.92); border-bottom-color: var(--line); box-shadow: none; backdrop-filter: blur(12px); }
-body.vistamirror-fig1-skin .frozen-navbar::before { content: ""; position: absolute; left: 16px; top: 11px; width: min(410px, 42vw); height: 32px; border: 1px solid #dfe5ef; border-radius: 9px; background: #fbfcff; pointer-events: none; }
+body.vistamirror-fig1-skin .main-content { padding: calc(var(--frozen-nav-height) + 12px) 16px 20px; background: transparent; }
+body.vistamirror-fig1-skin .frozen-navbar { left: var(--sidebar-width); height: var(--frozen-nav-height); padding: 0 16px; background: rgba(250,252,255,.7); border-bottom-color: rgba(255,255,255,.66); box-shadow: inset 0 -1px 0 rgba(184,197,219,.24), 0 8px 24px rgba(52,65,95,.07); -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(1.2); backdrop-filter: blur(var(--glass-blur-strong)) saturate(1.2); }
+body.vistamirror-fig1-skin .frozen-navbar::before { content: ""; position: absolute; left: 16px; top: 11px; width: min(410px, 42vw); height: 32px; border: 1px solid rgba(255,255,255,.72); border-radius: 10px; background: rgba(255,255,255,.52); box-shadow: inset 0 1px 0 rgba(255,255,255,.72), 0 4px 14px rgba(57,72,103,.045); pointer-events: none; }
 body.vistamirror-fig1-skin .frozen-navbar::after { content: "⌕  全局搜索媒体、用户、任务…"; position: absolute; left: 28px; top: 19px; color: #9aa5b7; font-size: 12px; pointer-events: none; }
-body.vistamirror-fig1-skin .nav-icon-btn { width: 32px; height: 32px; border-radius: 8px; background: #fff; border-color: #e4e9f1; font-size: 14px; box-shadow: none; }
+body.vistamirror-fig1-skin .nav-icon-btn { width: 32px; height: 32px; border-radius: 10px; background: rgba(255,255,255,.54); border-color: rgba(255,255,255,.7); font-size: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,.72), 0 4px 14px rgba(57,72,103,.05); }
 body.vistamirror-fig1-skin .topbar { min-height: 48px; margin: 0; padding: 0 2px 10px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 body.vistamirror-fig1-skin .topbar-hero { gap: 10px; }
 body.vistamirror-fig1-skin .topbar-icon { display: none; }
@@ -17777,7 +17831,7 @@ body.vistamirror-fig1-skin .topbar-actions, body.vistamirror-fig1-skin .toolbar,
 
 body.vistamirror-fig1-skin .view-section, body.vistamirror-fig1-skin .config-panel, body.vistamirror-fig1-skin .stats-grid { margin-top: 0; }
 body.vistamirror-fig1-skin .dashboard-grid { gap: 12px; }
-body.vistamirror-fig1-skin .panel, body.vistamirror-fig1-skin .stat-card { border: 1px solid var(--line); border-radius: var(--ui-radius-lg); background: var(--panel); box-shadow: var(--shadow); }
+body.vistamirror-fig1-skin .panel, body.vistamirror-fig1-skin .stat-card { border: 1px solid var(--glass-border-soft); border-radius: var(--ui-radius-lg); background: var(--panel); box-shadow: inset 0 1px 0 var(--glass-highlight), var(--shadow); }
 body.vistamirror-fig1-skin .panel { padding: 14px; }
 body.vistamirror-fig1-skin .panel .panel { border-color: transparent; border-radius: 10px; background: transparent; box-shadow: none; }
 body.vistamirror-fig1-skin .panel-head { min-height: 34px; margin-bottom: 12px; }
@@ -17950,6 +18004,11 @@ body.vistamirror-fig1-skin #view-ai-config .settings-card-head > button {
 
 @media (max-width: 760px) {
   body.vistamirror-fig1-skin {
+    --glass-surface-bg: rgba(255, 255, 255, .84);
+    --glass-surface-bg-strong: rgba(250, 252, 255, .9);
+    --glass-elevated-bg: rgba(255, 255, 255, .94);
+    --glass-blur: 10px;
+    --glass-blur-strong: 14px;
     font-size: 13px;
   }
 

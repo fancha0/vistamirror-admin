@@ -2,10 +2,29 @@
   "embyConfig": {
     "serverUrl": "https://emby2.lshiya.top:333/emby",
     "apiKey": "e0ddf52c70754520a1f5f11bbebe542d",
-    "clientName": "镜界Vistamirror User Console",
-    "updatedAt": "2026-05-28T21:59:09"
+    "clientName": "VistaMirror User Console",
+    "tmdbEnabled": true,
+    "tmdbToken": "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI0ZDM5NDExMTJiZGRkMjIwNjc5N2E0NDZiOWJiOTg4NyIsIm5iZiI6MTc2NzQ5Njc2NS41Nywic3ViIjoiNjk1OWRjM2QwYzQ4ZDU1NmVjYzM3Mzc0Iiwic2NvcGVzIjpbImFwaV9yZWFkIl0sInZlcnNpb24iOjF9.2N-kYWBt535MgmmDHj1rrfiVWjyiUK8TXoGQRC2Rqxo",
+    "tmdbLanguage": "zh-CN",
+    "tmdbRegion": "CN",
+    "updatedAt": "2026-07-13T21:08:34"
   },
   "invites": [
+    {
+      "id": "a7cb4a9170ba34a0",
+      "code": "edjoxe",
+      "label": "默认模板 (全库)",
+      "username": "",
+      "plan": "默认模板 (全库)",
+      "initialDays": 1,
+      "duration": 1,
+      "expiresAt": "2026-07-10",
+      "status": "空闲",
+      "createdAt": "2026-07-09T12:59:38",
+      "usedAt": "",
+      "createdUserId": "",
+      "usedUsername": ""
+    },
     {
       "id": "f2fe876301f9907f",
       "code": "l4a52b",
@@ -741,14 +760,798 @@
     "wechatCallbackAes": "",
     "enableCommands": true,
     "notifyEvents": {
-      "start": false,
-      "pause": false,
-      "resume": false,
-      "stop": false
+      "start": true,
+      "pause": true,
+      "resume": true,
+      "stop": true
     },
-    "showIp": false,
-    "showIpGeo": false,
-    "showOverview": false,
-    "eventDedupSeconds": 10
+    "showIp": true,
+    "showIpGeo": true,
+    "showOverview": true,
+    "eventDedupSeconds": 10,
+    "libraryTemplates": {
+      "single": "🎬 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}",
+      "grouped": "📺 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}"
+    }
+  },
+  "notificationConfig": {
+    "enabled": true,
+    "channels": {
+      "telegram": {
+        "enabled": true,
+        "botToken": "8683378492:AAE3MB3R-XmulmvGPx89plMNnT1mgm4fbRo",
+        "chatId": "6067958942",
+        "enableCommands": true,
+        "proxyUrl": ""
+      },
+      "wecom": {
+        "enabled": false,
+        "corpId": "",
+        "agentId": "",
+        "secret": "",
+        "toUser": "@all",
+        "callbackToken": "",
+        "callbackAes": "",
+        "callbackUrl": "https://emby2.lshiya.top:333/api/bot/wecom_webhook",
+        "proxyUrl": ""
+      }
+    },
+    "routes": {
+      "telegram": {
+        "playback.start": true,
+        "playback.pause": true,
+        "playback.resume": true,
+        "playback.stop": true,
+        "library.single": true,
+        "library.grouped": true
+      },
+      "wecom": {
+        "playback.start": true,
+        "playback.pause": true,
+        "playback.resume": true,
+        "playback.stop": true,
+        "library.single": true,
+        "library.grouped": true
+      }
+    },
+    "templates": {
+      "telegram": {
+        "playback.start": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "playback.pause": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "playback.resume": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "playback.stop": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "library.single": "🎬 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}",
+        "library.grouped": "📺 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}"
+      },
+      "wecom": {
+        "playback.start": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "playback.pause": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "playback.resume": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "playback.stop": "{{title_line}}\n\n{{user_line}}\n{{playback_method_line}}\n{{media_spec_line}}\n━━━━━━━━━━━━━━━━━━━━\n📋 播放数据\n{{rating_line}}\n{{progress_line}}\n\n🛋️ 终端状态\n{{device_line}}\n{{ip_line}}\n{{time_line}}\n\n━━━━━━━━━━━━━━━━━━━━\n{{overview_line}}",
+        "library.single": "🎬 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}",
+        "library.grouped": "📺 【{{entry_label}}】｜ {{title}}{{year_suffix}}\n\n{{summary_line}}\n{{tagline_line}}\n\n= 📦基础参数 =\n{{content_type_line}}\n{{library_scope_line}}\n{{library_time_line}}\n\n= 💽资源详情 =\n{{quality_line}}\n{{actors_line}}\n\n= 📖内容简介 =\n{{overview}}"
+      }
+    },
+    "display": {
+      "telegram": {
+        "playback.start": {
+          "label": "开始播放",
+          "description": "用户开始播放媒体时发送通知。"
+        },
+        "playback.pause": {
+          "label": "暂停播放",
+          "description": "用户暂停播放时发送通知。"
+        },
+        "playback.resume": {
+          "label": "恢复播放",
+          "description": "用户恢复播放时发送通知。"
+        },
+        "playback.stop": {
+          "label": "停止播放",
+          "description": "用户停止播放时发送通知。"
+        },
+        "library.single": {
+          "label": "入库通知",
+          "description": "单个电影或单集入库时发送通知。"
+        },
+        "library.grouped": {
+          "label": "剧集聚合入库",
+          "description": "同一剧集短时间多集入库时合并发送。"
+        }
+      },
+      "wecom": {
+        "playback.start": {
+          "label": "开始播放",
+          "description": "用户开始播放媒体时发送通知。"
+        },
+        "playback.pause": {
+          "label": "暂停播放",
+          "description": "用户暂停播放时发送通知。"
+        },
+        "playback.resume": {
+          "label": "恢复播放",
+          "description": "用户恢复播放时发送通知。"
+        },
+        "playback.stop": {
+          "label": "停止播放",
+          "description": "用户停止播放时发送通知。"
+        },
+        "library.single": {
+          "label": "入库通知",
+          "description": "单个电影或单集入库时发送通知。"
+        },
+        "library.grouped": {
+          "label": "剧集聚合入库",
+          "description": "同一剧集短时间多集入库时合并发送。"
+        }
+      }
+    },
+    "runtime": {
+      "dedupeSeconds": 10,
+      "playback": {
+        "showIp": true,
+        "showIpGeo": true,
+        "showOverview": true,
+        "userScope": {
+          "mode": "all",
+          "selectedUserNames": [],
+          "selectedUsersMeta": []
+        }
+      }
+    }
+  },
+  "aiConfig": {
+    "enabled": true,
+    "baseUrl": "https://api.deepseek.com",
+    "apiKey": "sk-3311d2de207247babe34bec7609e7dbd",
+    "model": "deepseek-v4-flash",
+    "temperature": 0.4,
+    "maxTokens": 800,
+    "contextTokensK": 1024
+  },
+  "moviePilotConfig": {
+    "enabled": true,
+    "baseUrl": "https://mp.lshiya.top:333",
+    "apiToken": "VR8Z8gbWurrDKGGbc8xmpA6zCS4ugL8n",
+    "timeoutSeconds": 12
+  },
+  "coverStudioConfig": {
+    "currentPresetId": "preset-1784118670886",
+    "lastViewId": "58303",
+    "draft": {
+      "viewId": "58303",
+      "viewIds": [
+        "58303"
+      ],
+      "templateKey": "bookshelf_gallery_2",
+      "pickMode": "recent",
+      "titleText": "国产动漫",
+      "subtitleText": "Chinese Animation",
+      "fontKey": "wang_zha_flash_bold",
+      "titleFontSize": 108,
+      "subtitleFontSize": 44,
+      "presetName": "默认封面",
+      "titleAlign": "left",
+      "overlayStrength": 0,
+      "posterCount": 7,
+      "accentTone": "gold",
+      "posterRotation": 0,
+      "titleYOffset": 0,
+      "lockedItemIds": []
+    },
+    "scheduleDraft": {
+      "templateKey": "banner_showcase",
+      "pickMode": "recent",
+      "titleText": "欧美剧集",
+      "subtitleText": "Chinese Animation",
+      "fontKey": "gong_fan_nu_fang_ti",
+      "titleFontSize": 108,
+      "subtitleFontSize": 44,
+      "titleAlign": "center",
+      "posterCount": 5,
+      "accentTone": "neutral",
+      "posterRotation": 0,
+      "titleYOffset": 0
+    },
+    "presets": [
+      {
+        "id": "default",
+        "name": "默认封面",
+        "templateKey": "banner_showcase",
+        "pickMode": "recent",
+        "titleText": "欧美剧集",
+        "subtitleText": "Chinese Animation",
+        "fontKey": "gong_fan_nu_fang_ti",
+        "titleFontSize": 108,
+        "subtitleFontSize": 44,
+        "titleAlign": "center",
+        "overlayStrength": 0,
+        "posterCount": 5,
+        "accentTone": "neutral",
+        "posterRotation": 0,
+        "titleYOffset": 0,
+        "lockedItemIds": []
+      },
+      {
+        "id": "preset-1783761092544",
+        "name": "默认封面",
+        "templateKey": "banner_showcase",
+        "pickMode": "recent",
+        "titleText": "欧美剧集",
+        "subtitleText": "Chinese Animation",
+        "fontKey": "gong_fan_nu_fang_ti",
+        "titleFontSize": 108,
+        "subtitleFontSize": 44,
+        "titleAlign": "center",
+        "overlayStrength": 0,
+        "posterCount": 5,
+        "accentTone": "neutral",
+        "posterRotation": 0,
+        "titleYOffset": 0,
+        "lockedItemIds": []
+      },
+      {
+        "id": "preset-1784118670886",
+        "name": "默认封面",
+        "templateKey": "banner_showcase",
+        "pickMode": "recent",
+        "titleText": "国产动漫",
+        "subtitleText": "Chinese Animation",
+        "fontKey": "wang_zha_flash_bold",
+        "titleFontSize": 108,
+        "subtitleFontSize": 44,
+        "titleAlign": "left",
+        "overlayStrength": 0,
+        "posterCount": 5,
+        "accentTone": "gold",
+        "posterRotation": 0,
+        "titleYOffset": 0,
+        "lockedItemIds": []
+      }
+    ],
+    "backups": {
+      "54121": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/54121_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-28T21:08:11"
+      },
+      "54588": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/54588_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-13T22:00:01"
+      },
+      "54590": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/54590_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-12T15:59:57"
+      },
+      "54592": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/54592_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-14T20:06:56"
+      },
+      "56444": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/56444_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-29T20:20:07"
+      },
+      "56693": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/56693_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-12T16:00:02"
+      },
+      "56697": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/56697_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-13T21:10:42"
+      },
+      "58303": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/58303_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-19T16:25:04"
+      },
+      "58305": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/58305_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-13T21:10:11"
+      },
+      "58307": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/58307_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-12T16:00:07"
+      },
+      "103099": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/103099_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-12T16:00:04"
+      },
+      "125621": {
+        "primary": {
+          "path": "/Users/sy/my-todo/data/cover_studio/backups/125621_primary.bin",
+          "contentType": "image/png"
+        },
+        "appliedAt": "2026-07-14T20:07:29"
+      }
+    },
+    "schedule": {
+      "enabled": true,
+      "cron": "0 */5 * * *",
+      "lastRunAt": "2026-07-12T10:00:11",
+      "lastStatus": "success",
+      "lastMessage": "已更新 1 个媒体库封面。",
+      "lastResultCount": 1
+    },
+    "schedules": [
+      {
+        "id": "schedule-1783836329769",
+        "viewId": "56697",
+        "viewName": "动画",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "动画",
+          "subtitleText": "Animation",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 2773,
+          "latestItemId": "122662",
+          "latestCreatedAt": "2026-02-25T05:51:30.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-13T21:10:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836369812",
+        "viewId": "54588",
+        "viewName": "动漫剧集",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "动漫剧集",
+          "subtitleText": "Anime Series",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 7412,
+          "latestItemId": "127580",
+          "latestCreatedAt": "2026-06-10T05:48:57.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-13T21:59:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836414696",
+        "viewId": "58303",
+        "viewName": "国产动漫",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "国产动漫",
+          "subtitleText": "Chinese Animation",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 2602,
+          "latestItemId": "129501",
+          "latestCreatedAt": "2026-07-19T08:20:53.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-19T16:25:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836431219",
+        "viewId": "54592",
+        "viewName": "亚洲剧集",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "亚洲剧集",
+          "subtitleText": "Asian Series",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 443,
+          "latestItemId": "127871",
+          "latestCreatedAt": "2026-06-25T01:15:16.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-14T20:06:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836445075",
+        "viewId": "54590",
+        "viewName": "欧美剧集",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "欧美剧集",
+          "subtitleText": "Western Series",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 1263,
+          "latestItemId": "129302",
+          "latestCreatedAt": "2026-06-26T11:06:31.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-12T15:59:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836465187",
+        "viewId": "54121",
+        "viewName": "华语剧集",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "华语剧集",
+          "subtitleText": "Chinese Series",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 3796,
+          "latestItemId": "129510",
+          "latestCreatedAt": "2026-07-21T06:21:30.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-28T21:08:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836493534",
+        "viewId": "56444",
+        "viewName": "华语电影",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "华语电影",
+          "subtitleText": "Chinese Movies",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 79,
+          "latestItemId": "129552",
+          "latestCreatedAt": "2026-07-29T09:01:30.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-29T20:20:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836506808",
+        "viewId": "56693",
+        "viewName": "动漫电影",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "动漫电影",
+          "subtitleText": "Anime Movies",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 35,
+          "latestItemId": "126143",
+          "latestCreatedAt": "2026-04-04T10:40:22.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-12T16:00:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836517862",
+        "viewId": "103099",
+        "viewName": "纪录片剧集",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "纪录片剧集",
+          "subtitleText": "Documentary Series",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 51,
+          "latestItemId": "115953",
+          "latestCreatedAt": "2026-02-10T01:17:36.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-12T16:00:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836528502",
+        "viewId": "58305",
+        "viewName": "欧美电影",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "欧美电影",
+          "subtitleText": "Western Cinema",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 59,
+          "latestItemId": "125189",
+          "latestCreatedAt": "2026-03-13T03:21:35.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-13T21:10:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836543719",
+        "viewId": "58307",
+        "viewName": "亚洲电影",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "亚洲电影",
+          "subtitleText": "Asian Movies",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 9,
+          "latestItemId": "127885",
+          "latestCreatedAt": "2026-06-25T12:16:44.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-12T16:00:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      },
+      {
+        "id": "schedule-1783836557061",
+        "viewId": "125621",
+        "viewName": "综艺",
+        "enabled": true,
+        "cron": "*/5 * * * *",
+        "template": {
+          "templateKey": "banner_showcase",
+          "pickMode": "recent",
+          "titleText": "综艺",
+          "subtitleText": "Variety Shows",
+          "fontKey": "wang_zha_flash_bold",
+          "titleFontSize": 108,
+          "subtitleFontSize": 44,
+          "titleAlign": "left",
+          "posterCount": 5,
+          "accentTone": "gold",
+          "posterRotation": 0,
+          "titleYOffset": 0
+        },
+        "fingerprint": {
+          "itemCount": 97,
+          "latestItemId": "125811",
+          "latestCreatedAt": "2026-03-26T11:04:35.0000000Z"
+        },
+        "initializedAt": "2026-07-12T14:10:00",
+        "lastCheckedAt": "2026-08-28T16:30:00",
+        "lastUpdatedAt": "2026-07-14T20:07:00",
+        "lastStatus": "error",
+        "lastMessage": "未找到对应的 Emby 媒体库。"
+      }
+    ]
+  },
+  "drive115Config": {
+    "enabled": true,
+    "cookie": "acw_tc=2f6a1fb217854166175286251e67cbac57b12f67ab49f336c4afe1d09751c9; USERSESSIONID=e6bd3ec68ca47f7e9ea40985c3be614af4e18a6367ca0cab75dffe25e2ad1317; UID=102622744_I1_1785416617; CID=e010d7ff0cfe6bdecf213b309c4ee926; SEID=5ea01280b842301949723c7ff3c16e5944eaf3f79faf86d95030b54b8bad5a305aba01bb3f792092d0c64afb54b50a042319791f5ce29500a84d3c8b; KID=3cca18fe3b2cdeed388e0be68f15a08e",
+    "defaultCid": "3344781162845885819",
+    "updatedAt": "2026-07-30T13:47:15Z"
+  },
+  "hdhiveConfig": {
+    "enabled": true,
+    "authMode": "broker",
+    "brokerUrl": "https://hdhive.com",
+    "installationId": "",
+    "installationSecret": "",
+    "oauthSessionId": "",
+    "oauthSessionExpiresAt": 0,
+    "autoCheckin": true,
+    "timezone": "Asia/Shanghai",
+    "lastCheckin": {},
+    "lastCheckinDate": "",
+    "clientId": "",
+    "appSecret": "",
+    "redirectUri": "https://emby2.lshiya.top:333/api/hdhive/oauth/callback",
+    "accessToken": "",
+    "refreshToken": "",
+    "accessExpiresAt": 0,
+    "refreshExpiresAt": 0,
+    "scopes": "meta query unlock write",
+    "user": {
+      "id": "",
+      "username": "",
+      "level": "",
+      "points": null,
+      "avatar": ""
+    },
+    "updatedAt": "2026-07-05T04:47:44+00:00"
+  },
+  "libraryDirectoryConfig": {
+    "roots": [
+      {
+        "name": "本地媒体库",
+        "path": "/Volumes/Cloud2NAS/115/媒体库",
+        "enabled": true,
+        "maxDepth": 4,
+        "categories": [
+          {
+            "label": "亚洲电影",
+            "aliases": [
+              "韩影",
+              "日影",
+              "韩国电影",
+              "日本电影"
+            ],
+            "path": "电影/亚洲电影"
+          },
+          {
+            "label": "华语电影",
+            "aliases": [
+              "国产电影",
+              "中文电影"
+            ],
+            "path": "电影/华语电影"
+          },
+          {
+            "label": "国产动漫",
+            "aliases": [
+              "国漫",
+              "中国动漫"
+            ],
+            "path": "动漫/国产动漫"
+          }
+        ]
+      }
+    ]
+  },
+  "networkConfig": {
+    "proxyUrl": ""
   }
 }

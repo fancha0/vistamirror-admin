@@ -12,6 +12,7 @@ venv/
 # Local env file (do not commit secrets)
 .env
 .env.local
+.fnos-dev.env
 
 # Runtime logs / temp
 *.log
@@ -26,3 +27,14 @@ data/strm115_index.json
 # Optional local editor junk
 .vscode/
 .idea/
+
+# macOS junk
+.DS_Store
+
+# Runtime caches / generated data (not for repo)
+data/cover_studio/
+data/login_backdrop_images/
+data/login_backdrop_cache.json
+data/missing_scan.json
+.playwright-mcp/
+.claude/

@@ -8,8 +8,10 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260819-infra-1">
-  <link rel="stylesheet" href="infra.css?v=20260819-infra-1">
+  <link rel="stylesheet" href="styles.css?v=20260819-ios-glass-1">
+  <link rel="stylesheet" href="infra.css?v=20260824-docker-only-1">
+  <link rel="stylesheet" href="auth.css?v=20260828-card-6">
+  <script src="login-backdrop.js?v=20260828-login-wall-4" defer></script>
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -18,27 +20,37 @@
   </section>
 
   <section id="admin-auth-shell" class="admin-auth-shell" hidden>
+    <div id="auth-backdrop" class="auth-backdrop" aria-hidden="true"></div>
+    <div class="auth-backdrop-tint" aria-hidden="true"></div>
     <div class="admin-auth-card" role="dialog" aria-modal="true" aria-labelledby="admin-auth-title">
       <div class="admin-auth-brand">
         <img src="/assets/branding/logo-light.svg?v=20260625-vm-brand" data-brand-logo-img alt="VistaMirror">
         <div>
-          <h1 id="admin-auth-title">VistaMirror</h1>
-          <p>后台管理登录</p>
+          <h1 id="admin-auth-title">登录账号</h1>
+          <p>输入凭据继续访问 VistaMirror 控制台。</p>
         </div>
       </div>
       <form id="admin-auth-form" class="admin-auth-form">
+        <p id="admin-auth-info" class="admin-auth-info"><span class="admin-auth-info-icon">ⓘ</span>仅限管理员访问，登录行为会被记录。</p>
         <label class="field">
-          <input id="admin-auth-username" type="text" autocomplete="username" placeholder="用户名" aria-label="管理员账号" required>
+          <span class="admin-auth-label">用户名 <em>*</em></span>
+          <input id="admin-auth-username" type="text" autocomplete="username" placeholder="请输入用户名" aria-label="管理员账号" autofocus required>
         </label>
         <label class="field">
-          <input id="admin-auth-password" type="password" autocomplete="current-password" placeholder="密码" aria-label="管理员密码" required>
+          <span class="admin-auth-label">密码 <em>*</em></span>
+          <div class="password-field">
+            <input id="admin-auth-password" type="password" autocomplete="current-password" placeholder="请输入密码" aria-label="管理员密码" required>
+            <button id="admin-auth-password-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏密码" data-target="admin-auth-password" data-open="false">🙈</button>
+          </div>
         </label>
+        <p id="admin-auth-capslock" class="admin-auth-capslock" hidden>大写锁定（Caps Lock）已开启</p>
         <label class="admin-auth-remember">
           <input id="admin-auth-remember" type="checkbox">
           <span>保持登录</span>
         </label>
         <p id="admin-auth-error" class="admin-auth-error" hidden></p>
-        <button id="admin-auth-submit" class="primary-btn admin-auth-submit" type="submit">登录后台</button>
+        <button id="admin-auth-submit" class="primary-btn admin-auth-submit" type="submit">登录 <span class="admin-auth-submit-arrow">→</span></button>
+        <p class="admin-auth-footer">由 VistaMirror 驱动</p>
       </form>
     </div>
   </section>
@@ -74,10 +86,7 @@
         <button class="nav-item" data-view="strm-115" type="button"><span class="nav-icon">▶</span>STRM 直连</button>
         <button class="nav-item" data-view="hdhive" type="button"><span class="nav-icon">🪺</span>影巢搜索</button>
         <p class="nav-group-title">基础设施</p>
-        <button class="nav-item" data-view="infra-overview" type="button"><span class="nav-icon">◈</span>资源总览</button>
         <button class="nav-item" data-view="infra-docker" type="button"><span class="nav-icon">▣</span>Docker 管理</button>
-        <button class="nav-item" data-view="infra-hosts" type="button"><span class="nav-icon">⌁</span>云服务器</button>
-        <button class="nav-item" data-view="service-nav" type="button"><span class="nav-icon">⌘</span>服务导航</button>
         <p class="nav-group-title">用户与终端</p>
         <button class="nav-item" data-view="user-center" type="button"><span class="nav-icon">👥</span>用户管理</button>
         <button class="nav-item" data-view="client-control" type="button"><span class="nav-icon">🖥</span>客户端管控</button>
@@ -1760,6 +1769,26 @@
                       <p id="tmdb-token-hint" class="tmdb-token-hint field-span-2">TMDB 兜底未启用，系统将仅使用 Emby 海报。</p>
                     </div>
                   </section>
+
+                  <section class="settings-card settings-card-network field-span-2">
+                    <div class="settings-card-head">
+                      <div>
+                        <h4>全局网络代理</h4>
+                        <p class="toggle-desc">作用于 TMDB、登录海报墙等公网请求；Emby、Docker 等内网请求不受影响。</p>
+                      </div>
+                      <button id="network-test-btn" class="ghost-btn" type="button">测试连接</button>
+                    </div>
+                    <div class="settings-subgrid">
+                      <label class="field field-span-2">
+                        <span>代理地址</span>
+                        <input id="network-proxy-url" type="text" placeholder="例如 http://192.168.5.1:7890 ，留空为直连">
+                      </label>
+                      <div class="settings-card-actions field-span-2">
+                        <button id="network-save-btn" class="primary-btn" type="button">保存代理配置</button>
+                        <span id="network-proxy-hint" class="tmdb-token-hint">未配置代理，公网请求将直接连接。</span>
+                      </div>
+                    </div>
+                  </section>
                   <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
                     该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
                   </p>
@@ -1905,34 +1934,6 @@
         </div>
       </section>
 
-      <section id="view-infra-overview" class="view-section infra-view">
-        <div class="infra-page-shell">
-          <header class="infra-page-head">
-            <div>
-              <p class="infra-eyebrow">INFRASTRUCTURE / OVERVIEW</p>
-              <h2>资源总览</h2>
-              <p>聚合服务器资源、Docker 项目、操作队列与服务可用性。</p>
-            </div>
-            <button class="infra-btn infra-btn-primary" type="button" data-infra-action="refresh-summary">刷新状态</button>
-          </header>
-          <div id="infra-overview-metrics" class="infra-metric-grid"></div>
-          <div class="infra-overview-grid">
-            <section class="infra-card infra-card-span-2">
-              <div class="infra-card-head"><div><span>SERVER FLEET</span><h3>服务器状态</h3></div><button class="infra-link-btn" type="button" data-infra-view="infra-hosts">管理服务器</button></div>
-              <div id="infra-overview-hosts" class="infra-host-health-grid"></div>
-            </section>
-            <section class="infra-card">
-              <div class="infra-card-head"><div><span>OPERATION QUEUE</span><h3>最近操作</h3></div><button class="infra-link-btn" type="button" data-infra-view="infra-docker">进入 Docker</button></div>
-              <div id="infra-overview-operations" class="infra-operation-list"></div>
-            </section>
-            <section class="infra-card infra-card-span-3">
-              <div class="infra-card-head"><div><span>SERVICE HEALTH</span><h3>服务可用性</h3></div><button class="infra-link-btn" type="button" data-infra-view="service-nav">打开导航页</button></div>
-              <div id="infra-overview-services" class="infra-service-mini-grid"></div>
-            </section>
-          </div>
-        </div>
-      </section>
-
       <section id="view-infra-docker" class="view-section infra-view">
         <div class="infra-page-shell">
           <header class="infra-page-head infra-page-head-row">
@@ -1945,56 +1946,70 @@
               <select id="infra-docker-host-select" class="infra-select" aria-label="选择服务器"></select>
               <button class="infra-btn" type="button" data-infra-action="refresh-docker">刷新</button>
               <button class="infra-btn" type="button" data-infra-action="pull-image">拉取镜像</button>
+              <button class="infra-btn infra-activity-trigger" type="button" data-infra-action="toggle-docker-activity" aria-controls="infra-docker-activity-drawer">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M5 7h7l2-2h5v8h-7l-2 2H5"></path></svg>
+                <span>活动</span><b id="infra-activity-count">0</b>
+              </button>
               <button class="infra-btn infra-btn-primary" type="button" data-infra-action="add-project">添加 Compose</button>
             </div>
           </header>
-          <div class="infra-tabs" role="tablist" aria-label="Docker 数据类型">
-            <button class="active" type="button" data-infra-docker-tab="projects">Compose 项目</button>
-            <button type="button" data-infra-docker-tab="containers">容器</button>
-            <button type="button" data-infra-docker-tab="images">镜像</button>
+          <div id="infra-docker-metrics" class="infra-docker-metrics" aria-live="polite"></div>
+          <div class="infra-docker-nav-row">
+            <div class="infra-tabs" role="tablist" aria-label="Docker 数据类型">
+              <button class="active" type="button" data-infra-docker-tab="containers"><span>容器管理</span><b data-infra-tab-count="containers">0</b></button>
+              <button type="button" data-infra-docker-tab="projects"><span>Compose</span><b data-infra-tab-count="projects">0</b></button>
+              <button type="button" data-infra-docker-tab="images"><span>镜像</span><b data-infra-tab-count="images">0</b></button>
+            </div>
+            <small id="infra-docker-checked-at" class="infra-docker-checked-at">等待读取 Docker 状态</small>
           </div>
           <section class="infra-card infra-docker-panel">
+            <div class="infra-docker-filterbar">
+              <label class="infra-docker-search">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+                <input id="infra-docker-search" type="search" placeholder="搜索容器、镜像或端口" autocomplete="off" aria-label="筛选 Docker 数据">
+              </label>
+              <select id="infra-docker-state-filter" class="infra-select infra-docker-state-filter" aria-label="筛选容器状态">
+                <option value="all">全部状态</option>
+                <option value="running">运行中</option>
+                <option value="healthy">健康</option>
+                <option value="attention">需关注</option>
+                <option value="stopped">已停止</option>
+              </select>
+              <div id="infra-container-quick-filters" class="infra-container-quick-filters" role="group" aria-label="快速筛选容器状态">
+                <button class="active" type="button" data-infra-docker-filter="all">全部</button>
+                <button type="button" data-infra-docker-filter="running">运行中</button>
+                <button type="button" data-infra-docker-filter="stopped">已停止</button>
+                <button type="button" data-infra-docker-filter="attention">需关注</button>
+              </div>
+              <div id="infra-docker-view-switch" class="infra-view-switch" role="group" aria-label="切换展示方式">
+                <button class="active" type="button" data-infra-docker-presentation="cards" aria-label="卡片视图" title="卡片视图">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg>
+                </button>
+                <button type="button" data-infra-docker-presentation="list" aria-label="列表视图" title="列表视图">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"></path><circle cx="4" cy="6" r="1"></circle><circle cx="4" cy="12" r="1"></circle><circle cx="4" cy="18" r="1"></circle></svg>
+                </button>
+              </div>
+              <span id="infra-docker-result-count" class="infra-docker-result-count">0 项</span>
+            </div>
             <div id="infra-docker-content" class="infra-table-shell"></div>
           </section>
-          <section class="infra-card infra-queue-card">
-            <div class="infra-card-head"><div><span>AUDIT TRAIL</span><h3>操作队列</h3></div><span id="infra-operation-live" class="infra-live-badge">自动刷新</span></div>
-            <div id="infra-docker-operations" class="infra-operation-table"></div>
-          </section>
         </div>
-      </section>
-
-      <section id="view-infra-hosts" class="view-section infra-view">
-        <div class="infra-page-shell">
-          <header class="infra-page-head infra-page-head-row">
-            <div>
-              <p class="infra-eyebrow">SSH / SERVER FLEET</p>
-              <h2>云服务器</h2>
-              <p>通过加密 SSH 凭据管理 NAS 与云服务器，并校验主机指纹。</p>
-            </div>
-            <button class="infra-btn infra-btn-primary" type="button" data-infra-action="add-host">添加服务器</button>
+        <div id="infra-docker-drawer-backdrop" class="infra-drawer-backdrop" data-infra-action="close-docker-drawers" hidden></div>
+        <aside id="infra-docker-detail-drawer" class="infra-side-drawer infra-detail-drawer" aria-label="Docker 详情" hidden>
+          <header class="infra-drawer-head">
+            <div><span>DOCKER DETAIL</span><h3 id="infra-docker-detail-title">详情</h3></div>
+            <button class="infra-drawer-close" type="button" data-infra-action="close-docker-drawers" aria-label="关闭详情">×</button>
           </header>
-          <div id="infra-encryption-warning" class="infra-notice" hidden></div>
-          <div id="infra-host-list" class="infra-host-list"></div>
-        </div>
-      </section>
-
-      <section id="view-service-nav" class="view-section infra-view service-nav-view">
-        <div id="infra-service-nav-shell" class="infra-page-shell service-nav-shell">
-          <header class="infra-page-head infra-page-head-row service-nav-head">
-            <div>
-              <p class="infra-eyebrow">SERVICE LAUNCHPAD</p>
-              <h2>服务导航</h2>
-              <p>统一打开媒体服务、网盘、下载器与日常运维入口。</p>
-            </div>
-            <button class="infra-btn" type="button" data-infra-action="customize-services">自定义</button>
+          <div id="infra-docker-detail-content" class="infra-drawer-body"></div>
+        </aside>
+        <aside id="infra-docker-activity-drawer" class="infra-side-drawer infra-activity-drawer" aria-label="Docker 操作活动" hidden>
+          <header class="infra-drawer-head">
+            <div><span>AUDIT TRAIL</span><h3>操作活动</h3></div>
+            <button class="infra-drawer-close" type="button" data-infra-action="close-docker-drawers" aria-label="关闭活动">×</button>
           </header>
-          <div class="infra-service-search-row">
-            <input id="infra-service-search" type="search" placeholder="搜索服务名称、分组或标签…">
-            <div id="infra-service-groups" class="infra-chip-row"></div>
-          </div>
-          <div id="infra-service-grid" class="infra-service-grid"></div>
-          <div id="infra-desktop-pet" class="infra-desktop-pet" hidden aria-hidden="true"><span></span><i></i></div>
-        </div>
+          <div class="infra-drawer-toolbar"><span id="infra-operation-live" class="infra-live-badge">每 5 秒自动刷新</span></div>
+          <div id="infra-docker-operations" class="infra-operation-table infra-drawer-body"></div>
+        </aside>
       </section>
 
       <section id="view-about-support" class="view-section">
@@ -2480,8 +2495,8 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260819-infra-1"></script>
-  <script src="infra.js?v=20260819-infra-1"></script>
+  <script src="script.js?v=20260828-login-ux-1"></script>
+  <script src="infra.js?v=20260824-docker-only-1"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";

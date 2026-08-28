@@ -25,6 +25,7 @@ def default_store_payload(
     default_drive115_config: Callable[[], dict[str, Any]],
     default_hdhive_config: Callable[[], dict[str, Any]],
     default_library_directory_config: Callable[[], dict[str, Any]],
+    default_network_config: Callable[[], dict[str, Any]] = _default_optional_mapping,
     sync_notification_config_to_bot_config: Callable[[Any, Any], dict[str, Any]],
 ) -> dict[str, Any]:
     notification_config = default_notification_config()
@@ -39,6 +40,7 @@ def default_store_payload(
         "drive115Config": default_drive115_config(),
         "hdhiveConfig": default_hdhive_config(),
         "libraryDirectoryConfig": default_library_directory_config(),
+        "networkConfig": default_network_config(),
     }
 
 
@@ -83,6 +85,7 @@ def read_store_unlocked(
     normalize_drive115_config: Callable[[Any], dict[str, Any]],
     normalize_hdhive_config: Callable[[Any], dict[str, Any]],
     normalize_library_directory_config: Callable[[Any], dict[str, Any]],
+    normalize_network_config: Callable[[Any], dict[str, Any]] = _normalize_optional_mapping,
 ) -> dict[str, Any]:
     if not path.exists():
         return default_store_factory()
@@ -108,6 +111,7 @@ def read_store_unlocked(
     drive115_config = data.get("drive115Config") if isinstance(data, dict) else {}
     hdhive_config = data.get("hdhiveConfig") if isinstance(data, dict) else {}
     library_directory_config = data.get("libraryDirectoryConfig") if isinstance(data, dict) else {}
+    network_config = data.get("networkConfig") if isinstance(data, dict) else {}
     if not isinstance(emby_config, dict):
         emby_config = {}
     if not isinstance(invites, list):
@@ -123,6 +127,7 @@ def read_store_unlocked(
         "drive115Config": normalize_drive115_config(drive115_config),
         "hdhiveConfig": normalize_hdhive_config(hdhive_config),
         "libraryDirectoryConfig": normalize_library_directory_config(library_directory_config),
+        "networkConfig": normalize_network_config(network_config),
     }
 
 

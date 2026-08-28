@@ -1,0 +1,45 @@
+name: vistamirror-dev
+
+services:
+  vistamirror-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vistamirror-admin:fnos-dev
+    container_name: vistamirror-admin-dev
+    restart: unless-stopped
+    # 开发容器需要读取宿主机 Docker Socket；仅用于受信任的飞牛内网环境。
+    user: "0:0"
+    ports:
+      - "${FNOS_DEV_ADMIN_PORT:-18091}:8091"
+      - "${FNOS_DEV_PLAYBACK_PORT:-18099}:8099"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8091
+      APP_STRM_PLAYBACK_PORT: 8099
+      APP_DATA_DIR: /app/data
+      APP_RUNTIME_DIR: /app/runtime
+      APP_EMBY_SERVER_URL: ${APP_EMBY_SERVER_URL:-http://192.168.5.9:8096}
+      APP_EMBY_API_KEY: ${APP_EMBY_API_KEY:-}
+      APP_ADMIN_AUTH_ENABLED: ${APP_ADMIN_AUTH_ENABLED:-1}
+      APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME:-admin}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-admin123}
+      APP_INFRA_MASTER_KEY: ${APP_INFRA_MASTER_KEY:-}
+      VISTAMIRROR_PUBLIC_BASE_URL: ${VISTAMIRROR_PUBLIC_BASE_URL:-}
+    volumes:
+      # 与正式版完全隔离，开发数据只写入远端 source/data-dev。
+      - ./data-dev:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 默认沿用当前飞牛测试媒体目录，可在 .fnos-dev.env 中修改左侧路径。
+      - "${FNOS_MEDIA_SOURCE:-/vol3/1000/media/测试}:/测试"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import sys,urllib.request;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8091/',timeout=3).status < 500 else 1)\""
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

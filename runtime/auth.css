@@ -1,0 +1,385 @@
+/* ==========================================================================
+   VistaMirror 登录页 · 影视海报墙 + iOS 毛玻璃登录卡
+   独立于 styles.css，只作用于 #admin-auth-shell / #admin-auth-loading。
+   海报数据来自 /api/public/login-backdrop（TMDB 趋势，服务端代理+缓存）。
+   无海报时兜底为 iOS 浅色渐变，绝不出黑屏。
+   ========================================================================== */
+
+/* ---------- 加载中 ---------- */
+
+.admin-auth-loading {
+  background: linear-gradient(180deg, #f4f7fc 0%, #e9eef7 100%);
+  color: #66758f;
+}
+
+/* ---------- 外壳：浅色 iOS 渐变兜底 ---------- */
+
+.admin-auth-shell {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 24px clamp(24px, 6vw, 108px);
+  background:
+    radial-gradient(90% 70% at 12% 8%, rgba(126, 126, 245, 0.16) 0, transparent 55%),
+    radial-gradient(80% 60% at 88% 92%, rgba(22, 119, 255, 0.14) 0, transparent 52%),
+  linear-gradient(180deg, #f6f9fd 0%, #edf1f9 100%);
+}
+
+/* ---------- 海报墙（铺满、保持自然色彩） ---------- */
+
+.auth-backdrop {
+  position: absolute;
+  inset: -6vh -4vw;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+
+.admin-auth-shell.auth-wall-on .auth-backdrop {
+  opacity: 1;
+}
+
+.auth-backdrop-col {
+  flex: 0 0 auto;
+  width: clamp(140px, 15vw, 220px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: auth-wall-scroll var(--wall-duration, 80s) linear infinite;
+  will-change: transform;
+}
+
+.auth-backdrop-col:nth-child(2) { --wall-duration: 95s; }
+.auth-backdrop-col:nth-child(3) { --wall-duration: 70s; }
+.auth-backdrop-col:nth-child(4) { --wall-duration: 88s; }
+.auth-backdrop-col:nth-child(5) { --wall-duration: 76s; }
+
+@keyframes auth-wall-scroll {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+
+.auth-backdrop-col:nth-child(even) {
+  animation-name: auth-wall-scroll-rev;
+}
+
+@keyframes auth-wall-scroll-rev {
+  from { transform: translateY(-50%); }
+  to   { transform: translateY(0); }
+}
+
+.auth-backdrop-item {
+  position: relative;
+  flex: 0 0 auto; /* flex 列里默认 shrink 会把 2:3 海报压成横版，必须禁止 */
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(31, 42, 61, 0.22);
+}
+
+.auth-backdrop-item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+
+/* 白色渐隐罩：左侧海报清晰可见，右侧卡片区域柔和过渡 */
+.auth-backdrop-tint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg,
+      rgba(246, 249, 253, 0.06) 0%,
+      rgba(246, 249, 253, 0.22) 46%,
+      rgba(246, 249, 253, 0.62) 72%,
+      rgba(246, 249, 253, 0.78) 100%),
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.18) 0%,
+      rgba(255, 255, 255, 0) 30%,
+      rgba(255, 255, 255, 0) 70%,
+      rgba(237, 241, 249, 0.35) 100%);
+}
+
+.admin-auth-shell:not(.auth-wall-on) .auth-backdrop-tint {
+  display: none;
+}
+
+/* ---------- iOS 毛玻璃登录卡（右侧） ---------- */
+
+.admin-auth-card {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: min(430px, 100%);
+  padding: 34px 32px 26px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.66);
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+  box-shadow:
+    0 24px 64px rgba(31, 42, 61, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* 品牌区：小 logo + 大标题层级 */
+.admin-auth-brand {
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.admin-auth-brand img {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.admin-auth-brand h1 {
+  color: #1f2a3d;
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.admin-auth-brand p {
+  color: #6f7d96;
+  font-size: 13px;
+}
+
+/* 顶部信息条 */
+.admin-auth-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 13px;
+  border-radius: 12px;
+  background: rgba(22, 119, 255, 0.08);
+  color: #2f6fde;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.admin-auth-info-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* 字段标签 */
+.admin-auth-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #3d4a63;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-auth-label em {
+  color: #e05555;
+  font-style: normal;
+}
+
+/* styles.css 里 body.vistamirror-fig1-skin .field input 优先级更高，这里用更高优先级压过 */
+body .admin-auth-card .admin-auth-form .field input,
+body .admin-auth-card .admin-auth-form input {
+  min-height: 0;
+  padding: 15px 16px;
+  border: 1px solid rgba(31, 42, 61, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #1f2a3d;
+  font-size: 15px;
+  box-shadow: inset 0 1px 2px rgba(31, 42, 61, 0.04);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+body .admin-auth-card .admin-auth-form input::placeholder {
+  color: #a3adc2;
+}
+
+body .admin-auth-card .admin-auth-form input:focus {
+  border-color: #1677ff;
+  background: #fff;
+  box-shadow:  0 0 0  3px rgba(22, 119, 255, 0.16);
+}
+
+.admin-auth-remember {
+  color: #56637c;
+}
+
+.admin-auth-error {
+  background: rgba(198, 58, 58, 0.1);
+  color: #c63a3a;
+}
+
+/* 渐变主按钮 */
+.admin-auth-submit.primary-btn {
+  padding: 14px 20px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #1677ff 0%, #6a5ef0 100%);
+  color: #fff;
+  font-size: 15.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  box-shadow: 0 10px 24px rgba(64, 110, 255, 0.32);
+  transition: filter 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.admin-auth-submit.primary-btn:hover:not(:disabled) {
+  filter: brightness(1.07);
+  box-shadow: 0 12px 28px rgba(64, 110, 255, 0.4);
+}
+
+.admin-auth-submit.primary-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.admin-auth-submit-arrow {
+  display: inline-block;
+  margin-left: 2px;
+  transition: transform 0.18s ease;
+}
+
+.admin-auth-submit.primary-btn:hover:not(:disabled) .admin-auth-submit-arrow {
+  transform: translateX(3px);
+}
+
+.admin-auth-submit.primary-btn:disabled {
+  filter: saturate(0.6);
+}
+
+/* 底部品牌落款 */
+.admin-auth-footer {
+  margin: 4px 0 0;
+  text-align: center;
+  color: #9aa5bc;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 登录交互反馈 ---------- */
+
+.admin-auth-submit.primary-btn.is-loading {
+  opacity: 0.75;
+  cursor: wait;
+}
+
+.admin-auth-submit.primary-btn.is-loading .admin-auth-submit-arrow {
+  display: none;
+}
+
+@keyframes auth-card-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-9px); }
+  30% { transform: translateX(8px); }
+  45% { transform: translateX(-6px); }
+  60% { transform: translateX(5px); }
+  75% { transform: translateX(-3px); }
+  90% { transform: translateX(2px); }
+}
+
+.admin-auth-card.auth-shake {
+  animation: auth-card-shake 0.45s ease;
+}
+
+.admin-auth-form.auth-input-error input {
+  border-color: rgba(220, 68, 68, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(220, 68, 68, 0.14) !important;
+}
+
+.admin-auth-capslock {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(224, 152, 30, 0.12);
+  color: #b57a12;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-auth-capslock::before {
+  content: "⇪ ";
+}
+
+/* 登录卡内的密码框：容器作为整体输入框，内部 input 去边框（避免嵌套双层框） */
+body .admin-auth-card .admin-auth-form .password-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  border: 1px solid rgba(31, 42, 61, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: inset 0 1px 2px rgba(31, 42, 61, 0.04);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+body .admin-auth-card .admin-auth-form .password-field:focus-within {
+  border-color: #1677ff;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.16);
+}
+
+body .admin-auth-card .admin-auth-form .password-field input {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 15px 16px;
+}
+
+body .admin-auth-card .admin-auth-form .password-field input:focus {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.admin-auth-form.auth-input-error .password-field {
+  border-color: rgba(220, 68, 68, 0.55);
+  box-shadow: 0 0 0 3px rgba(220, 68, 68, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-backdrop-col {
+    animation: none;
+  }
+}
+
+/* ---------- 移动端：卡片居中，加强白罩 ---------- */
+
+@media (max-width: 768px) {
+  .admin-auth-shell {
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .auth-backdrop {
+    gap: 12px;
+  }
+
+  .auth-backdrop-col {
+    width: clamp(110px, 30vw, 150px);
+    gap: 12px;
+  }
+
+  .auth-backdrop-tint {
+    background:
+      linear-gradient(180deg,
+        rgba(246, 249, 253, 0.3) 0%,
+        rgba(246, 249, 253, 0.55) 50%,
+        rgba(246, 249, 253, 0.7) 100%);
+  }
+
+  .admin-auth-card {
+    width: 100%;
+
+    max-width: 400px;
+    background: rgba(255, 255, 255, 0.78);
+  }
+}

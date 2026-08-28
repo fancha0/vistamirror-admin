@@ -1,14 +1,21 @@
 (function () {
   "use strict";
 
-  const INFRA_VIEWS = new Set(["infra-overview", "infra-docker", "infra-hosts", "service-nav"]);
+  const INFRA_VIEWS = new Set(["infra-docker"]);
   const state = {
     config: null,
     summary: null,
     inventory: null,
     activeHostId: "",
     dockerTab: "containers",
-    serviceGroup: "全部",
+    dockerQuery: "",
+    dockerStateFilter: "all",
+    dockerPresentation: "cards",
+    dockerDetail: null,
+    dockerStatsLoading: false,
+    dockerStatsError: "",
+    dockerStatsCheckedAt: "",
+    dockerStatsSequence: 0,
     pollTimer: 0,
     loading: new Set()
   };
@@ -68,9 +75,9 @@
     return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
-  function percent(used, total) {
-    const denominator = Number(total || 0);
-    return denominator > 0 ? Math.max(0, Math.min(100, Math.round(Number(used || 0) / denominator * 100))) : 0;
+  function metricPercent(value) {
+    const parsed = Number.parseFloat(String(value ?? "").replace("%", ""));
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
   }
 
   function empty(message) {
@@ -80,18 +87,11 @@
   async function loadConfig(force = false) {
     if (state.config && !force) return state.config;
     const payload = await request("/api/infra/config");
-    state.config = payload.config || { hosts: [], projects: [], dashboard: {}, serviceCards: [] };
+    state.config = payload.config || { hosts: [], projects: [] };
     if (!state.activeHostId || !(state.config.hosts || []).some((item) => item.id === state.activeHostId)) {
       state.activeHostId = String(state.config.hosts?.[0]?.id || "");
     }
     return state.config;
-  }
-
-  async function loadSummary(force = false) {
-    await loadConfig();
-    const payload = await request(`/api/infra/summary${force ? "?force=1" : ""}`);
-    state.summary = payload.summary || {};
-    return state.summary;
   }
 
   async function loadOperations() {
@@ -105,91 +105,26 @@
     return (state.config?.hosts || []).find((host) => String(host.id) === String(id)) || null;
   }
 
-  function statusByHost(id) {
-    return (state.summary?.hosts || []).find((status) => String(status.hostId) === String(id)) || null;
-  }
-
-  function renderMetrics() {
-    const root = $("#infra-overview-metrics");
-    if (!root) return;
-    const summary = state.summary || {};
-    const operations = summary.operations || [];
-    const running = operations.filter((item) => ["queued", "running"].includes(item.status)).length;
-    const allServices = [...(summary.integrations || []), ...(summary.serviceCards || [])];
-    const onlineServices = allServices.filter((item) => ["online", "configured"].includes(item.status)).length;
-    const metrics = [
-      ["在线服务器", `${summary.onlineHostCount || 0} / ${summary.hostCount || 0}`, "SSH 状态", "rgba(32,166,117,.1)"],
-      ["Compose 项目", summary.projectCount || 0, "已登记项目", "rgba(52,120,246,.1)"],
-      ["执行中操作", running, "队列与运行中", "rgba(236,159,38,.1)"],
-      ["可用服务", `${onlineServices} / ${allServices.length}`, "接入与健康状态", "rgba(117,87,232,.1)"]
-    ];
-    root.innerHTML = metrics.map(([label, value, note, glow]) => `
-      <article class="infra-metric" style="--infra-glow:${glow}"><small>${esc(label)}</small><strong>${esc(value)}</strong><em>${esc(note)}</em></article>
-    `).join("");
-  }
-
-  function hostHealthMarkup(host, status, full = false) {
-    const online = Boolean(status?.online);
-    const memory = status?.memory || {};
-    const disk = status?.disk || {};
-    const memPercent = percent(memory.used, memory.total);
-    const diskPercent = percent(disk.used, disk.total);
-    if (!full) {
-      return `<article class="infra-host-tile">
-        <div class="infra-host-title"><div><strong>${esc(host.name)}</strong><small>${esc(status?.hostname || host.address)}</small></div><i class="infra-status-dot ${online ? "online" : "offline"}"></i></div>
-        ${online ? `
-          <div class="infra-resource-row"><span>内存 ${memPercent}%</span><div class="infra-progress"><i style="--value:${memPercent}%"></i></div><b>${formatBytes(memory.used)}</b></div>
-          <div class="infra-resource-row"><span>磁盘 ${diskPercent}%</span><div class="infra-progress"><i style="--value:${diskPercent}%"></i></div><b>${formatBytes(disk.used)}</b></div>
-        ` : `<p class="infra-form-hint">${esc(status?.error || "尚未读取状态")}</p>`}
-      </article>`;
-    }
-    const local = host.authMode === "socket";
-    return `<article class="infra-host-card" data-host-id="${esc(host.id)}">
-      <div class="infra-host-card-head"><div><h3>${esc(host.name)}</h3><p>${local ? "已挂载 Docker Engine Socket" : `${esc(host.username)}@${esc(host.address)}:${esc(host.port || 22)}`}</p></div><i class="infra-status-dot ${online ? "online" : status ? "offline" : ""}"></i></div>
-      <div class="infra-host-meta">
-        <div><span>认证</span><strong>${esc(authModeLabel(host.authMode))}</strong></div>
-        <div><span>分组</span><strong>${esc(host.group || "默认")}</strong></div>
-        <div><span>Docker</span><strong>${esc(status?.dockerVersion || "未读取")}</strong></div>
-        <div><span>指纹</span><strong title="${esc(host.fingerprint || "")}">${esc(host.fingerprint ? "已校验" : "待校验")}</strong></div>
-      </div>
-      <div class="infra-inline-actions">
-        <button class="infra-btn" type="button" data-infra-action="test-host" data-host-id="${esc(host.id)}">${local ? "检测 Socket" : "测试连接"}</button>
-        ${local ? "" : `<button class="infra-btn" type="button" data-infra-action="edit-host" data-host-id="${esc(host.id)}">编辑</button><button class="infra-btn infra-btn-danger" type="button" data-infra-action="delete-host" data-host-id="${esc(host.id)}">删除</button>`}
-      </div>
-    </article>`;
-  }
-
-  function authModeLabel(mode) {
-    return ({ socket: "Docker Socket", agent: "SSH Agent", password: "密码", private_key: "私钥内容", key_path: "密钥路径" })[mode] || mode || "SSH Agent";
-  }
-
-  function renderOverview() {
-    renderMetrics();
-    const hostsRoot = $("#infra-overview-hosts");
-    const hosts = state.config?.hosts || [];
-    if (hostsRoot) hostsRoot.innerHTML = hosts.length ? hosts.map((host) => hostHealthMarkup(host, statusByHost(host.id))).join("") : empty("还没有服务器。请先进入“云服务器”添加 SSH 连接。");
-    const servicesRoot = $("#infra-overview-services");
-    const services = [...(state.summary?.integrations || []), ...(state.summary?.serviceCards || [])];
-    if (servicesRoot) servicesRoot.innerHTML = services.length ? services.slice(0, 8).map((card) => `
-      <article class="infra-service-mini"><strong>${esc(card.icon || "◫")} ${esc(card.name)}</strong><span>${esc(card.group || "默认")} · ${card.status === "online" ? (card.latencyMs ? `${esc(card.latencyMs)} ms` : esc(card.detail || "在线")) : card.status === "configured" ? esc(card.detail || "已配置") : card.status === "unconfigured" ? "未配置" : card.status === "offline" ? "离线" : "未检查"}</span></article>
-    `).join("") : empty("在“服务导航”中添加媒体服务、网盘或下载器入口。");
-    renderOperations();
-  }
-
   function operationMarkup(item, table = false) {
     const status = String(item.status || "queued");
+    const statusLabel = ({ queued: "排队中", running: "执行中", success: "已完成", failed: "失败" })[status] || status;
     if (table) {
-      return `<tr><td><span class="infra-state-pill ${esc(status)}">${esc(status)}</span></td><td><strong>${esc(item.description || item.action)}</strong><small>${esc(item.error || item.target || "")}</small></td><td>${esc(hostById(item.hostId)?.name || item.hostId)}</td><td>${esc(formatTime(item.finishedAt || item.startedAt || item.createdAt))}</td></tr>`;
+      return `<tr><td><span class="infra-state-pill ${esc(status)}">${esc(statusLabel)}</span></td><td><strong>${esc(item.description || item.action)}</strong><small>${esc(item.error || item.target || "")}</small></td><td>${esc(hostById(item.hostId)?.name || item.hostId)}</td><td>${esc(formatTime(item.finishedAt || item.startedAt || item.createdAt))}</td></tr>`;
     }
     return `<div class="infra-operation-item"><i class="infra-status-dot ${esc(status)}"></i><div><strong>${esc(item.description || item.action)}</strong><small>${esc(item.error || item.target || status)}</small></div><time>${esc(formatTime(item.finishedAt || item.createdAt))}</time></div>`;
   }
 
   function renderOperations() {
     const operations = state.summary?.operations || [];
-    const overview = $("#infra-overview-operations");
-    if (overview) overview.innerHTML = operations.length ? operations.slice(0, 7).map((item) => operationMarkup(item)).join("") : empty("暂无操作记录。");
     const docker = $("#infra-docker-operations");
-    if (docker) docker.innerHTML = operations.length ? `<table class="infra-table"><thead><tr><th>状态</th><th>操作</th><th>服务器</th><th>时间</th></tr></thead><tbody>${operations.map((item) => operationMarkup(item, true)).join("")}</tbody></table>` : empty("暂无操作记录。");
+    if (docker) docker.innerHTML = operations.length ? `<div class="infra-activity-list">${operations.map((item) => operationMarkup(item)).join("")}</div>` : empty("暂无操作记录。");
+    const activeCount = operations.filter((item) => ["queued", "running"].includes(String(item.status || ""))).length;
+    const badge = $("#infra-activity-count");
+    if (badge) {
+      badge.textContent = String(activeCount);
+      badge.hidden = activeCount === 0;
+      badge.closest(".infra-activity-trigger")?.classList.toggle("has-work", activeCount > 0);
+    }
   }
 
   function renderHostSelect() {
@@ -200,17 +135,168 @@
     select.disabled = !hosts.length;
   }
 
-  function renderHosts() {
-    const root = $("#infra-host-list");
-    if (!root) return;
-    const hosts = state.config?.hosts || [];
-    root.innerHTML = hosts.length ? hosts.map((host) => hostHealthMarkup(host, statusByHost(host.id), true)).join("") : empty("尚未配置服务器。添加后即可查看系统资源与 Docker 状态。");
-    const warning = $("#infra-encryption-warning");
-    if (warning) {
-      warning.hidden = Boolean(state.config?.credentialEncryptionReady);
-      warning.textContent = "当前未配置 APP_INFRA_MASTER_KEY：可使用 SSH Agent 或密钥路径，但保存密码/私钥内容前必须先设置加密主密钥并重启 VistaMirror。";
+  function containerStatus(row) {
+    const raw = String(row?.Status || row?.State || "unknown").trim();
+    const normalized = `${row?.State || ""} ${row?.Status || ""}`.toLowerCase();
+    const restarting = normalized.includes("restart");
+    const paused = normalized.includes("paused");
+    const running = !restarting && !paused && (normalized.includes("running") || normalized.includes("up"));
+    const unhealthy = normalized.includes("unhealthy") || normalized.includes("dead");
+    const healthy = running && normalized.includes("healthy") && !unhealthy;
+    if (restarting) return { key: "attention", tone: "warning", label: "重启中", raw, running: false, healthy: false };
+    if (paused) return { key: "attention", tone: "warning", label: "已暂停", raw, running: false, healthy: false, paused: true };
+    if (unhealthy) return { key: "attention", tone: "warning", label: "异常", raw, running: true, healthy: false };
+    if (healthy) return { key: "healthy", tone: "healthy", label: "健康", raw, running: true, healthy: true };
+    if (running) return { key: "running", tone: "running", label: "运行中", raw, running: true, healthy: false };
+    return { key: "stopped", tone: "exited", label: "已停止", raw, running: false, healthy: false };
+  }
+
+  function uniquePorts(value) {
+    const seen = new Set();
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item && item !== "—")
+      .filter((item) => {
+        const normalized = item.replace(/^0\.0\.0\.0:/, "").replace(/^\[::\]:/, "");
+        if (seen.has(normalized)) return false;
+        seen.add(normalized);
+        return true;
+      })
+      .map((item) => item.replace(/^0\.0\.0\.0:/, "").replace(/^\[::\]:/, ""));
+  }
+
+  function labelMap(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    return String(value || "").split(",").reduce((result, pair) => {
+      const index = pair.indexOf("=");
+      if (index > 0) result[pair.slice(0, index).trim()] = pair.slice(index + 1).trim();
+      return result;
+    }, {});
+  }
+
+  function containerName(row) {
+    return String(row?.Names || row?.Name || row?.ID || "").replace(/^\//, "");
+  }
+
+  function containerProject(row) {
+    return String(labelMap(row?.Labels)["com.docker.compose.project"] || "").trim();
+  }
+
+  function containerService(row) {
+    return String(labelMap(row?.Labels)["com.docker.compose.service"] || "").trim();
+  }
+
+  function containersForProject(projectName) {
+    const target = String(projectName || "").toLowerCase();
+    return (state.inventory?.containers || []).filter((row) => containerProject(row).toLowerCase() === target);
+  }
+
+  function dockerGlyph() {
+    return `<span class="infra-container-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m4.5 7.8 7.5 4.3 7.5-4.3M12 12.1V21"></path></svg></span>`;
+  }
+
+  function dockerActionIcon(name) {
+    const paths = {
+      start: `<path d="m9 7 8 5-8 5V7Z"></path>`,
+      stop: `<rect x="8" y="8" width="8" height="8" rx="1"></rect>`,
+      restart: `<path d="M18.5 8.5A7 7 0 1 0 19 15"></path><path d="M18.5 4.5v4h-4"></path>`,
+      pause: `<path d="M9 8v8M15 8v8"></path>`,
+      logs: `<path d="M7 5h10M7 10h10M7 15h7"></path><path d="M5 3h14v18H5z"></path>`
+    };
+    return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.logs}</svg>`;
+  }
+
+  function dockerRowsForTab(tab = state.dockerTab) {
+    if (tab === "containers") return state.inventory?.containers || [];
+    if (tab === "images") return state.inventory?.images || [];
+    const discovered = state.inventory?.compose || [];
+    if (state.activeHostId === "local-docker") return discovered;
+    const configured = (state.config?.projects || []).filter((item) => item.hostId === state.activeHostId);
+    const merged = new Map();
+    discovered.forEach((item) => merged.set(String(item.Name || item.name || "").toLowerCase(), { ...item }));
+    configured.forEach((item) => {
+      const key = String(item.name || item.Name || "").toLowerCase();
+      merged.set(key, { ...(merged.get(key) || {}), ...item, Name: item.name || item.Name });
+    });
+    return Array.from(merged.values());
+  }
+
+  function dockerSearchText(row, tab = state.dockerTab) {
+    if (tab === "containers") return [row.Names, row.Name, row.ID, row.Image, row.Ports, row.State, row.Status].join(" ").toLowerCase();
+    if (tab === "images") return [row.Repository, row.Name, row.Tag, row.ID, row.Size].join(" ").toLowerCase();
+    return [row.Name, row.name, row.Status, row.composePath, row.group, ...(row.tags || [])].join(" ").toLowerCase();
+  }
+
+  function filteredDockerRows(tab = state.dockerTab) {
+    const query = String(state.dockerQuery || "").trim().toLowerCase();
+    return dockerRowsForTab(tab).filter((row) => {
+      if (query && !dockerSearchText(row, tab).includes(query)) return false;
+      if (tab !== "containers" || state.dockerStateFilter === "all") return true;
+      const status = containerStatus(row);
+      if (state.dockerStateFilter === "attention") return status.key === "attention" || status.key === "stopped";
+      return status.key === state.dockerStateFilter || (state.dockerStateFilter === "running" && status.running);
+    });
+  }
+
+  function renderDockerSummary() {
+    const containers = state.inventory?.containers || [];
+    const statuses = containers.map(containerStatus);
+    const running = statuses.filter((status) => status.running).length;
+    const healthy = statuses.filter((status) => status.healthy).length;
+    const attention = statuses.filter((status) => status.key === "attention" || status.key === "stopped").length;
+    const metrics = [
+      ["全部容器", containers.length, "当前服务器", "total"],
+      ["运行中", running, containers.length ? `${Math.round(running / containers.length * 100)}% 在线` : "等待数据", "running"],
+      ["健康", healthy, "通过健康检查", "healthy"],
+      ["需关注", attention, attention ? "停止或异常" : "当前无异常", attention ? "attention" : "quiet"]
+    ];
+    const root = $("#infra-docker-metrics");
+    if (root) root.innerHTML = metrics.map(([label, value, note, tone], index) => {
+      const filterKey = index === 0 ? "all" : tone === "quiet" ? "attention" : tone;
+      const active = state.dockerTab === "containers" && state.dockerStateFilter === filterKey;
+      return `<button class="infra-docker-metric ${esc(tone)} ${active ? "active" : ""}" type="button" data-infra-docker-filter="${esc(filterKey)}" aria-pressed="${active ? "true" : "false"}"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></button>`;
+    }).join("");
+    const counts = {
+      projects: dockerRowsForTab("projects").length,
+      containers: containers.length,
+      images: (state.inventory?.images || []).length
+    };
+    $$('[data-infra-tab-count]').forEach((node) => { node.textContent = String(counts[node.dataset.infraTabCount] || 0); });
+    const checked = $("#infra-docker-checked-at");
+    if (checked) {
+      const inventoryTime = state.inventory?.checkedAt ? `更新于 ${formatTime(state.inventory.checkedAt)}` : "等待读取 Docker 状态";
+      checked.textContent = state.dockerStatsLoading ? `${inventoryTime} · 正在补充资源指标` : state.dockerStatsError ? `${inventoryTime} · 资源指标暂不可用` : inventoryTime;
     }
-    renderHostSelect();
+  }
+
+  function renderDockerFilters(shown, total) {
+    const search = $("#infra-docker-search");
+    if (search) {
+      search.value = state.dockerQuery;
+      search.placeholder = state.dockerTab === "containers" ? "搜索容器、镜像或端口" : state.dockerTab === "images" ? "搜索仓库、标签或镜像 ID" : "搜索 Compose 项目或路径";
+    }
+    const filter = $("#infra-docker-state-filter");
+    if (filter) {
+      filter.value = state.dockerStateFilter;
+      filter.hidden = state.dockerTab !== "containers";
+    }
+    const quickFilters = $("#infra-container-quick-filters");
+    if (quickFilters) quickFilters.hidden = state.dockerTab !== "containers";
+    $$("#infra-container-quick-filters [data-infra-docker-filter]").forEach((button) => {
+      const active = state.dockerTab === "containers" && button.dataset.infraDockerFilter === state.dockerStateFilter;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    const count = $("#infra-docker-result-count");
+    if (count) count.textContent = shown === total ? `${total} 项` : `显示 ${shown} / ${total} 项`;
+    const switcher = $("#infra-docker-view-switch");
+    if (switcher) switcher.hidden = state.dockerTab === "images";
+    $$('[data-infra-docker-presentation]').forEach((button) => {
+      const active = button.dataset.infraDockerPresentation === state.dockerPresentation;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
   }
 
   async function loadDockerInventory(force = false) {
@@ -227,109 +313,250 @@
     }
     const root = $("#infra-docker-content");
     if (root) root.innerHTML = empty("正在读取 Docker 数据…");
+    const hostId = state.activeHostId;
     try {
-      const payload = await request(`/api/infra/docker/inventory?hostId=${encodeURIComponent(state.activeHostId)}`);
-      state.inventory = payload.inventory || { hostId: state.activeHostId, containers: [], images: [], compose: [] };
+      const payload = await request(`/api/infra/docker/inventory?hostId=${encodeURIComponent(hostId)}`);
+      if (hostId !== state.activeHostId) return;
+      state.inventory = payload.inventory || { hostId, containers: [], images: [], compose: [] };
+      state.dockerStatsLoading = false;
+      state.dockerStatsError = "";
+      state.dockerStatsCheckedAt = "";
       renderDocker();
+      loadDockerStats(hostId);
     } catch (error) {
-      state.inventory = { hostId: state.activeHostId, containers: [], images: [], compose: [], error: error.message };
+      if (hostId !== state.activeHostId) return;
+      state.inventory = { hostId, containers: [], images: [], compose: [], error: error.message };
       renderDocker();
+    }
+  }
+
+  async function loadDockerStats(hostId) {
+    if (!hostId || state.inventory?.hostId !== hostId || !(state.inventory?.containers || []).length) return;
+    const sequence = ++state.dockerStatsSequence;
+    state.dockerStatsLoading = true;
+    state.dockerStatsError = "";
+    renderDocker();
+    try {
+      const payload = await request(`/api/infra/docker/stats?hostId=${encodeURIComponent(hostId)}`);
+      if (sequence !== state.dockerStatsSequence || hostId !== state.activeHostId || state.inventory?.hostId !== hostId) return;
+      const result = payload.stats || {};
+      const rows = Array.isArray(result.stats) ? result.stats : [];
+      const metrics = new Map();
+      rows.forEach((row) => {
+        [row.Name, row.Names, row.Container, row.ID].forEach((value) => {
+          const key = String(value || "").replace(/^\//, "").toLowerCase();
+          if (key) metrics.set(key, row);
+        });
+      });
+      state.inventory.containers = (state.inventory.containers || []).map((row) => {
+        const candidates = [row.Names, row.Name, row.ID].map((value) => String(value || "").replace(/^\//, "").toLowerCase()).filter(Boolean);
+        const metric = candidates.map((key) => metrics.get(key)).find(Boolean);
+        if (!metric) return row;
+        const merged = { ...row };
+        ["CPUPerc", "MemUsage", "MemPerc", "NetIO", "BlockIO", "PIDs"].forEach((key) => {
+          if (metric[key] !== undefined && metric[key] !== null) merged[key] = metric[key];
+        });
+        return merged;
+      });
+      state.dockerStatsCheckedAt = result.checkedAt || "";
+    } catch (error) {
+      if (sequence === state.dockerStatsSequence && hostId === state.activeHostId) state.dockerStatsError = error.message || "资源指标读取失败";
+    } finally {
+      if (sequence === state.dockerStatsSequence && hostId === state.activeHostId) {
+        state.dockerStatsLoading = false;
+        renderDocker();
+      }
     }
   }
 
   function projectRows() {
-    const discovered = state.inventory?.compose || [];
-    const projects = (state.config?.projects || []).filter((item) => item.hostId === state.activeHostId);
-    if (state.activeHostId === "local-docker") {
-      if (!discovered.length) return empty("未发现带 com.docker.compose.project 标签的容器。可切换到“容器”查看全部本机容器。");
-      return `<table class="infra-table"><thead><tr><th>Compose 项目</th><th>容器数</th><th>状态</th><th>来源</th></tr></thead><tbody>${discovered.map((project) => `
-        <tr><td><strong>${esc(project.Name || "—")}</strong></td><td>${esc(project.Containers || 0)}</td><td><span class="infra-state-pill running">${esc(project.Status || "unknown")}</span></td><td><small>Docker Socket 自动发现</small></td></tr>`).join("")}</tbody></table>`;
+    const allRows = dockerRowsForTab("projects");
+    const rows = filteredDockerRows("projects");
+    renderDockerFilters(rows.length, allRows.length);
+    if (!allRows.length) return empty(state.activeHostId === "local-docker" ? "未发现带 Compose 标签的容器。可切换到“容器”查看全部本机容器。" : "当前服务器还没有登记 Compose 项目。添加配置文件路径后即可部署或更新。");
+    if (!rows.length) return empty("没有匹配的 Compose 项目。");
+    if (state.dockerPresentation === "list") {
+      return `<table class="infra-table infra-responsive-table"><thead><tr><th>项目</th><th>运行状态</th><th>容器</th><th>来源 / 路径</th><th>操作</th></tr></thead><tbody>${rows.map((project) => {
+        const name = project.Name || project.name || "—";
+        const containers = containersForProject(name);
+        const running = containers.filter((row) => containerStatus(row).running).length;
+        const total = containers.length || Number(project.Containers || 0);
+        const projectId = project.id || "";
+        return `<tr class="infra-clickable-row" data-docker-detail-kind="project" data-docker-detail-id="${esc(name)}"><td><strong>${esc(name)}</strong><small>${esc(project.group || project.tags?.join(" · ") || "Compose 项目")}</small></td><td><span class="infra-state-pill ${total && running === total ? "running" : "warning"}">${esc(total ? `${running}/${total} 运行` : project.Status || "未读取")}</span></td><td>${esc(total)}</td><td><small title="${esc(project.composePath || "")}">${esc(project.composePath || project.Source || "Docker 自动发现")}</small></td><td>${projectId ? `<div class="infra-inline-actions"><button class="infra-link-btn" type="button" data-compose-action="update" data-project-id="${esc(projectId)}">更新</button><button class="infra-link-btn" type="button" data-compose-action="restart" data-project-id="${esc(projectId)}">重启</button><button class="infra-link-btn" type="button" data-infra-action="edit-project" data-project-id="${esc(projectId)}">设置</button></div>` : `<button class="infra-link-btn" type="button" data-docker-detail-kind="project" data-docker-detail-id="${esc(name)}">查看</button>`}</td></tr>`;
+      }).join("")}</tbody></table>`;
     }
-    if (!projects.length) return empty("当前服务器还没有登记 Compose 项目。添加配置文件路径后即可部署或更新。");
-    return `<table class="infra-table"><thead><tr><th>项目</th><th>Compose 文件</th><th>分组</th><th>操作</th></tr></thead><tbody>${projects.map((project) => `
-      <tr><td><strong>${esc(project.name)}</strong><small>${esc(project.tags?.join(" · ") || project.id)}</small></td><td><small title="${esc(project.composePath)}">${esc(project.composePath)}</small></td><td>${esc(project.group || "默认")}</td><td><div class="infra-inline-actions">
-        <button class="infra-link-btn" type="button" data-compose-action="deploy" data-project-id="${esc(project.id)}">部署</button>
-        <button class="infra-link-btn" type="button" data-compose-action="update" data-project-id="${esc(project.id)}">更新</button>
-        <button class="infra-link-btn" type="button" data-compose-action="restart" data-project-id="${esc(project.id)}">重启</button>
-        <button class="infra-link-btn" type="button" data-compose-action="stop" data-project-id="${esc(project.id)}">停止</button>
-        <button class="infra-link-btn" type="button" data-infra-action="edit-project" data-project-id="${esc(project.id)}">编辑</button>
-      </div></td></tr>`).join("")}</tbody></table>`;
+    return `<div class="infra-project-grid">${rows.map((project) => {
+      const name = project.Name || project.name || "—";
+      const containers = containersForProject(name);
+      const running = containers.filter((row) => containerStatus(row).running).length;
+      const healthy = containers.filter((row) => containerStatus(row).healthy).length;
+      const total = containers.length || Number(project.Containers || 0);
+      const attention = Math.max(0, total - running);
+      const projectId = project.id || "";
+      const tone = attention ? "warning" : running ? "running" : "quiet";
+      return `<article class="infra-project-card" data-docker-detail-kind="project" data-docker-detail-id="${esc(name)}" tabindex="0" role="button">
+        <div class="infra-project-card-head"><span class="infra-project-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="6" rx="2"></rect><rect x="3.5" y="14" width="17" height="6" rx="2"></rect><path d="M7 7h.01M7 17h.01"></path></svg></span><span class="infra-state-pill ${esc(tone)}">${esc(attention ? `${attention} 项需关注` : running ? "全部运行" : project.Status || "未读取")}</span></div>
+        <h3>${esc(name)}</h3><p>${esc(project.group || project.tags?.join(" · ") || (state.activeHostId === "local-docker" ? "Docker Socket 自动发现" : "Compose 项目"))}</p>
+        <div class="infra-project-stats"><div><strong>${esc(running)}</strong><span>运行</span></div><div><strong>${esc(total)}</strong><span>容器</span></div><div><strong>${esc(healthy)}</strong><span>健康</span></div></div>
+        <div class="infra-project-services">${containers.length ? containers.slice(0, 4).map((row) => `<span><i class="${containerStatus(row).running ? "online" : "offline"}"></i>${esc(containerService(row) || containerName(row))}</span>`).join("") : `<span class="muted">${esc(project.composePath || project.Source || "点击查看项目详情")}</span>`}</div>
+        <footer><span>${esc(project.composePath ? "已登记配置" : "自动发现")}</span>${projectId ? `<div><button class="infra-action-btn" type="button" data-compose-action="update" data-project-id="${esc(projectId)}">更新</button><button class="infra-action-btn" type="button" data-compose-action="restart" data-project-id="${esc(projectId)}">重启</button></div>` : `<span class="infra-card-arrow">查看 →</span>`}</footer>
+      </article>`;
+    }).join("")}</div>`;
   }
 
   function containerRows() {
     if (state.inventory?.error) return empty(state.inventory.error);
-    const rows = state.inventory?.containers || [];
-    if (!rows.length) return empty("当前服务器没有容器，或尚未读取 Docker 数据。");
-    return `<table class="infra-table"><thead><tr><th>容器</th><th>镜像</th><th>状态</th><th>端口</th><th>操作</th></tr></thead><tbody>${rows.map((row) => {
+    const allRows = dockerRowsForTab("containers");
+    const rows = filteredDockerRows("containers").sort((left, right) => {
+      const stateDelta = Number(containerStatus(right).running) - Number(containerStatus(left).running);
+      return stateDelta || String(left.Names || left.Name || "").localeCompare(String(right.Names || right.Name || ""), "zh-CN");
+    });
+    renderDockerFilters(rows.length, allRows.length);
+    if (!allRows.length) return empty("当前服务器没有容器，或尚未读取 Docker 数据。");
+    if (!rows.length) return empty("没有符合当前条件的容器。");
+    if (state.dockerPresentation === "cards") {
+      return `<div class="infra-container-grid">${rows.map((row) => {
+        const name = containerName(row);
+        const status = containerStatus(row);
+        const ports = uniquePorts(row.Ports);
+        const project = containerProject(row);
+        const service = containerService(row);
+        const cpu = row.CPUPerc || "—";
+        const memory = row.MemUsage || "—";
+        const memoryPercent = row.MemPerc || "—";
+        const tone = status.key === "attention" ? "is-attention" : status.running ? "is-running" : "is-stopped";
+        const portText = ports.length ? ports.join(", ") : "未映射端口";
+        const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
+        const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
+        return `<article class="infra-container-card ${esc(tone)}" data-docker-detail-kind="container" data-docker-detail-id="${esc(name)}" tabindex="0" role="button">
+          <div class="infra-container-card-title">
+            <div>${dockerGlyph()}<div><h3 title="${esc(name)}">${esc(name)}</h3><small>${esc(service || String(row.ID || "").slice(0, 12) || "独立容器")}</small></div></div>
+            <span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span>
+          </div>
+          <div class="infra-container-specs">
+            <div><span>当前镜像</span><strong title="${esc(row.Image || "")}">${esc(row.Image || "未标记镜像")}</strong></div>
+            <div><span>Compose</span><strong title="${esc(project || "独立容器")}">${esc(project || "独立容器")}</strong></div>
+            <div><span>运行状态</span><strong title="${esc(status.raw || status.label)}">${esc(status.raw || status.label)}</strong></div>
+            <div><span>端口映射</span><strong title="${esc(portText)}">${esc(portText)}</strong></div>
+          </div>
+          <div class="infra-container-vitals">
+            <div><header><span>CPU</span><strong>${esc(cpu)}</strong></header><i><b style="--value:${metricPercent(cpu)}%"></b></i></div>
+            <div><header><span>内存</span><strong title="${esc(memory)}">${esc(memory)}</strong></header><small>${esc(memoryPercent)}</small><i><b style="--value:${metricPercent(memoryPercent)}%"></b></i></div>
+          </div>
+          <footer class="infra-container-icon-actions">
+            <button type="button" data-infra-action="container-logs" data-container="${esc(name)}" aria-label="查看 ${esc(name)} 日志" title="查看日志">${dockerActionIcon("logs")}</button>
+            <button type="button" data-container-action="${primaryAction}" data-container="${esc(name)}" aria-label="${primaryLabel} ${esc(name)}" title="${primaryLabel}">${dockerActionIcon(primaryAction === "unpause" ? "start" : primaryAction)}</button>
+            ${status.running ? `<button type="button" data-container-action="pause" data-container="${esc(name)}" aria-label="暂停 ${esc(name)}" title="暂停">${dockerActionIcon("pause")}</button><button class="danger" type="button" data-container-action="stop" data-container="${esc(name)}" aria-label="停止 ${esc(name)}" title="停止">${dockerActionIcon("stop")}</button>` : ""}
+          </footer>
+        </article>`;
+      }).join("")}</div>`;
+    }
+    return `<div class="infra-container-list"><div class="infra-container-list-head"><span>容器</span><span>状态</span><span>端口</span><span>操作</span></div>${rows.map((row) => {
       const name = row.Names || row.Name || row.ID || "";
-      const stateName = String(row.State || row.Status || "unknown").toLowerCase();
-      const running = stateName.includes("running") || stateName.includes("up");
-      return `<tr><td><strong>${esc(name)}</strong><small>${esc(String(row.ID || "").slice(0, 18))}</small></td><td><small>${esc(row.Image || "—")}</small></td><td><span class="infra-state-pill ${running ? "running" : "exited"}">${esc(row.Status || row.State || "unknown")}</span></td><td><small>${esc(row.Ports || "—")}</small></td><td><div class="infra-inline-actions">
-        <button class="infra-link-btn" type="button" data-container-action="${running ? "restart" : "start"}" data-container="${esc(name)}">${running ? "重启" : "启动"}</button>
-        ${running ? `<button class="infra-link-btn" type="button" data-container-action="stop" data-container="${esc(name)}">停止</button>` : ""}
-        <button class="infra-link-btn" type="button" data-infra-action="container-logs" data-container="${esc(name)}">日志</button>
-      </div></td></tr>`;
-    }).join("")}</tbody></table>`;
+      const status = containerStatus(row);
+      const ports = uniquePorts(row.Ports);
+      const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
+      const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
+      return `<article class="infra-container-row" data-docker-detail-kind="container" data-docker-detail-id="${esc(name)}" tabindex="0" role="button">
+        <div class="infra-container-identity">
+          ${dockerGlyph()}
+          <div><strong title="${esc(name)}">${esc(name)}</strong><small title="${esc(row.Image || "")}">${esc(row.Image || "—")}</small><code>${esc(String(row.ID || "").slice(0, 12))}</code></div>
+        </div>
+        <div class="infra-container-state"><span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span><small title="${esc(status.raw)}">${esc(status.raw || "状态未知")}</small></div>
+        <div class="infra-port-list">${ports.length ? ports.map((port) => `<code>${esc(port)}</code>`).join("") : `<span>未映射端口</span>`}</div>
+        <div class="infra-container-actions">
+          <button class="infra-action-btn primary" type="button" data-infra-action="container-logs" data-container="${esc(name)}">日志</button>
+          <button class="infra-action-btn" type="button" data-container-action="${primaryAction}" data-container="${esc(name)}">${primaryLabel}</button>
+          ${status.running ? `<button class="infra-action-btn danger" type="button" data-container-action="stop" data-container="${esc(name)}">停止</button>` : ""}
+        </div>
+      </article>`;
+    }).join("")}</div>`;
   }
 
   function imageRows() {
     if (state.inventory?.error) return empty(state.inventory.error);
-    const rows = state.inventory?.images || [];
-    if (!rows.length) return empty("当前服务器没有镜像，或尚未读取 Docker 数据。");
-    return `<table class="infra-table"><thead><tr><th>仓库</th><th>标签</th><th>ID</th><th>大小</th><th>创建时间</th></tr></thead><tbody>${rows.map((row) => `
+    const allRows = dockerRowsForTab("images");
+    const rows = filteredDockerRows("images");
+    renderDockerFilters(rows.length, allRows.length);
+    if (!allRows.length) return empty("当前服务器没有镜像，或尚未读取 Docker 数据。");
+    if (!rows.length) return empty("没有匹配的镜像。");
+    return `<table class="infra-table infra-responsive-table"><thead><tr><th>仓库</th><th>标签</th><th>ID</th><th>大小</th><th>创建时间</th></tr></thead><tbody>${rows.map((row) => `
       <tr><td><strong>${esc(row.Repository || row.Name || "<none>")}</strong></td><td>${esc(row.Tag || "—")}</td><td><small>${esc(String(row.ID || "").slice(0, 24))}</small></td><td>${esc(row.Size || "—")}</td><td><small>${esc(row.CreatedSince || row.CreatedAt || "—")}</small></td></tr>`).join("")}</tbody></table>`;
   }
 
   function renderDocker() {
     renderHostSelect();
+    renderDockerSummary();
     $$("[data-infra-docker-tab]").forEach((button) => button.classList.toggle("active", button.dataset.infraDockerTab === state.dockerTab));
     const root = $("#infra-docker-content");
     if (!root) return;
-    if (!state.activeHostId) { root.innerHTML = empty("未发现可用的 Docker 服务器。"); return; }
+    if (!state.activeHostId) { renderDockerFilters(0, 0); root.innerHTML = empty("未发现可用的 Docker 服务器。"); return; }
+    if (state.inventory?.error) { renderDockerFilters(0, 0); root.innerHTML = empty(state.inventory.error); renderOperations(); return; }
     root.innerHTML = state.dockerTab === "projects" ? projectRows() : state.dockerTab === "containers" ? containerRows() : imageRows();
     renderOperations();
   }
 
-  function applyServiceAppearance() {
-    const shell = $("#infra-service-nav-shell");
-    if (!shell) return;
-    const dashboard = state.config?.dashboard || {};
-    const overlay = Number(dashboard.overlay ?? .55);
-    shell.style.setProperty("--infra-overlay", String(Math.max(.2, Math.min(.98, .5 + overlay * .5))));
-    if (dashboard.backgroundUrl) {
-      const safeUrl = String(dashboard.backgroundUrl).replace(/["\\\n\r]/g, "");
-      shell.style.setProperty("--infra-bg", `url("${safeUrl}")`);
-    } else {
-      shell.style.removeProperty("--infra-bg");
-    }
-    const pet = $("#infra-desktop-pet");
-    if (pet) pet.hidden = !dashboard.petEnabled;
+  function closeDockerDrawers() {
+    $$(".infra-side-drawer").forEach((drawer) => { drawer.hidden = true; });
+    const backdrop = $("#infra-docker-drawer-backdrop");
+    if (backdrop) backdrop.hidden = true;
+    document.body.classList.remove("infra-drawer-open");
+    state.dockerDetail = null;
   }
 
-  function renderServices() {
-    applyServiceAppearance();
-    const configured = state.config?.serviceCards || [];
-    const statuses = state.summary?.serviceCards || [];
-    const cards = [
-      ...(state.summary?.integrations || []),
-      ...configured.map((card) => ({ ...card, ...(statuses.find((item) => item.id === card.id) || {}) }))
-    ];
-    const groups = ["全部", ...Array.from(new Set(cards.map((card) => card.group || "默认")))];
-    if (!groups.includes(state.serviceGroup)) state.serviceGroup = "全部";
-    const groupRoot = $("#infra-service-groups");
-    if (groupRoot) groupRoot.innerHTML = groups.map((group) => `<button class="${group === state.serviceGroup ? "active" : ""}" type="button" data-service-group="${esc(group)}">${esc(group)}</button>`).join("");
-    const query = String($("#infra-service-search")?.value || "").trim().toLowerCase();
-    const filtered = cards.filter((card) => {
-      const groupMatch = state.serviceGroup === "全部" || (card.group || "默认") === state.serviceGroup;
-      const search = [card.name, card.group, ...(card.tags || [])].join(" ").toLowerCase();
-      return groupMatch && (!query || search.includes(query));
-    });
-    const root = $("#infra-service-grid");
-    if (root) root.innerHTML = filtered.length ? filtered.map((card) => `
-      <a class="infra-service-card" href="${esc(card.url || "#")}" ${card.view ? `data-service-view="${esc(card.view)}"` : ""} ${card.url && !card.view ? 'target="_blank" rel="noopener noreferrer"' : ""}>
-        <div class="infra-service-card-head"><span class="infra-service-icon">${esc(card.icon || "◫")}</span><span class="infra-service-state ${esc(card.status || "unknown")}">${card.status === "online" ? (card.latencyMs ? `${esc(card.latencyMs)} ms` : esc(card.detail || "在线")) : card.status === "configured" ? esc(card.detail || "已配置") : card.status === "unconfigured" ? "未配置" : card.status === "offline" ? "离线" : "未检查"}</span></div>
-        <h3>${esc(card.name)}</h3><p>${esc(card.group || "默认")} · ${esc(card.tags?.join(" / ") || "服务入口")}</p>
-      </a>`).join("") : empty(configured.length ? "没有匹配的服务。" : "还没有服务卡片，点击“自定义”添加 Emby、MoviePilot、网盘或下载器。 ");
+  function showDockerDrawer(id) {
+    $$(".infra-side-drawer").forEach((drawer) => { drawer.hidden = drawer.id !== id; });
+    const backdrop = $("#infra-docker-drawer-backdrop");
+    if (backdrop) backdrop.hidden = false;
+    document.body.classList.add("infra-drawer-open");
+  }
+
+  function dockerDetailField(label, value, mono = false) {
+    return `<div><span>${esc(label)}</span><strong class="${mono ? "mono" : ""}" title="${esc(value || "—")}">${esc(value || "—")}</strong></div>`;
+  }
+
+  async function openContainerDetail(name) {
+    const row = (state.inventory?.containers || []).find((item) => containerName(item) === String(name));
+    if (!row) { toast("没有找到该容器，可能已被删除。", true); return; }
+    const status = containerStatus(row);
+    const ports = uniquePorts(row.Ports);
+    const project = containerProject(row);
+    const service = containerService(row);
+    const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
+    const primaryLabel = status.paused ? "恢复容器" : status.running ? "重新启动" : "启动容器";
+    state.dockerDetail = { kind: "container", id: name };
+    $("#infra-docker-detail-title").textContent = name;
+    $("#infra-docker-detail-content").innerHTML = `
+      <section class="infra-detail-hero"><div>${dockerGlyph()}<div><span>CONTAINER</span><h4>${esc(name)}</h4><p>${esc(row.Image || "未标记镜像")}</p></div></div><span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span></section>
+      <section class="infra-detail-section"><div class="infra-detail-section-head"><h4>运行信息</h4><small>${esc(status.raw || "状态未知")}</small></div><div class="infra-detail-grid">${dockerDetailField("CPU", row.CPUPerc || "暂无统计")}${dockerDetailField("内存", row.MemUsage || "暂无统计")}${dockerDetailField("容器 ID", String(row.ID || "").slice(0, 20), true)}${dockerDetailField("Compose 项目", project || "独立容器")}${dockerDetailField("Compose 服务", service || "—")}${dockerDetailField("进程数", row.PIDs === undefined ? "暂无统计" : String(row.PIDs))}${dockerDetailField("所在服务器", hostById(state.activeHostId)?.name || state.activeHostId)}</div></section>
+      <section class="infra-detail-section"><div class="infra-detail-section-head"><h4>端口映射</h4><small>${ports.length} 项</small></div><div class="infra-port-list infra-detail-ports">${ports.length ? ports.map((port) => `<code>${esc(port)}</code>`).join("") : `<span>未映射端口</span>`}</div></section>
+      <section class="infra-detail-section"><div class="infra-detail-section-head"><h4>快捷操作</h4></div><div class="infra-detail-actions"><button class="infra-btn" type="button" data-container-action="${primaryAction}" data-container="${esc(name)}">${primaryLabel}</button>${status.running ? `<button class="infra-btn infra-btn-danger" type="button" data-container-action="stop" data-container="${esc(name)}">停止容器</button>` : ""}<button class="infra-btn" type="button" data-infra-action="container-logs" data-container="${esc(name)}">完整日志</button></div></section>
+      <section class="infra-detail-section infra-detail-log-section"><div class="infra-detail-section-head"><h4>最近日志</h4><small>最新 120 行</small></div><pre id="infra-drawer-log" class="infra-log-output infra-log-preview">正在读取…</pre></section>`;
+    showDockerDrawer("infra-docker-detail-drawer");
+    try {
+      const payload = await request(`/api/infra/container/logs?hostId=${encodeURIComponent(state.activeHostId)}&container=${encodeURIComponent(name)}&tail=120`);
+      const output = $("#infra-drawer-log");
+      if (output && state.dockerDetail?.kind === "container" && state.dockerDetail.id === name) output.textContent = payload.result?.logs || "暂无日志。";
+    } catch (error) {
+      const output = $("#infra-drawer-log");
+      if (output) output.textContent = `日志读取失败：${error.message}`;
+    }
+  }
+
+  function openProjectDetail(name) {
+    const project = dockerRowsForTab("projects").find((item) => String(item.Name || item.name || "") === String(name));
+    if (!project) { toast("没有找到该 Compose 项目。", true); return; }
+    const containers = containersForProject(name);
+    const running = containers.filter((row) => containerStatus(row).running).length;
+    const projectId = project.id || "";
+    state.dockerDetail = { kind: "project", id: name };
+    $("#infra-docker-detail-title").textContent = name;
+    $("#infra-docker-detail-content").innerHTML = `
+      <section class="infra-detail-hero"><div><span class="infra-project-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="6" rx="2"></rect><rect x="3.5" y="14" width="17" height="6" rx="2"></rect><path d="M7 7h.01M7 17h.01"></path></svg></span><div><span>COMPOSE PROJECT</span><h4>${esc(name)}</h4><p>${esc(project.group || project.Source || "Docker Compose")}</p></div></div><span class="infra-state-pill ${containers.length && running === containers.length ? "running" : "warning"}">${esc(containers.length ? `${running}/${containers.length} 运行` : project.Status || "未读取")}</span></section>
+      <section class="infra-detail-section"><div class="infra-detail-section-head"><h4>项目资料</h4></div><div class="infra-detail-grid">${dockerDetailField("容器数量", String(containers.length || project.Containers || 0))}${dockerDetailField("运行数量", String(running))}${dockerDetailField("服务器", hostById(state.activeHostId)?.name || state.activeHostId)}${dockerDetailField("配置来源", project.composePath || project.Source || "Docker 自动发现")}</div></section>
+      ${projectId ? `<section class="infra-detail-section"><div class="infra-detail-section-head"><h4>项目操作</h4></div><div class="infra-detail-actions"><button class="infra-btn infra-btn-primary" type="button" data-compose-action="update" data-project-id="${esc(projectId)}">拉取并更新</button><button class="infra-btn" type="button" data-compose-action="restart" data-project-id="${esc(projectId)}">重启项目</button><button class="infra-btn infra-btn-danger" type="button" data-compose-action="stop" data-project-id="${esc(projectId)}">停止项目</button><button class="infra-btn" type="button" data-infra-action="edit-project" data-project-id="${esc(projectId)}">项目设置</button></div></section>` : ""}
+      <section class="infra-detail-section"><div class="infra-detail-section-head"><h4>项目容器</h4><small>${containers.length} 个</small></div><div class="infra-project-container-list">${containers.length ? containers.map((row) => { const status = containerStatus(row); const itemName = containerName(row); return `<button type="button" data-docker-detail-kind="container" data-docker-detail-id="${esc(itemName)}"><i class="infra-status-dot ${status.running ? "online" : "offline"}"></i><span><strong>${esc(containerService(row) || itemName)}</strong><small>${esc(row.Image || "—")}</small></span><em>${esc(status.label)}</em></button>`; }).join("") : empty("当前清单没有返回项目内的容器标签。")}</div></section>`;
+    showDockerDrawer("infra-docker-detail-drawer");
   }
 
   function openModal(title, eyebrow, content) {
@@ -344,35 +571,6 @@
     const modal = $("#infra-modal");
     if (modal) modal.hidden = true;
     document.body.classList.remove("modal-open");
-  }
-
-  function hostForm(host = {}) {
-    const editing = Boolean(host.id);
-    openModal(editing ? "编辑服务器" : "添加服务器", "SSH CONNECTION", `<form id="infra-host-form" class="infra-form">
-      <input type="hidden" name="id" value="${esc(host.id || "")}">
-      <label>显示名称<input name="name" required value="${esc(host.name || "")}" placeholder="例如 家庭 NAS"></label>
-      <label>服务器地址<input name="address" required value="${esc(host.address || "")}" placeholder="IP 或域名"></label>
-      <label>SSH 端口<input name="port" type="number" min="1" max="65535" value="${esc(host.port || 22)}"></label>
-      <label>SSH 用户名<input name="username" required value="${esc(host.username || "root")}"></label>
-      <label>认证方式<select name="authMode">
-        ${[["agent","SSH Agent"],["password","密码"],["private_key","私钥内容"],["key_path","密钥路径"]].map(([value, label]) => `<option value="${value}" ${host.authMode === value ? "selected" : ""}>${label}</option>`).join("")}
-      </select></label>
-      <label>分组<input name="group" value="${esc(host.group || "默认")}"></label>
-      <label class="span-2">标签<input name="tags" value="${esc((host.tags || []).join(", "))}" placeholder="NAS, 媒体, 生产"></label>
-      <label class="span-2" data-auth-field="password">SSH 密码<input name="password" type="password" autocomplete="new-password" placeholder="${host.hasPassword ? "已保存；留空保持不变" : "输入密码"}"></label>
-      <label class="span-2" data-auth-field="private_key">私钥内容<textarea name="privateKey" rows="6" placeholder="${host.hasPrivateKey ? "已保存；留空保持不变" : "粘贴 OpenSSH 私钥"}"></textarea></label>
-      <label data-auth-field="private_key">私钥口令<input name="privateKeyPassphrase" type="password" autocomplete="new-password" placeholder="可选"></label>
-      <label class="span-2" data-auth-field="key_path">容器内密钥路径<input name="keyPath" value="${esc(host.keyPath || "")}" placeholder="/app/ssh/id_ed25519"></label>
-      <label><span><input name="enabled" type="checkbox" ${host.enabled !== false ? "checked" : ""}> 启用状态监控</span></label>
-      <p class="infra-form-hint">首次连接会保存 SSH 主机指纹；后续指纹变化将拒绝连接。密码和私钥使用 APP_INFRA_MASTER_KEY 加密。</p>
-      <div class="infra-form-actions"><button class="infra-btn" type="button" data-infra-action="close-modal">取消</button><button class="infra-btn infra-btn-primary" type="submit">保存服务器</button></div>
-    </form>`);
-    updateAuthFields();
-  }
-
-  function updateAuthFields() {
-    const mode = $("#infra-host-form [name=authMode]")?.value || "agent";
-    $$(`[data-auth-field]`, $("#infra-host-form") || document).forEach((node) => { node.hidden = node.dataset.authField !== mode; });
   }
 
   function projectForm(project = {}) {
@@ -399,50 +597,16 @@
     </form>`);
   }
 
-  function serviceEditor() {
-    const dashboard = state.config?.dashboard || {};
-    const cards = state.config?.serviceCards || [];
-    openModal("自定义服务导航", "SERVICE LAUNCHPAD", `<form id="infra-service-form" class="infra-form">
-      <label class="span-2">背景图片 URL<input name="backgroundUrl" type="url" value="${esc(dashboard.backgroundUrl || "")}" placeholder="https://example.com/background.jpg"></label>
-      <label>背景遮罩强度<input name="overlay" type="range" min="0" max="0.9" step="0.05" value="${esc(dashboard.overlay ?? .55)}"></label>
-      <label><span><input name="petEnabled" type="checkbox" ${dashboard.petEnabled ? "checked" : ""}> 显示桌宠</span></label>
-      <div class="span-2 infra-row-primary"><strong>服务卡片</strong><button class="infra-btn" type="button" data-infra-action="add-service-row">添加卡片</button></div>
-      <div id="infra-card-editor-list" class="infra-card-editor-list">${cards.map(serviceEditorRow).join("")}</div>
-      <p class="infra-form-hint">健康检查地址可与打开地址不同，例如服务主页需要登录时可填写单独的健康端点。</p>
-      <div class="infra-form-actions"><button class="infra-btn" type="button" data-infra-action="close-modal">取消</button><button class="infra-btn infra-btn-primary" type="submit">保存导航</button></div>
-    </form>`);
-  }
-
-  function serviceEditorRow(card = {}) {
-    return `<div class="infra-card-editor-row" data-card-id="${esc(card.id || "")}">
-      <input name="icon" value="${esc(card.icon || "◫")}" aria-label="图标" title="图标">
-      <input name="name" value="${esc(card.name || "")}" placeholder="服务名称" aria-label="服务名称">
-      <input name="url" type="url" value="${esc(card.url || "")}" placeholder="打开地址" aria-label="打开地址">
-      <input name="group" value="${esc(card.group || "默认")}" placeholder="分组" aria-label="分组">
-      <button class="infra-modal-close" type="button" data-infra-action="remove-service-row" aria-label="删除卡片">×</button>
-      <input name="healthUrl" type="url" value="${esc(card.healthUrl || "")}" placeholder="健康检查地址（可选）" aria-label="健康检查地址">
-      <input name="tags" value="${esc((card.tags || []).join(", "))}" placeholder="标签，用逗号分隔" aria-label="标签">
-    </div>`;
-  }
-
   async function refreshCurrent(force = false) {
     const view = activeView();
     try {
       await loadConfig(force);
-      if (view === "infra-overview" || view === "service-nav" || view === "infra-hosts") await loadSummary(force);
-      if (view === "infra-overview") renderOverview();
-      if (view === "infra-hosts") renderHosts();
-      if (view === "service-nav") renderServices();
       if (view === "infra-docker") {
         renderOperations();
         await loadDockerInventory(force);
       }
     } catch (error) {
       toast(error.message, true);
-      if (view === "infra-overview") {
-        const root = $("#infra-overview-hosts");
-        if (root) root.innerHTML = empty(error.message);
-      }
     }
   }
 
@@ -467,19 +631,8 @@
 
   document.addEventListener("adaptive:viewchange", (event) => activate(String(event.detail?.view || "")));
   document.addEventListener("click", async (event) => {
-    const button = event.target.closest("button, [data-infra-view], [data-service-view]");
+    const button = event.target.closest("button, [data-docker-detail-kind]");
     if (!button) return;
-    const view = button.dataset.infraView;
-    if (view) {
-      document.querySelector(`.nav-item[data-view="${view}"]`)?.click();
-      return;
-    }
-    const serviceView = button.dataset.serviceView;
-    if (serviceView) {
-      event.preventDefault();
-      document.querySelector(`.nav-item[data-view="${serviceView}"]`)?.click();
-      return;
-    }
     const dockerTab = button.dataset.infraDockerTab;
     if (dockerTab) {
       state.dockerTab = dockerTab;
@@ -487,14 +640,34 @@
       if (dockerTab !== "projects") loadDockerInventory(false);
       return;
     }
-    const group = button.dataset.serviceGroup;
-    if (group) { state.serviceGroup = group; renderServices(); return; }
+    const dockerPresentation = button.dataset.infraDockerPresentation;
+    if (dockerPresentation) {
+      state.dockerPresentation = dockerPresentation;
+      renderDocker();
+      return;
+    }
+    const dockerFilter = button.dataset.infraDockerFilter;
+    if (dockerFilter) {
+      state.dockerTab = "containers";
+      state.dockerStateFilter = dockerFilter;
+      renderDocker();
+      return;
+    }
+    const dockerDetailKind = button.dataset.dockerDetailKind;
+    if (dockerDetailKind) {
+      if (dockerDetailKind === "container") await openContainerDetail(button.dataset.dockerDetailId || "");
+      else if (dockerDetailKind === "project") openProjectDetail(button.dataset.dockerDetailId || "");
+      return;
+    }
     const containerAction = button.dataset.containerAction;
     if (containerAction) {
       button.disabled = true;
       try {
         await postAction("/api/infra/containers/action", { hostId: state.activeHostId, container: button.dataset.container, action: containerAction }, "容器操作已进入队列。");
         await loadOperations();
+        window.setTimeout(() => {
+          if (activeView() === "infra-docker") loadDockerInventory(true).catch(() => {});
+        }, 1100);
       } catch (error) { toast(error.message, true); }
       finally { button.disabled = false; }
       return;
@@ -513,20 +686,15 @@
     if (!action) return;
     try {
       if (action === "close-modal") closeModal();
-      else if (action === "refresh-summary") { button.disabled = true; await refreshCurrent(true); toast("资源状态已刷新。"); }
+      else if (action === "close-docker-drawers") closeDockerDrawers();
+      else if (action === "toggle-docker-activity") {
+        state.dockerDetail = null;
+        const drawer = $("#infra-docker-activity-drawer");
+        if (drawer?.hidden) showDockerDrawer("infra-docker-activity-drawer");
+        else closeDockerDrawers();
+      }
       else if (action === "refresh-docker") { button.disabled = true; state.inventory = null; await loadDockerInventory(true); toast("Docker 数据已刷新。"); }
-      else if (action === "add-host") hostForm();
-      else if (action === "edit-host") hostForm(hostById(button.dataset.hostId) || {});
-      else if (action === "test-host") {
-        button.disabled = true;
-        const payload = await postAction("/api/infra/hosts/test", { hostId: button.dataset.hostId }, "SSH 连接测试成功。");
-        if (payload.result?.hostname) toast(`已连接 ${payload.result.hostname}`);
-        state.config = null; await refreshCurrent(true);
-      } else if (action === "delete-host") {
-        if (!window.confirm("删除后，该服务器关联的 Compose 项目配置也会移除。确定继续？")) return;
-        await postAction("/api/infra/hosts/delete", { hostId: button.dataset.hostId }, "服务器配置已删除。");
-        state.summary = null; renderHosts();
-      } else if (action === "add-project") projectForm();
+      else if (action === "add-project") projectForm();
       else if (action === "edit-project") projectForm((state.config?.projects || []).find((item) => item.id === button.dataset.projectId) || {});
       else if (action === "delete-project") {
         await postAction("/api/infra/projects/delete", { projectId: button.dataset.projectId }, "Compose 项目配置已删除。");
@@ -536,9 +704,7 @@
         openModal(`${button.dataset.container} 日志`, "CONTAINER LOGS", `<pre class="infra-log-output">正在读取…</pre>`);
         const payload = await request(`/api/infra/container/logs?hostId=${encodeURIComponent(state.activeHostId)}&container=${encodeURIComponent(button.dataset.container)}&tail=500`);
         $("#infra-modal-body .infra-log-output").textContent = payload.result?.logs || "暂无日志。";
-      } else if (action === "customize-services") serviceEditor();
-      else if (action === "add-service-row") $("#infra-card-editor-list")?.insertAdjacentHTML("beforeend", serviceEditorRow());
-      else if (action === "remove-service-row") button.closest(".infra-card-editor-row")?.remove();
+      }
     } catch (error) { toast(error.message, true); }
     finally { if (button.isConnected) button.disabled = false; }
   });
@@ -549,29 +715,29 @@
       state.inventory = null;
       loadDockerInventory(true);
     }
-    if (event.target.matches("#infra-host-form [name=authMode]")) updateAuthFields();
+    if (event.target.matches("#infra-docker-state-filter")) {
+      state.dockerStateFilter = event.target.value || "all";
+      renderDocker();
+    }
   });
 
   document.addEventListener("input", (event) => {
-    if (event.target.matches("#infra-service-search")) renderServices();
+    if (event.target.matches("#infra-docker-search")) {
+      state.dockerQuery = event.target.value || "";
+      renderDocker();
+      event.target.focus();
+    }
   });
 
   document.addEventListener("submit", async (event) => {
     const form = event.target;
-    if (!["infra-host-form", "infra-project-form", "infra-image-form", "infra-service-form"].includes(form.id)) return;
+    if (!["infra-project-form", "infra-image-form"].includes(form.id)) return;
     event.preventDefault();
     const submit = form.querySelector("[type=submit]");
     if (submit) submit.disabled = true;
     try {
       const data = new FormData(form);
-      if (form.id === "infra-host-form") {
-        const payload = Object.fromEntries(data.entries());
-        payload.port = Number(payload.port || 22);
-        payload.enabled = data.has("enabled");
-        payload.tags = String(payload.tags || "").split(",").map((item) => item.trim()).filter(Boolean);
-        await postAction("/api/infra/hosts/save", payload, "服务器配置已保存。");
-        closeModal(); state.summary = null; renderHosts();
-      } else if (form.id === "infra-project-form") {
+      if (form.id === "infra-project-form") {
         const payload = Object.fromEntries(data.entries());
         payload.tags = String(payload.tags || "").split(",").map((item) => item.trim()).filter(Boolean);
         await postAction("/api/infra/projects/save", payload, "Compose 项目已保存。");
@@ -579,23 +745,6 @@
       } else if (form.id === "infra-image-form") {
         await postAction("/api/infra/images/pull", { hostId: state.activeHostId, image: data.get("image") }, "镜像拉取已进入队列。");
         closeModal(); await loadOperations();
-      } else if (form.id === "infra-service-form") {
-        const serviceCards = $$(".infra-card-editor-row", form).map((row) => ({
-          id: row.dataset.cardId || "",
-          icon: $("[name=icon]", row)?.value || "◫",
-          name: $("[name=name]", row)?.value || "未命名服务",
-          url: $("[name=url]", row)?.value || "",
-          healthUrl: $("[name=healthUrl]", row)?.value || "",
-          group: $("[name=group]", row)?.value || "默认",
-          tags: String($("[name=tags]", row)?.value || "").split(",").map((item) => item.trim()).filter(Boolean),
-          enabled: true
-        }));
-        const payload = {
-          dashboard: { backgroundUrl: data.get("backgroundUrl") || "", overlay: Number(data.get("overlay") || .55), petEnabled: data.has("petEnabled"), petStyle: "orbit" },
-          serviceCards
-        };
-        await postAction("/api/infra/dashboard/save", payload, "服务导航已保存。");
-        closeModal(); state.summary = null; await loadSummary(true); renderServices();
       }
     } catch (error) { toast(error.message, true); }
     finally { if (submit?.isConnected) submit.disabled = false; }
@@ -606,6 +755,11 @@
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !$("#infra-modal")?.hidden) closeModal();
+    else if (event.key === "Escape" && !$("#infra-docker-drawer-backdrop")?.hidden) closeDockerDrawers();
+    if ((event.key === "Enter" || event.key === " ") && event.target.matches("[data-docker-detail-kind]:not(button)")) {
+      event.preventDefault();
+      event.target.click();
+    }
   });
 
   activate(activeView());

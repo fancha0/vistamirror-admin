@@ -13,9 +13,7 @@ import shlex
 import socket
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -136,9 +134,61 @@ class LocalDockerClient:
             values.append(f"{public + ':' if public else ''}{private}/{kind}" if private else "")
         return ", ".join(item for item in values if item) or "—"
 
-    def inventory(self) -> dict[str, Any]:
+    @staticmethod
+    def _container_stats(payload: Any) -> dict[str, Any]:
+        data = payload if isinstance(payload, dict) else {}
+        cpu_stats = data.get("cpu_stats") if isinstance(data.get("cpu_stats"), dict) else {}
+        pre_cpu_stats = data.get("precpu_stats") if isinstance(data.get("precpu_stats"), dict) else {}
+        cpu_usage = cpu_stats.get("cpu_usage") if isinstance(cpu_stats.get("cpu_usage"), dict) else {}
+        pre_cpu_usage = pre_cpu_stats.get("cpu_usage") if isinstance(pre_cpu_stats.get("cpu_usage"), dict) else {}
+        cpu_delta = max(0, int(cpu_usage.get("total_usage") or 0) - int(pre_cpu_usage.get("total_usage") or 0))
+        system_delta = max(0, int(cpu_stats.get("system_cpu_usage") or 0) - int(pre_cpu_stats.get("system_cpu_usage") or 0))
+        online_cpus = int(cpu_stats.get("online_cpus") or len(cpu_usage.get("percpu_usage") or []) or 1)
+        cpu_percent = (cpu_delta / system_delta * online_cpus * 100) if system_delta > 0 else 0.0
+
+        memory_stats = data.get("memory_stats") if isinstance(data.get("memory_stats"), dict) else {}
+        memory_detail = memory_stats.get("stats") if isinstance(memory_stats.get("stats"), dict) else {}
+        raw_usage = max(0, int(memory_stats.get("usage") or 0))
+        cache = max(0, int(memory_detail.get("inactive_file") or memory_detail.get("total_inactive_file") or memory_detail.get("cache") or 0))
+        usage = max(0, raw_usage - min(raw_usage, cache))
+        limit = max(0, int(memory_stats.get("limit") or 0))
+        memory_percent = (usage / limit * 100) if limit > 0 else 0.0
+        pids_stats = data.get("pids_stats") if isinstance(data.get("pids_stats"), dict) else {}
+        return {
+            "CPUPerc": f"{cpu_percent:.2f}%",
+            "MemUsage": f"{_format_bytes(usage)} / {_format_bytes(limit)}" if limit else _format_bytes(usage),
+            "MemPerc": f"{memory_percent:.2f}%",
+            "MemoryUsageBytes": usage,
+            "MemoryLimitBytes": limit,
+            "PIDs": int(pids_stats.get("current") or 0),
+        }
+
+    def stats(self, containers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        running = [row for row in containers if str(row.get("State") or "").lower() == "running"]
+        if not running:
+            return {}
+
+        def fetch(row: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            identifier = str(row.get("ID") or row.get("Names") or "")
+            if not identifier:
+                return "", {}
+            payload = self._json(f"/containers/{urllib.parse.quote(identifier, safe='')}/stats?stream=false", timeout=20)
+            return identifier, self._container_stats(payload)
+
+        result: dict[str, dict[str, Any]] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(running))) as executor:
+            futures = [executor.submit(fetch, row) for row in running]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    identifier, metrics = future.result()
+                except Exception:
+                    continue
+                if identifier and metrics:
+                    result[identifier] = metrics
+        return result
+
+    def containers(self) -> list[dict[str, Any]]:
         raw_containers = self._json("/containers/json?all=1")
-        raw_images = self._json("/images/json?all=0")
         containers: list[dict[str, Any]] = []
         for item in raw_containers if isinstance(raw_containers, list) else []:
             if not isinstance(item, dict):
@@ -150,6 +200,11 @@ class LocalDockerClient:
                 "State": str(item.get("State") or ""), "Status": str(item.get("Status") or ""),
                 "Ports": self._ports_text(item.get("Ports")), "Labels": dict(item.get("Labels") or {}),
             })
+        return containers
+
+    def inventory(self) -> dict[str, Any]:
+        containers = self.containers()
+        raw_images = self._json("/images/json?all=0")
         images: list[dict[str, Any]] = []
         for item in raw_images if isinstance(raw_images, list) else []:
             if not isinstance(item, dict):
@@ -485,18 +540,12 @@ class InfraService:
         self.runner_factory = runner_factory
         self._lock = threading.RLock()
         self.operations = InfraOperationManager(self.data_dir / "infra_operations.json", event_logger=event_logger)
-        self._summary_cache: tuple[float, dict[str, Any]] = (0.0, {})
-
-    def _invalidate_summary(self) -> None:
-        self._summary_cache = (0.0, {})
 
     @staticmethod
     def _default_config() -> dict[str, Any]:
         return {
             "hosts": [],
             "projects": [],
-            "dashboard": {"backgroundUrl": "", "overlay": 0.55, "petEnabled": False, "petStyle": "orbit"},
-            "serviceCards": [],
         }
 
     @staticmethod
@@ -572,8 +621,6 @@ class InfraService:
         return {
             "hosts": [self._public_host(self._local_host())] + [host for host in saved_hosts if host.get("id") != LOCAL_DOCKER_HOST_ID],
             "projects": [dict(item) for item in config.get("projects") or [] if isinstance(item, dict)],
-            "dashboard": dict(config.get("dashboard") or {}),
-            "serviceCards": [dict(item) for item in config.get("serviceCards") or [] if isinstance(item, dict)],
             "credentialEncryptionReady": self.cipher.available,
         }
 
@@ -644,7 +691,6 @@ class InfraService:
             hosts = [item for item in hosts if str(item.get("id")) != host_id] + [host]
             config["hosts"] = hosts
             self._save(config)
-            self._invalidate_summary()
         return self._public_host(host)
 
     def delete_host(self, host_id: str) -> None:
@@ -660,7 +706,6 @@ class InfraService:
             config["hosts"] = hosts
             config["projects"] = [item for item in config.get("projects") or [] if not isinstance(item, dict) or str(item.get("hostId")) != target]
             self._save(config)
-            self._invalidate_summary()
 
     def test_host(self, host_id: str) -> dict[str, Any]:
         if self._is_local_host_id(host_id):
@@ -781,6 +826,22 @@ class InfraService:
             "checkedAt": _now_iso(),
         }
 
+    def docker_stats(self, host_id: str) -> dict[str, Any]:
+        if self._is_local_host_id(host_id):
+            client = self._local_docker()
+            containers = client.containers()
+            metrics = client.stats(containers)
+            rows = [{"ID": identifier, **values} for identifier, values in metrics.items()]
+            return {"hostId": LOCAL_DOCKER_HOST_ID, "stats": rows, "checkedAt": _now_iso()}
+        result = self._runner(self._host(host_id)).run("docker stats --no-stream --format '{{json .}}'", timeout=45)
+        if int(result.get("exitCode") or 0) != 0:
+            raise InfraError(str(result.get("stderr") or "Docker 资源统计读取失败。"), status=502, code="docker_stats_failed")
+        return {
+            "hostId": host_id,
+            "stats": self._json_rows(str(result.get("stdout") or "")),
+            "checkedAt": _now_iso(),
+        }
+
     def container_logs(self, host_id: str, container: str, *, tail: int = 300) -> dict[str, Any]:
         if not DOCKER_TARGET_PATTERN.match(str(container or "")):
             raise InfraError("容器标识格式不正确。", code="invalid_container")
@@ -846,7 +907,6 @@ class InfraService:
             config = self._load()
             config["projects"] = [item for item in config.get("projects") or [] if not isinstance(item, dict) or str(item.get("id")) != project_id] + [project]
             self._save(config)
-            self._invalidate_summary()
         return project
 
     def delete_project(self, project_id: str) -> None:
@@ -858,7 +918,6 @@ class InfraService:
                 raise InfraError("Compose 项目不存在。", status=404, code="project_not_found")
             config["projects"] = updated
             self._save(config)
-            self._invalidate_summary()
 
     def _project(self, project_id: str) -> dict[str, Any]:
         with self._lock:
@@ -892,109 +951,3 @@ class InfraService:
         if int(result.get("exitCode") or 0) != 0:
             raise InfraError(str(result.get("stderr") or result.get("stdout") or "远程操作执行失败。"), status=502, code="remote_action_failed")
         return {"exitCode": 0, "output": str(result.get("stdout") or "")[-12000:]}
-
-    def save_dashboard(self, payload: dict[str, Any]) -> dict[str, Any]:
-        dashboard = payload.get("dashboard") if isinstance(payload.get("dashboard"), dict) else {}
-        background_url = str(dashboard.get("backgroundUrl") or "").strip()
-        if background_url and not background_url.lower().startswith(("http://", "https://")):
-            raise InfraError("自定义背景地址只允许 HTTP 或 HTTPS。", code="invalid_background_url")
-        cards_payload = payload.get("serviceCards") if isinstance(payload.get("serviceCards"), list) else []
-        cards: list[dict[str, Any]] = []
-        for raw in cards_payload[:100]:
-            if not isinstance(raw, dict):
-                continue
-            url = str(raw.get("url") or "").strip()
-            health_url = str(raw.get("healthUrl") or url).strip()
-            if url and not url.lower().startswith(("http://", "https://")):
-                raise InfraError("服务卡片地址只允许 HTTP 或 HTTPS。", code="invalid_service_url")
-            if health_url and not health_url.lower().startswith(("http://", "https://")):
-                raise InfraError("健康检查地址只允许 HTTP 或 HTTPS。", code="invalid_health_url")
-            cards.append({
-                "id": str(raw.get("id") or uuid.uuid4().hex[:12]),
-                "name": str(raw.get("name") or "未命名服务").strip(),
-                "url": url,
-                "healthUrl": health_url,
-                "group": str(raw.get("group") or "默认").strip() or "默认",
-                "icon": str(raw.get("icon") or "◫").strip()[:8],
-                "tags": [str(tag).strip() for tag in (raw.get("tags") or []) if str(tag).strip()][:20],
-                "enabled": bool(raw.get("enabled", True)),
-            })
-        normalized_dashboard = {
-            "backgroundUrl": background_url,
-            "overlay": max(0.0, min(float(dashboard.get("overlay", 0.55)), 0.9)),
-            "petEnabled": bool(dashboard.get("petEnabled", False)),
-            "petStyle": str(dashboard.get("petStyle") or "orbit").strip()[:30],
-        }
-        with self._lock:
-            config = self._load()
-            config["dashboard"] = normalized_dashboard
-            config["serviceCards"] = cards
-            self._save(config)
-            self._invalidate_summary()
-        return {"dashboard": normalized_dashboard, "serviceCards": cards}
-
-    @staticmethod
-    def check_service_card(card: dict[str, Any]) -> dict[str, Any]:
-        checked = dict(card)
-        target = str(card.get("healthUrl") or card.get("url") or "").strip()
-        started = time.monotonic()
-        if not target:
-            checked.update({"status": "unknown", "latencyMs": 0, "statusCode": 0})
-            return checked
-        request = urllib.request.Request(target, method="GET", headers={"User-Agent": "VistaMirror-Infra/1.0"})
-        try:
-            with urllib.request.urlopen(request, timeout=5) as response:
-                status_code = int(response.status or 0)
-            status = "online" if 200 <= status_code < 500 else "offline"
-            error = ""
-        except urllib.error.HTTPError as err:
-            status_code = int(err.code)
-            status = "online" if status_code < 500 else "offline"
-            error = str(err)
-        except Exception as err:
-            status_code = 0
-            status = "offline"
-            error = str(err)
-        checked.update({"status": status, "latencyMs": round((time.monotonic() - started) * 1000), "statusCode": status_code, "error": error[:180]})
-        return checked
-
-    def summary(self, *, force: bool = False) -> dict[str, Any]:
-        cached_at, cached = self._summary_cache
-        if not force and cached and time.monotonic() - cached_at < 12:
-            return dict(cached)
-        config = self.public_config()
-        enabled_hosts = [host for host in config["hosts"] if host.get("enabled")]
-        statuses: list[dict[str, Any]] = []
-        if enabled_hosts:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(enabled_hosts))) as pool:
-                futures = {pool.submit(self.host_status, str(host["id"])): host for host in enabled_hosts}
-                for future, host in futures.items():
-                    try:
-                        statuses.append(future.result(timeout=25))
-                    except Exception as err:
-                        statuses.append({"hostId": host["id"], "online": False, "error": str(err)[:240], "checkedAt": _now_iso()})
-        enabled_cards = [card for card in config["serviceCards"] if card.get("enabled")]
-        cards: list[dict[str, Any]] = []
-        if enabled_cards:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(enabled_cards))) as pool:
-                futures = [pool.submit(self.check_service_card, card) for card in enabled_cards]
-                for future, card in zip(futures, enabled_cards):
-                    try:
-                        cards.append(future.result(timeout=7))
-                    except Exception as err:
-                        failed = dict(card)
-                        failed.update({"status": "offline", "latencyMs": 0, "statusCode": 0, "error": str(err)[:180]})
-                        cards.append(failed)
-        operations = self.operations.list(limit=40)
-        summary = {
-            "hosts": statuses,
-            "hostCount": len(enabled_hosts),
-            "onlineHostCount": sum(1 for item in statuses if item.get("online")),
-            "projectCount": len(config["projects"]),
-            "serviceCards": cards,
-            "operations": operations,
-            "failedOperationCount": sum(1 for item in operations if item.get("status") == "failed"),
-            "checkedAt": _now_iso(),
-        }
-        self._summary_cache = (time.monotonic(), dict(summary))
-        return summary

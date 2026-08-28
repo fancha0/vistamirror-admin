@@ -77,12 +77,11 @@ docker compose -f docker-compose.simple.yml up -d --force-recreate
 - 完整版里像 `${APP_PORT:-8091}` 的写法不是乱码，而是变量默认值语法。
 - 含义：如果没设置 `APP_PORT`，就用默认值 `8091`。
 
-## 5) Docker 与云服务器工作台
+## 5) Docker 管理
 
-侧边栏的“资源总览 / Docker 管理 / 云服务器 / 服务导航”用于集中查看主机资源、
-Compose 项目、容器、镜像和内部服务。挂载 `/var/run/docker.sock` 后，系统会自动出现
-“本机 Docker”，无需配置 SSH，即可查看本机容器、镜像、Compose 标签、日志并执行预设
-启停动作。远程服务器才需要在“云服务器”中添加 SSH。
+侧边栏只保留“Docker 管理”，用于集中查看本机 Compose 项目、容器、镜像、运行指标、
+日志和操作活动。挂载 `/var/run/docker.sock` 后，系统会自动出现“本机 Docker”，无需额外
+配置即可执行预设的启停、重启、暂停、镜像拉取和 Compose 更新操作。
 
 Docker Socket 由 root 管理，因此 Compose 需要同时包含：
 
@@ -92,17 +91,8 @@ volumes:
   - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-这相当于把本机 Docker 管理权限交给 VistaMirror，只应部署在受信任的内网环境。首次使用
-远程 SSH 的密码或私钥认证前，再生成并固定基础设施主密钥：
-
-```bash
-openssl rand -hex 32
-```
-
-把结果写入 Compose 的 `APP_INFRA_MASTER_KEY` 后重建容器。该值只用于服务端加密保存
-SSH 密码和私钥，不会返回前端；以后更换密钥会导致旧凭据无法解密，需要重新录入。
-推荐优先使用 SSH Agent 或只读挂载的密钥路径。远程操作只开放预设的容器和 Compose
-动作，不提供任意命令输入，也不会删除数据卷。
+这相当于把本机 Docker 管理权限交给 VistaMirror，只应部署在受信任的内网环境。页面只
+开放预设的容器和 Compose 操作，不提供任意命令输入，也不会主动删除数据卷。
 
 ## 6) 回滚镜像版本
 
@@ -116,6 +106,36 @@ docker compose -f docker-compose.simple.yml up -d
 ## 7) 访问地址
 
 `http://<你的服务器IP或域名>:8091`
+
+## 飞牛本地开发测试（无需推送 Docker Hub）
+
+这套流程把 Mac 上的必要源码同步到飞牛，并直接在飞牛本地构建一个独立开发镜像。
+正式版继续使用 `8091/8099`，开发版使用 `18091/18099`，两者的数据目录和容器名称
+完全隔离。
+
+首次使用，在 Mac 项目目录执行：
+
+```bash
+cp .fnos-dev.env.example .fnos-dev.env
+```
+
+默认值已经对应 `root@192.168.5.9` 和
+`/vol3/1000/docker/vistamirror-dev`。如果飞牛 SSH 端口、媒体目录或登录信息不同，修改
+`.fnos-dev.env`。随后每次测试新代码只需执行：
+
+```bash
+./scripts/deploy_fnos_dev.sh
+```
+
+脚本会依次检查 SSH、同步源码、在飞牛运行 Docker Build 并重建
+`vistamirror-admin-dev`。完成后访问：
+
+```text
+http://192.168.5.9:18091
+```
+
+同步过程不会上传 `.git`、正式 `data`、本地环境文件、日志或缓存。远端开发数据保存在
+`/vol3/1000/docker/vistamirror-dev/source/data-dev`，不会覆盖正式版数据。
 
 ## 8) STRM 播放端与 Emby 配置
 
