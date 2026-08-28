@@ -17,6 +17,8 @@
     dockerStatsCheckedAt: "",
     dockerStatsSequence: 0,
     pollTimer: 0,
+    logStream: { container: "", timer: 0, follow: false, filter: "", raw: "" },
+    autoRefreshTimer: 0,
     loading: new Set()
   };
 
@@ -82,6 +84,29 @@
 
   function empty(message) {
     return `<div class="infra-empty">${esc(message)}</div>`;
+  }
+
+  const DOCKER_SOCKET_SNIPPET = `services:
+  vistamirror:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # 保存后重建容器：docker compose up -d`;
+
+  function emptyGuide(message) {
+    return `<div class="infra-empty infra-empty-guide">
+      <div class="infra-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m4.5 7.8 7.5 4.3 7.5-4.3M12 12.1V21"></path></svg></div>
+      <h3>连不上 Docker</h3>
+      <p>${esc(message || "未检测到可用的 Docker Socket。")}</p>
+      <div class="infra-empty-steps">
+        <p><strong>本机容器部署：</strong>在 docker-compose.yml 的 volumes 里挂载 Docker Socket，然后重建容器：</p>
+        <pre>${esc(DOCKER_SOCKET_SNIPPET)}</pre>
+        <p><strong>管理远程服务器：</strong>请通过环境变量 / 配置文件添加远程 Docker 主机（DOCKER_HOST tcp://…）后刷新。</p>
+      </div>
+      <div class="infra-empty-actions">
+        <button class="infra-btn" type="button" data-infra-action="copy-socket-snippet">复制挂载片段</button>
+        <button class="infra-btn infra-btn-primary" type="button" data-infra-action="refresh-docker">重新检测</button>
+      </div>
+    </div>`;
   }
 
   async function loadConfig(force = false) {
@@ -490,8 +515,8 @@
     $$("[data-infra-docker-tab]").forEach((button) => button.classList.toggle("active", button.dataset.infraDockerTab === state.dockerTab));
     const root = $("#infra-docker-content");
     if (!root) return;
-    if (!state.activeHostId) { renderDockerFilters(0, 0); root.innerHTML = empty("未发现可用的 Docker 服务器。"); return; }
-    if (state.inventory?.error) { renderDockerFilters(0, 0); root.innerHTML = empty(state.inventory.error); renderOperations(); return; }
+    if (!state.activeHostId) { renderDockerFilters(0, 0); root.innerHTML = emptyGuide("未发现可用的 Docker 服务器。"); return; }
+    if (state.inventory?.error) { renderDockerFilters(0, 0); root.innerHTML = emptyGuide(state.inventory.error); renderOperations(); return; }
     root.innerHTML = state.dockerTab === "projects" ? projectRows() : state.dockerTab === "containers" ? containerRows() : imageRows();
     renderOperations();
   }
@@ -571,6 +596,99 @@
     const modal = $("#infra-modal");
     if (modal) modal.hidden = true;
     document.body.classList.remove("modal-open");
+    stopLogFollow();
+  }
+
+  // ---- 容器日志：跟随 / 过滤 / 下载 ----
+
+  function stopLogFollow() {
+    if (state.logStream.timer) {
+      window.clearInterval(state.logStream.timer);
+      state.logStream.timer = 0;
+    }
+    state.logStream.follow = false;
+  }
+
+  function renderLogOutput() {
+    const output = $("#infra-modal-body .infra-log-output");
+    if (!output) return;
+    const filter = state.logStream.filter.trim().toLowerCase();
+    const raw = state.logStream.raw;
+    if (!raw) { output.textContent = "暂无日志。"; return; }
+    const lines = raw.split("\n");
+    const shown = filter ? lines.filter((line) => line.toLowerCase().includes(filter)) : lines;
+    if (!shown.length) { output.textContent = "没有匹配过滤条件的日志。"; return; }
+    if (filter) {
+      const mark = esc(filter);
+      output.innerHTML = shown.map((line) => esc(line).replace(new RegExp(mark.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), (m) => `<mark>${m}</mark>`)).join("\n");
+    } else {
+      output.textContent = shown.join("\n");
+    }
+    if (state.logStream.follow) output.scrollTop = output.scrollHeight;
+  }
+
+  async function fetchContainerLogs(container, { announce = false } = {}) {
+    try {
+      const payload = await request(`/api/infra/container/logs?hostId=${encodeURIComponent(state.activeHostId)}&container=${encodeURIComponent(container)}&tail=500`);
+      state.logStream.raw = String(payload.result?.logs || "");
+      renderLogOutput();
+    } catch (error) {
+      stopLogFollow();
+      const output = $("#infra-modal-body .infra-log-output");
+      if (output) output.textContent = `日志读取失败：${error.message}`;
+      if (announce) toast(error.message, true);
+    }
+  }
+
+  function updateLogToolbar() {
+    const followBtn = $('[data-log-action="follow"]');
+    if (followBtn) {
+      followBtn.classList.toggle("active", state.logStream.follow);
+      followBtn.setAttribute("aria-pressed", state.logStream.follow ? "true" : "false");
+      followBtn.textContent = state.logStream.follow ? "停止跟随" : "跟随";
+    }
+  }
+
+  function openLogModal(container) {
+    stopLogFollow();
+    state.logStream.container = container;
+    state.logStream.filter = "";
+    state.logStream.raw = "";
+    openModal(`${container} 日志`, "CONTAINER LOGS", `
+      <div class="infra-log-toolbar">
+        <input id="infra-log-filter" type="search" placeholder="过滤日志关键字" autocomplete="off" aria-label="过滤日志">
+        <button class="infra-btn" type="button" data-log-action="refresh">刷新</button>
+        <button class="infra-btn" type="button" data-log-action="follow" aria-pressed="false">跟随</button>
+        <button class="infra-btn" type="button" data-log-action="download">下载</button>
+      </div>
+      <pre class="infra-log-output">正在读取…</pre>`);
+    fetchContainerLogs(container, { announce: true });
+  }
+
+  function handleLogAction(action) {
+    const container = state.logStream.container;
+    if (!container) return;
+    if (action === "refresh") fetchContainerLogs(container, { announce: true });
+    else if (action === "follow") {
+      if (state.logStream.follow) {
+        stopLogFollow();
+      } else {
+        state.logStream.follow = true;
+        fetchContainerLogs(container);
+        state.logStream.timer = window.setInterval(() => {
+          if ($("#infra-modal")?.hidden) { stopLogFollow(); updateLogToolbar(); return; }
+          fetchContainerLogs(container);
+        }, 3000);
+      }
+      updateLogToolbar();
+    } else if (action === "download") {
+      const blob = new Blob([state.logStream.raw || ""], { type: "text/plain;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `${container}.log`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
   }
 
   function projectForm(project = {}) {
@@ -613,6 +731,7 @@
   function activate(view) {
     window.clearInterval(state.pollTimer);
     state.pollTimer = 0;
+    stopAutoRefresh();
     if (!INFRA_VIEWS.has(view)) return;
     refreshCurrent(false);
     if (view === "infra-docker") {
@@ -620,6 +739,40 @@
         if (activeView() === "infra-docker") loadOperations().catch(() => {});
       }, 5000);
     }
+  }
+
+  // ---- 自动刷新 ----
+
+  function stopAutoRefresh() {
+    if (state.autoRefreshTimer) {
+      window.clearInterval(state.autoRefreshTimer);
+      state.autoRefreshTimer = 0;
+    }
+    updateAutoRefreshButton();
+  }
+
+  function updateAutoRefreshButton() {
+    const button = $('[data-infra-action="toggle-auto-refresh"]');
+    if (!button) return;
+    const active = Boolean(state.autoRefreshTimer);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    const label = button.querySelector("span");
+    if (label) label.textContent = active ? "自动刷新 · 开" : "自动刷新";
+  }
+
+  function toggleAutoRefresh() {
+    if (state.autoRefreshTimer) {
+      stopAutoRefresh();
+      toast("自动刷新已关闭。");
+      return;
+    }
+    state.autoRefreshTimer = window.setInterval(() => {
+      if (activeView() !== "infra-docker") { stopAutoRefresh(); return; }
+      loadDockerInventory(true).catch(() => {});
+    }, 15000);
+    updateAutoRefreshButton();
+    toast("自动刷新已开启（每 15 秒）。");
   }
 
   async function postAction(path, body, successMessage) {
@@ -682,6 +835,11 @@
       finally { button.disabled = false; }
       return;
     }
+    const logAction = button.dataset.logAction;
+    if (logAction) {
+      handleLogAction(logAction);
+      return;
+    }
     const action = button.dataset.infraAction;
     if (!action) return;
     try {
@@ -700,11 +858,15 @@
         await postAction("/api/infra/projects/delete", { projectId: button.dataset.projectId }, "Compose 项目配置已删除。");
         closeModal(); renderDocker();
       } else if (action === "pull-image") imagePullForm();
-      else if (action === "container-logs") {
-        openModal(`${button.dataset.container} 日志`, "CONTAINER LOGS", `<pre class="infra-log-output">正在读取…</pre>`);
-        const payload = await request(`/api/infra/container/logs?hostId=${encodeURIComponent(state.activeHostId)}&container=${encodeURIComponent(button.dataset.container)}&tail=500`);
-        $("#infra-modal-body .infra-log-output").textContent = payload.result?.logs || "暂无日志。";
-      }
+      else if (action === "container-logs") openLogModal(button.dataset.container || "");
+      else if (action === "copy-socket-snippet") {
+        try {
+          await navigator.clipboard.writeText(DOCKER_SOCKET_SNIPPET);
+          toast("挂载片段已复制，粘贴到 docker-compose.yml 的 volumes 下。");
+        } catch (_error) {
+          toast("复制失败，请手动复制挂载片段。", true);
+        }
+      } else if (action === "toggle-auto-refresh") toggleAutoRefresh();
     } catch (error) { toast(error.message, true); }
     finally { if (button.isConnected) button.disabled = false; }
   });
@@ -726,6 +888,10 @@
       state.dockerQuery = event.target.value || "";
       renderDocker();
       event.target.focus();
+    }
+    if (event.target.matches("#infra-log-filter")) {
+      state.logStream.filter = event.target.value || "";
+      renderLogOutput();
     }
   });
 
