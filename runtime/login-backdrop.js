@@ -49,6 +49,40 @@
     shell.classList.add("auth-wall-on");
   }
 
+  function renderFeatured(posters) {
+    var featuredBox = document.getElementById("admin-auth-featured");
+    if (!featuredBox) {
+      return;
+    }
+    var rated = posters.filter(function (p) {
+      return p && p.title && typeof p.rating === "number" && p.rating > 0;
+    });
+    if (!rated.length) {
+      return;
+    }
+    // 每天从评分前 10 名里轮换一部，同一天内保持稳定
+    rated.sort(function (a, b) { return b.rating - a.rating; });
+    var top = rated.slice(0, 10);
+    var now = new Date();
+    var dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    var pick = top[dayOfYear % top.length];
+
+    var posterImg = document.getElementById("admin-auth-featured-poster");
+    var titleEl = document.getElementById("admin-auth-featured-title");
+    var ratingEl = document.getElementById("admin-auth-featured-rating");
+    if (posterImg) {
+      posterImg.src = pick.url;
+      posterImg.alt = pick.title;
+    }
+    if (titleEl) {
+      titleEl.textContent = pick.title + (pick.mediaType === "tv" ? " · 剧集" : "");
+    }
+    if (ratingEl) {
+      ratingEl.textContent = "★ " + pick.rating.toFixed(1);
+    }
+    featuredBox.hidden = false;
+  }
+
   function init() {
     var shell = document.getElementById("admin-auth-shell");
     var backdrop = document.getElementById("auth-backdrop");
@@ -68,6 +102,7 @@
           // 只接受同源代理地址（防御异常 payload）
           return p && typeof p.url === "string" && p.url.indexOf("/api/public/login-backdrop/image?") === 0;
         });
+        renderFeatured(posters);
         if (posters.length < 6) {
           return; // 海报太少不出墙，保持渐变兜底
         }

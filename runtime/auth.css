@@ -171,6 +171,61 @@
   line-height: 1;
 }
 
+/* 今日片单角标 */
+.admin-auth-featured {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid rgba(31, 42, 61, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.admin-auth-featured[hidden] {
+  display: none;
+}
+
+.admin-auth-featured img {
+  width: 34px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 3px 8px rgba(31, 42, 61, 0.2);
+}
+
+.admin-auth-featured-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-auth-featured-kicker {
+  color: #6a5ef0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.admin-auth-featured-title {
+  overflow: hidden;
+  color: #1f2a3d;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-auth-featured-rating {
+  flex: 0 0 auto;
+  color: #d98e04;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
 /* 字段标签 */
 .admin-auth-label {
   display: block;

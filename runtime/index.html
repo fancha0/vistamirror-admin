@@ -10,8 +10,8 @@
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
   <link rel="stylesheet" href="styles.css?v=20260819-ios-glass-1">
   <link rel="stylesheet" href="infra.css?v=20260824-docker-only-1">
-  <link rel="stylesheet" href="auth.css?v=20260828-curtain-1">
-  <script src="login-backdrop.js?v=20260828-login-wall-4" defer></script>
+  <link rel="stylesheet" href="auth.css?v=20260828-featured-2">
+  <script src="login-backdrop.js?v=20260828-featured-2" defer></script>
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
 </head>
 <body class="auth-pending">
@@ -32,6 +32,14 @@
       </div>
       <form id="admin-auth-form" class="admin-auth-form">
         <p id="admin-auth-info" class="admin-auth-info"><span class="admin-auth-info-icon">ⓘ</span>仅限管理员访问，登录行为会被记录。</p>
+        <div id="admin-auth-featured" class="admin-auth-featured" hidden>
+          <img id="admin-auth-featured-poster" alt="">
+          <div class="admin-auth-featured-meta">
+            <span class="admin-auth-featured-kicker">今日片单</span>
+            <span id="admin-auth-featured-title" class="admin-auth-featured-title"></span>
+          </div>
+          <span id="admin-auth-featured-rating" class="admin-auth-featured-rating"></span>
+        </div>
         <label class="field">
           <span class="admin-auth-label">用户名 <em>*</em></span>
           <input id="admin-auth-username" type="text" autocomplete="username" placeholder="请输入用户名" aria-label="管理员账号" autofocus required>

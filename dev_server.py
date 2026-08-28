@@ -1251,10 +1251,15 @@ def _read_login_backdrop_cache() -> dict[str, Any]:
             path = match.group(1) if match else ""
         if not path:
             continue
+        try:
+            rating = round(float(item.get("rating") or 0), 1)
+        except (TypeError, ValueError):
+            rating = 0.0
         safe_posters.append({
             "path": path,
             "title": str(item.get("title") or "").strip(),
             "mediaType": "tv" if item.get("mediaType") == "tv" else "movie",
+            "rating": rating,
         })
     if not safe_posters:
         return {}
@@ -1287,6 +1292,7 @@ def _login_backdrop_public_posters(posters: list[dict[str, Any]]) -> list[dict[s
             "url": f"/api/public/login-backdrop/image?p={urllib.parse.quote(path)}",
             "title": str(item.get("title") or "").strip(),
             "mediaType": str(item.get("mediaType") or "movie"),
+            "rating": float(item.get("rating") or 0),
         })
     return public
 
@@ -1399,11 +1405,16 @@ def _read_login_backdrop_emby_cache() -> dict[str, Any]:
         tag = str(item.get("tag") or "").strip()
         if not item_id or not tag:
             continue
+        try:
+            rating = round(float(item.get("rating") or 0), 1)
+        except (TypeError, ValueError):
+            rating = 0.0
         safe.append({
             "embyId": item_id,
             "tag": tag,
             "title": str(item.get("title") or "").strip(),
             "mediaType": "tv" if item.get("mediaType") == "tv" else "movie",
+            "rating": rating,
         })
     if not safe:
         return {}
@@ -1429,7 +1440,7 @@ def _fetch_emby_library_posters(server_url: str, api_key: str, *, limit: int = 6
         "ImageTypes": "Primary",
         "SortBy": "Random",
         "Limit": max(limit * 2, 120),
-        "Fields": "Name",
+        "Fields": "Name,CommunityRating",
     })
     request = urllib.request.Request(
         f"{api_base}/Items?{query}",
@@ -1452,11 +1463,16 @@ def _fetch_emby_library_posters(server_url: str, api_key: str, *, limit: int = 6
         if not item_id or not tag or item_id in seen_ids:
             continue
         seen_ids.add(item_id)
+        try:
+            rating = round(float(item.get("CommunityRating") or 0), 1)
+        except (TypeError, ValueError):
+            rating = 0.0
         posters.append({
             "embyId": item_id,
             "tag": tag,
             "title": str(item.get("Name") or "").strip(),
             "mediaType": "tv" if item.get("Type") == "Series" else "movie",
+            "rating": rating,
         })
         if len(posters) >= limit:
             break
@@ -1490,6 +1506,7 @@ def _get_login_backdrop_emby_payload(emby_config: dict[str, Any]) -> dict[str, A
                     urllib.parse.quote(item["embyId"]), urllib.parse.quote(item["tag"])),
                 "title": item["title"],
                 "mediaType": item["mediaType"],
+                "rating": float(item.get("rating") or 0),
             })
         return {"ok": True, "configured": bool(public), "posters": public, "source": "emby"}
 
@@ -1526,10 +1543,15 @@ def _fetch_tmdb_trending_posters(token: str, language: str, region: str) -> list
                 continue
             seen_paths.add(poster_path)
             title = str(item.get("title") or item.get("name") or "").strip()
+            try:
+                rating = round(float(item.get("vote_average") or 0), 1)
+            except (TypeError, ValueError):
+                rating = 0.0
             posters.append({
                 "path": poster_path,
                 "title": title,
                 "mediaType": media_type,
+                "rating": rating,
             })
             if len(posters) >= 60:
                 return posters
