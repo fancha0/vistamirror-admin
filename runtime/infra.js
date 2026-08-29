@@ -453,7 +453,7 @@
         const portText = ports.length ? ports.join(", ") : "未映射端口";
         const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
         const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
-        return `<article class="infra-container-card ${esc(tone)}" data-docker-detail-kind="container" data-docker-detail-id="${esc(name)}" tabindex="0" role="button">
+        return `<article class="infra-container-card ${esc(tone)}">
           <div class="infra-container-card-title">
             <div>${dockerGlyph()}<div><h3 title="${esc(name)}">${esc(name)}</h3><small>${esc(service || String(row.ID || "").slice(0, 12) || "独立容器")}</small></div></div>
             <span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span>
@@ -482,7 +482,7 @@
       const ports = uniquePorts(row.Ports);
       const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
       const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
-      return `<article class="infra-container-row" data-docker-detail-kind="container" data-docker-detail-id="${esc(name)}" tabindex="0" role="button">
+      return `<article class="infra-container-row">
         <div class="infra-container-identity">
           ${dockerGlyph()}
           <div><strong title="${esc(name)}">${esc(name)}</strong><small title="${esc(row.Image || "")}">${esc(row.Image || "—")}</small><code>${esc(String(row.ID || "").slice(0, 12))}</code></div>

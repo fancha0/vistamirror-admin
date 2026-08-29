@@ -346,15 +346,12 @@
   border-radius: 15px;
   background: linear-gradient(145deg, rgba(255,255,255,.95), rgba(247,249,253,.87));
   box-shadow: 0 8px 24px rgba(35, 55, 88, .05);
-  cursor: pointer;
   outline: none;
   transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
 }
 
 .infra-project-card:hover,
-.infra-project-card:focus-visible,
-.infra-container-card:hover,
-.infra-container-card:focus-visible { border-color: #b9cdf1; background: rgba(255,255,255,.98); box-shadow: 0 12px 30px rgba(35, 55, 88, .09); }
+.infra-project-card:focus-visible { border-color: #b9cdf1; background: rgba(255,255,255,.98); box-shadow: 0 12px 30px rgba(35, 55, 88, .09); }
 
 .infra-project-card { padding: 15px; }
 .infra-project-card-head,
@@ -456,7 +453,7 @@
   transition: background .14s ease;
 }
 
-.infra-container-row:hover { background: rgba(246, 249, 254, .82); }
+
 .infra-container-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .infra-container-glyph { display: grid; place-items: center; flex: 0 0 auto; width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(145deg, #edf3ff, #f3efff); color: #5b79e8; }
 .infra-container-glyph svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linejoin: round; }
