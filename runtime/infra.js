@@ -11,14 +11,25 @@
     dockerQuery: "",
     dockerStateFilter: "all",
     dockerPresentation: "cards",
+    dockerGrouped: false,
+    dockerExpanded: new Set(),
     dockerDetail: null,
     dockerStatsLoading: false,
     dockerStatsError: "",
     dockerStatsCheckedAt: "",
     dockerStatsSequence: 0,
     pollTimer: 0,
-    logStream: { container: "", timer: 0, follow: false, filter: "", raw: "" },
+    logStream: { container: "", timer: 0, follow: false, paused: false, filter: "", raw: "", lines: [], view: [], matches: [], matchIdx: -1, newLines: 0, loaded: false, raf: 0, level: "all", wrap: false, parsed: [], error: "", requestId: 0 },
     autoRefreshTimer: 0,
+    imageUpdates: {},
+    updateChecking: false,
+    opsTimer: 0,
+    opsRequest: null,
+    updateSequence: 0,
+    batchUpdating: false,
+    opSeen: {},
+    activeUpdateKeys: "",
+    updateWatch: { opId: "", container: "", timer: 0 },
     loading: new Set()
   };
 
@@ -120,10 +131,16 @@
   }
 
   async function loadOperations() {
-    const payload = await request("/api/infra/operations?limit=80");
-    if (!state.summary) state.summary = {};
-    state.summary.operations = payload.operations || [];
-    renderOperations();
+    if (state.opsRequest) return state.opsRequest;
+    state.opsRequest = (async () => {
+      const payload = await request("/api/infra/operations?limit=80");
+      if (!state.summary) state.summary = {};
+      state.summary.operations = payload.operations || [];
+      renderOperations();
+      const op = state.summary.operations.find(item => String(item.id) === state.updateWatch.opId);
+      if (op && !$("#infra-modal")?.hidden) renderUpdateModal(op);
+    })();
+    try { await state.opsRequest; } finally { state.opsRequest = null; }
   }
 
   function hostById(id) {
@@ -136,7 +153,7 @@
     if (table) {
       return `<tr><td><span class="infra-state-pill ${esc(status)}">${esc(statusLabel)}</span></td><td><strong>${esc(item.description || item.action)}</strong><small>${esc(item.error || item.target || "")}</small></td><td>${esc(hostById(item.hostId)?.name || item.hostId)}</td><td>${esc(formatTime(item.finishedAt || item.startedAt || item.createdAt))}</td></tr>`;
     }
-    return `<div class="infra-operation-item"><i class="infra-status-dot ${esc(status)}"></i><div><strong>${esc(item.description || item.action)}</strong><small>${esc(item.error || item.target || status)}</small></div><time>${esc(formatTime(item.finishedAt || item.createdAt))}</time></div>`;
+    return `<div class="infra-operation-item"><i class="infra-status-dot ${esc(status)}"></i><div><strong>${esc(item.description || item.action)}</strong><small>${esc(status === "running" && item.progress?.step ? `${item.progress.step}${item.progress?.percent != null ? ` · ${item.progress.percent}%` : ""}` : item.error || item.target || status)}</small></div><time>${esc(formatTime(item.finishedAt || item.createdAt))}</time></div>`;
   }
 
   function renderOperations() {
@@ -150,6 +167,65 @@
       badge.hidden = activeCount === 0;
       badge.closest(".infra-activity-trigger")?.classList.toggle("has-work", activeCount > 0);
     }
+    // 容器更新：状态变化提示 + 卡片进度条
+    let completedUpdate = false;
+    operations.forEach((item) => {
+      const prev = state.opSeen[item.id];
+      if (prev && prev !== item.status && ["success", "failed"].includes(String(item.status)) && item.action === "container_update") {
+        if (item.hostId === state.activeHostId) completedUpdate = true;
+        toast(item.status === "success" ? `容器 ${item.target} 更新完成。${item.result?.warning || ""}` : `容器 ${item.target} 更新失败：${item.error || "未知错误"}`, item.status === "failed");
+      }
+      state.opSeen[item.id] = String(item.status || "");
+    });
+    const activeUpdates = operations.filter((item) => item.hostId === state.activeHostId && item.action === "container_update" && ["queued", "running"].includes(String(item.status || "")));
+    const nameKey = activeUpdates.map((item) => String(item.target || "")).sort().join(",");
+    if (activeView() === "infra-docker" && state.dockerTab === "containers") {
+      if (nameKey !== state.activeUpdateKeys) {
+        state.activeUpdateKeys = nameKey;
+        renderDocker();
+      } else {
+        activeUpdates.forEach((item) => updateProgressStrip(item));
+      }
+    } else {
+      state.activeUpdateKeys = nameKey;
+    }
+    scheduleOperationPoll(activeCount > 0);
+    if (completedUpdate && activeView() === "infra-docker") {
+      state.imageUpdates = {};
+      loadDockerInventory(true).catch(() => {});
+    }
+    renderUpdateToolbar();
+  }
+
+  function scheduleOperationPoll(busy = false) {
+    window.clearTimeout(state.opsTimer);
+    state.opsTimer = 0;
+    if (document.hidden || activeView() !== "infra-docker") return;
+    state.opsTimer = window.setTimeout(() => {
+      loadOperations().catch(() => scheduleOperationPoll(false));
+    }, busy ? 2000 : 5000);
+  }
+
+  function updateProgressStrip(item) {
+    const strip = $(`.infra-update-progress[data-op-container="${CSS.escape(String(item.target || ""))}"]`);
+    if (!strip) return;
+    const percent = item.progress?.percent;
+    const stepEl = strip.querySelector(".infra-update-progress-step");
+    if (stepEl) stepEl.textContent = item.status === "queued" ? "排队中…" : String(item.progress?.step || "执行中…");
+    const pctEl = strip.querySelector(".infra-update-progress-pct");
+    if (pctEl) pctEl.textContent = percent === null || percent === undefined ? "" : `${percent}%`;
+    const bar = strip.querySelector(".infra-update-progress-bar b");
+    if (bar) {
+      bar.classList.toggle("indeterminate", percent === null || percent === undefined);
+      bar.style.setProperty("--p", `${percent || 0}%`);
+    }
+  }
+
+  function activeUpdateFor(name) {
+    return (state.summary?.operations || []).find((item) => item.action === "container_update"
+      && item.hostId === state.activeHostId
+      && String(item.target || "") === name
+      && ["queued", "running"].includes(String(item.status || ""))) || null;
   }
 
   function renderHostSelect() {
@@ -218,18 +294,7 @@
   }
 
   function dockerGlyph() {
-    return `<span class="infra-container-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"></path><path d="m4.5 7.8 7.5 4.3 7.5-4.3M12 12.1V21"></path></svg></span>`;
-  }
-
-  function dockerActionIcon(name) {
-    const paths = {
-      start: `<path d="m9 7 8 5-8 5V7Z"></path>`,
-      stop: `<rect x="8" y="8" width="8" height="8" rx="1"></rect>`,
-      restart: `<path d="M18.5 8.5A7 7 0 1 0 19 15"></path><path d="M18.5 4.5v4h-4"></path>`,
-      pause: `<path d="M9 8v8M15 8v8"></path>`,
-      logs: `<path d="M7 5h10M7 10h10M7 15h7"></path><path d="M5 3h14v18H5z"></path>`
-    };
-    return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.logs}</svg>`;
+    return `<span class="infra-container-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="8.6" y="3.4" width="3.1" height="3.1" rx=".55"></rect><rect x="12.5" y="3.4" width="3.1" height="3.1" rx=".55"></rect><rect x="10.55" y="7.3" width="3.1" height="3.1" rx=".55"></rect><rect x="14.45" y="7.3" width="3.1" height="3.1" rx=".55"></rect><path d="M3.9 12.6 2.3 9.9c1.5-.1 2.7.6 3.3 1.8"></path><path d="M3.4 12.7h17.3c-.5 3.8-3.6 6.8-8.4 6.8-4.8 0-8.3-2.9-8.9-6.8Z"></path><path d="M16.6 15.2h.01"></path></svg></span>`;
   }
 
   function dockerRowsForTab(tab = state.dockerTab) {
@@ -258,6 +323,7 @@
     return dockerRowsForTab(tab).filter((row) => {
       if (query && !dockerSearchText(row, tab).includes(query)) return false;
       if (tab !== "containers" || state.dockerStateFilter === "all") return true;
+      if (state.dockerStateFilter === "hasupdate") return Boolean(state.imageUpdates[containerName(row)]?.updateAvailable);
       const status = containerStatus(row);
       if (state.dockerStateFilter === "attention") return status.key === "attention" || status.key === "stopped";
       return status.key === state.dockerStateFilter || (state.dockerStateFilter === "running" && status.running);
@@ -268,19 +334,18 @@
     const containers = state.inventory?.containers || [];
     const statuses = containers.map(containerStatus);
     const running = statuses.filter((status) => status.running).length;
-    const healthy = statuses.filter((status) => status.healthy).length;
-    const attention = statuses.filter((status) => status.key === "attention" || status.key === "stopped").length;
+    const stopped = statuses.filter((status) => status.key === "stopped").length;
+    const updates = containers.filter((row) => state.imageUpdates[containerName(row)]?.updateAvailable).length;
     const metrics = [
-      ["全部容器", containers.length, "当前服务器", "total"],
-      ["运行中", running, containers.length ? `${Math.round(running / containers.length * 100)}% 在线` : "等待数据", "running"],
-      ["健康", healthy, "通过健康检查", "healthy"],
-      ["需关注", attention, attention ? "停止或异常" : "当前无异常", attention ? "attention" : "quiet"]
+      ["全部", containers.length, "all"],
+      ["运行中", running, "running"],
+      ["已停止", stopped, "stopped"],
+      ["有更新", updates, "hasupdate"]
     ];
     const root = $("#infra-docker-metrics");
-    if (root) root.innerHTML = metrics.map(([label, value, note, tone], index) => {
-      const filterKey = index === 0 ? "all" : tone === "quiet" ? "attention" : tone;
+    if (root) root.innerHTML = metrics.map(([label, value, filterKey]) => {
       const active = state.dockerTab === "containers" && state.dockerStateFilter === filterKey;
-      return `<button class="infra-docker-metric ${esc(tone)} ${active ? "active" : ""}" type="button" data-infra-docker-filter="${esc(filterKey)}" aria-pressed="${active ? "true" : "false"}"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></button>`;
+      return `<button class="infra-docker-metric ${esc(filterKey)} ${active ? "active" : ""}" type="button" data-infra-docker-filter="${esc(filterKey)}" aria-pressed="${active}"><span>${esc(label)}</span><strong>${esc(value)}</strong></button>`;
     }).join("");
     const counts = {
       projects: dockerRowsForTab("projects").length,
@@ -291,7 +356,8 @@
     const checked = $("#infra-docker-checked-at");
     if (checked) {
       const inventoryTime = state.inventory?.checkedAt ? `更新于 ${formatTime(state.inventory.checkedAt)}` : "等待读取 Docker 状态";
-      checked.textContent = state.dockerStatsLoading ? `${inventoryTime} · 正在补充资源指标` : state.dockerStatsError ? `${inventoryTime} · 资源指标暂不可用` : inventoryTime;
+      const version = state.inventory?.serverVersion ? ` · Docker ${state.inventory.serverVersion}` : "";
+      checked.textContent = state.dockerStatsLoading ? `${inventoryTime} · 正在补充资源指标` : state.dockerStatsError ? `${inventoryTime} · 资源指标暂不可用` : `${inventoryTime}${version}`;
     }
   }
 
@@ -306,15 +372,15 @@
       filter.value = state.dockerStateFilter;
       filter.hidden = state.dockerTab !== "containers";
     }
-    const quickFilters = $("#infra-container-quick-filters");
-    if (quickFilters) quickFilters.hidden = state.dockerTab !== "containers";
-    $$("#infra-container-quick-filters [data-infra-docker-filter]").forEach((button) => {
-      const active = state.dockerTab === "containers" && button.dataset.infraDockerFilter === state.dockerStateFilter;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", active ? "true" : "false");
-    });
+    const grouping = $("#infra-docker-group-control");
+    if (grouping) grouping.hidden = state.dockerTab !== "containers";
+    const groupToggle = $("#infra-docker-group-toggle");
+    if (groupToggle) groupToggle.checked = state.dockerGrouped;
     const count = $("#infra-docker-result-count");
-    if (count) count.textContent = shown === total ? `${total} 项` : `显示 ${shown} / ${total} 项`;
+    if (count) {
+      count.textContent = `显示 ${shown} / ${total} 项`;
+      count.hidden = !state.dockerQuery && (state.dockerTab !== "containers" || state.dockerStateFilter === "all");
+    }
     const switcher = $("#infra-docker-view-switch");
     if (switcher) switcher.hidden = state.dockerTab === "images";
     $$('[data-infra-docker-presentation]').forEach((button) => {
@@ -337,7 +403,7 @@
       return;
     }
     const root = $("#infra-docker-content");
-    if (root) root.innerHTML = empty("正在读取 Docker 数据…");
+    if (root && state.inventory?.hostId !== state.activeHostId) root.innerHTML = empty("正在读取 Docker 数据…");
     const hostId = state.activeHostId;
     try {
       const payload = await request(`/api/infra/docker/inventory?hostId=${encodeURIComponent(hostId)}`);
@@ -348,6 +414,7 @@
       state.dockerStatsCheckedAt = "";
       renderDocker();
       loadDockerStats(hostId);
+      autoCheckImageUpdates(hostId);
     } catch (error) {
       if (hostId !== state.activeHostId) return;
       state.inventory = { hostId, containers: [], images: [], compose: [], error: error.message };
@@ -429,73 +496,89 @@
     }).join("")}</div>`;
   }
 
+  function containerMarkup(row) {
+    const name = containerName(row);
+    const status = containerStatus(row);
+    const project = containerProject(row);
+    const service = containerService(row);
+    const ports = uniquePorts(row.Ports);
+    const portText = ports.length ? ports.join(", ") : "未映射端口";
+    const cpu = row.CPUPerc || "—";
+    const memory = row.MemUsage || "—";
+    const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
+    const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
+    const updateInfo = state.imageUpdates[name];
+    const blockedReason = row.UpdateBlockedReason || updateInfo?.blockedReason || (updateInfo?.canUpdate === false ? "该容器暂不支持在此更新，请从宿主机维护。" : "");
+    const hasUpdate = Boolean(updateInfo?.updateAvailable);
+    const updateLabel = { current: "已是最新", update: "发现可用更新", unknown: "检测未完成", unsupported: "暂不支持检测" }[updateInfo?.status] || "尚未检测";
+    const restartPolicy = String(row.RestartPolicy || "").trim();
+    const restartLabel = { always: "总是", "unless-stopped": "除非停止", "on-failure": "失败时", no: "未开启", "": "未知" }[restartPolicy] || restartPolicy;
+    const autoUpdate = Boolean(row.AutoUpdate);
+    const activeOp = activeUpdateFor(name);
+    const settingsKey = JSON.stringify([state.activeHostId, name]);
+    return `<article class="infra-app-card" data-container-name="${esc(name)}">
+      <div class="infra-app-identity">
+        <span class="infra-app-avatar" aria-hidden="true">${esc(name.charAt(0).toUpperCase() || "D")}</span>
+        <div><h3 title="${esc(name)}">${esc(name)}</h3><span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span>${hasUpdate ? `<span class="infra-update-pill">有更新</span>` : ""}</div>
+      </div>
+      <p class="infra-app-image" title="${esc(row.Image || "未标记镜像")}">${esc(row.Image || "未标记镜像")}</p>
+      <dl class="infra-app-resources">
+        <div><dt>CPU</dt><dd>${esc(cpu)}</dd></div>
+        <div><dt>内存</dt><dd title="${esc(memory)}">${esc(memory.split(" / ")[0])}</dd></div>
+        <div><dt>端口</dt><dd title="${esc(portText)}">${esc(ports[0] || "—")}${ports.length > 1 ? `<small> +${ports.length - 1}</small>` : ""}</dd></div>
+      </dl>
+      <div class="infra-app-actions">
+        <span class="infra-app-project" title="${esc(project || "独立容器")}">${esc(project || "独立容器")}</span>
+        <button class="infra-action-btn" type="button" data-infra-action="container-logs" data-container="${esc(name)}" aria-label="查看 ${esc(name)} 日志">日志</button>
+        <button class="infra-action-btn" type="button" data-container-action="${primaryAction}" data-container="${esc(name)}" ${activeOp ? "disabled" : ""} aria-label="${primaryLabel} ${esc(name)}">${primaryLabel}</button>
+        ${hasUpdate && !blockedReason && !activeOp ? `<button class="infra-action-btn primary" type="button" data-infra-action="update-container" data-container="${esc(name)}">更新</button>` : ""}
+      </div>
+      ${activeOp ? `<div class="infra-update-progress" data-op-container="${esc(name)}" role="status">
+        <div class="infra-update-progress-head"><span class="infra-update-progress-step">${esc(activeOp.status === "queued" ? "排队中…" : activeOp.progress?.step || "执行中…")}</span><span class="infra-update-progress-pct">${activeOp.progress?.percent != null ? `${metricPercent(activeOp.progress.percent)}%` : ""}</span></div>
+        <div class="infra-update-progress-bar"><b class="${activeOp.progress?.percent == null ? "indeterminate" : ""}" style="--p:${metricPercent(activeOp.progress?.percent)}%"></b></div>
+      </div>` : ""}
+      <details class="infra-app-settings" data-container-settings="${esc(settingsKey)}" ${state.dockerExpanded.has(settingsKey) ? "open" : ""}>
+        <summary>配置与更多操作 <span aria-hidden="true">⌄</span></summary>
+        <div class="infra-app-settings-body">
+          <dl class="infra-app-fields">
+            <div><dt>容器 ID</dt><dd>${esc(String(row.ID || "—").slice(0, 12))}</dd></div>
+            <div><dt>运行状态</dt><dd>${esc(status.raw || status.label)}</dd></div>
+            <div><dt>Compose 服务</dt><dd>${esc(service || "—")}</dd></div>
+            <div><dt>内存占用</dt><dd>${esc(memory)} · ${esc(row.MemPerc || "—")}</dd></div>
+            <div><dt>端口映射</dt><dd>${esc(portText)}</dd></div>
+            <div><dt>镜像检测</dt><dd>${esc(updateLabel)}</dd></div>
+          </dl>
+          ${blockedReason ? `<p class="infra-app-notice">${esc(blockedReason)}</p>` : ""}
+          <div class="infra-app-policy"><span>自动重启</span><button class="infra-policy-toggle ${["always", "unless-stopped"].includes(restartPolicy) ? "on" : ""}" type="button" data-infra-action="toggle-restart-policy" data-container="${esc(name)}" data-policy="${restartPolicy === "always" ? "no" : "always"}" ${activeOp ? "disabled" : ""} title="点击切换为${restartPolicy === "always" ? "不自动重启" : "总是重启"}">${esc(restartLabel)}</button></div>
+          <div class="infra-app-policy"><span>自动更新 <small>每 6 小时检查</small></span><button class="infra-policy-toggle ${autoUpdate ? "on" : ""}" type="button" data-infra-action="toggle-auto-update" data-container="${esc(name)}" data-enabled="${autoUpdate ? "0" : "1"}" aria-pressed="${autoUpdate}" ${blockedReason && !autoUpdate || activeOp ? "disabled" : ""}>${autoUpdate ? "已开启" : "关闭"}</button></div>
+          <div class="infra-app-more-actions">
+            <button class="infra-action-btn" type="button" data-infra-action="edit-update-target" data-container="${esc(name)}" ${blockedReason || activeOp ? "disabled" : ""}>更换镜像</button>
+            ${status.running ? `<button class="infra-action-btn" type="button" data-container-action="pause" data-container="${esc(name)}" ${activeOp ? "disabled" : ""}>暂停</button><button class="infra-action-btn danger" type="button" data-container-action="stop" data-container="${esc(name)}" ${activeOp ? "disabled" : ""}>停止</button>` : ""}
+          </div>
+        </div>
+      </details>
+    </article>`;
+  }
+
   function containerRows() {
     if (state.inventory?.error) return empty(state.inventory.error);
     const allRows = dockerRowsForTab("containers");
     const rows = filteredDockerRows("containers").sort((left, right) => {
       const stateDelta = Number(containerStatus(right).running) - Number(containerStatus(left).running);
-      return stateDelta || String(left.Names || left.Name || "").localeCompare(String(right.Names || right.Name || ""), "zh-CN");
+      return stateDelta || containerName(left).localeCompare(containerName(right), "zh-CN");
     });
     renderDockerFilters(rows.length, allRows.length);
     if (!allRows.length) return empty("当前服务器没有容器，或尚未读取 Docker 数据。");
-    if (!rows.length) return empty("没有符合当前条件的容器。");
-    if (state.dockerPresentation === "cards") {
-      return `<div class="infra-container-grid">${rows.map((row) => {
-        const name = containerName(row);
-        const status = containerStatus(row);
-        const ports = uniquePorts(row.Ports);
-        const project = containerProject(row);
-        const service = containerService(row);
-        const cpu = row.CPUPerc || "—";
-        const memory = row.MemUsage || "—";
-        const memoryPercent = row.MemPerc || "—";
-        const tone = status.key === "attention" ? "is-attention" : status.running ? "is-running" : "is-stopped";
-        const portText = ports.length ? ports.join(", ") : "未映射端口";
-        const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
-        const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
-        return `<article class="infra-container-card ${esc(tone)}">
-          <div class="infra-container-card-title">
-            <div>${dockerGlyph()}<div><h3 title="${esc(name)}">${esc(name)}</h3><small>${esc(service || String(row.ID || "").slice(0, 12) || "独立容器")}</small></div></div>
-            <span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span>
-          </div>
-          <div class="infra-container-specs">
-            <div><span>当前镜像</span><strong title="${esc(row.Image || "")}">${esc(row.Image || "未标记镜像")}</strong></div>
-            <div><span>Compose</span><strong title="${esc(project || "独立容器")}">${esc(project || "独立容器")}</strong></div>
-            <div><span>运行状态</span><strong title="${esc(status.raw || status.label)}">${esc(status.raw || status.label)}</strong></div>
-            <div><span>端口映射</span><strong title="${esc(portText)}">${esc(portText)}</strong></div>
-          </div>
-          <div class="infra-container-vitals">
-            <div><header><span>CPU</span><strong>${esc(cpu)}</strong></header><i><b style="--value:${metricPercent(cpu)}%"></b></i></div>
-            <div><header><span>内存</span><strong title="${esc(memory)}">${esc(memory)}</strong></header><small>${esc(memoryPercent)}</small><i><b style="--value:${metricPercent(memoryPercent)}%"></b></i></div>
-          </div>
-          <footer class="infra-container-icon-actions">
-            <button type="button" data-infra-action="container-logs" data-container="${esc(name)}" aria-label="查看 ${esc(name)} 日志" title="查看日志">${dockerActionIcon("logs")}</button>
-            <button type="button" data-container-action="${primaryAction}" data-container="${esc(name)}" aria-label="${primaryLabel} ${esc(name)}" title="${primaryLabel}">${dockerActionIcon(primaryAction === "unpause" ? "start" : primaryAction)}</button>
-            ${status.running ? `<button type="button" data-container-action="pause" data-container="${esc(name)}" aria-label="暂停 ${esc(name)}" title="暂停">${dockerActionIcon("pause")}</button><button class="danger" type="button" data-container-action="stop" data-container="${esc(name)}" aria-label="停止 ${esc(name)}" title="停止">${dockerActionIcon("stop")}</button>` : ""}
-          </footer>
-        </article>`;
-      }).join("")}</div>`;
-    }
-    return `<div class="infra-container-list"><div class="infra-container-list-head"><span>容器</span><span>状态</span><span>端口</span><span>操作</span></div>${rows.map((row) => {
-      const name = row.Names || row.Name || row.ID || "";
-      const status = containerStatus(row);
-      const ports = uniquePorts(row.Ports);
-      const primaryAction = status.paused ? "unpause" : status.running ? "restart" : "start";
-      const primaryLabel = status.paused ? "恢复" : status.running ? "重启" : "启动";
-      return `<article class="infra-container-row">
-        <div class="infra-container-identity">
-          ${dockerGlyph()}
-          <div><strong title="${esc(name)}">${esc(name)}</strong><small title="${esc(row.Image || "")}">${esc(row.Image || "—")}</small><code>${esc(String(row.ID || "").slice(0, 12))}</code></div>
-        </div>
-        <div class="infra-container-state"><span class="infra-state-pill ${esc(status.tone)}">${esc(status.label)}</span><small title="${esc(status.raw)}">${esc(status.raw || "状态未知")}</small></div>
-        <div class="infra-port-list">${ports.length ? ports.map((port) => `<code>${esc(port)}</code>`).join("") : `<span>未映射端口</span>`}</div>
-        <div class="infra-container-actions">
-          <button class="infra-action-btn primary" type="button" data-infra-action="container-logs" data-container="${esc(name)}">日志</button>
-          <button class="infra-action-btn" type="button" data-container-action="${primaryAction}" data-container="${esc(name)}">${primaryLabel}</button>
-          ${status.running ? `<button class="infra-action-btn danger" type="button" data-container-action="stop" data-container="${esc(name)}">停止</button>` : ""}
-        </div>
-      </article>`;
-    }).join("")}</div>`;
+    if (!rows.length) return empty(state.dockerStateFilter === "hasupdate" ? (state.updateChecking ? "正在检测镜像更新…" : "当前筛选下没有发现可用更新，可点击「检查更新」重新检测。") : "没有符合当前条件的容器，试试其他关键词或状态。");
+    const layout = (items) => `<div class="infra-app-collection ${state.dockerPresentation === "list" ? "is-list" : "is-grid"}">${items.map(containerMarkup).join("")}</div>`;
+    if (!state.dockerGrouped) return layout(rows);
+    const groups = new Map();
+    rows.forEach((row) => {
+      const project = containerProject(row);
+      if (!groups.has(project)) groups.set(project, []);
+      groups.get(project).push(row);
+    });
+    return `<div class="infra-compose-groups">${Array.from(groups).sort(([a], [b]) => !a ? 1 : !b ? -1 : a.localeCompare(b, "zh-CN")).map(([project, items]) => `<section class="infra-compose-group"><header><h3>${esc(project || "独立容器")}</h3><span>${items.length} 个容器 · ${items.filter((row) => containerStatus(row).running).length} 个运行中</span></header>${layout(items)}</section>`).join("")}</div>`;
   }
 
   function imageRows() {
@@ -512,12 +595,25 @@
   function renderDocker() {
     renderHostSelect();
     renderDockerSummary();
+    renderUpdateToolbar();
     $$("[data-infra-docker-tab]").forEach((button) => button.classList.toggle("active", button.dataset.infraDockerTab === state.dockerTab));
     const root = $("#infra-docker-content");
     if (!root) return;
+    root.classList.toggle("is-tabular", state.dockerTab === "images" || (state.dockerTab === "projects" && state.dockerPresentation === "list"));
     if (!state.activeHostId) { renderDockerFilters(0, 0); root.innerHTML = emptyGuide("未发现可用的 Docker 服务器。"); return; }
     if (state.inventory?.error) { renderDockerFilters(0, 0); root.innerHTML = emptyGuide(state.inventory.error); renderOperations(); return; }
+    const focused = document.activeElement;
+    const focusKey = root.contains(focused) ? {
+      container: focused.closest("[data-container-name]")?.dataset.containerName,
+      action: focused.dataset.infraAction || focused.dataset.containerAction,
+      summary: focused.tagName === "SUMMARY"
+    } : null;
     root.innerHTML = state.dockerTab === "projects" ? projectRows() : state.dockerTab === "containers" ? containerRows() : imageRows();
+    if (focusKey?.container) {
+      const card = $$("[data-container-name]", root).find((item) => item.dataset.containerName === focusKey.container);
+      const next = card && (focusKey.summary ? $("summary", card) : $$("button", card).find((button) => (button.dataset.infraAction || button.dataset.containerAction) === focusKey.action));
+      next?.focus({ preventScroll: true });
+    }
     renderOperations();
   }
 
@@ -584,10 +680,14 @@
     showDockerDrawer("infra-docker-detail-drawer");
   }
 
-  function openModal(title, eyebrow, content) {
+  function openModal(title, eyebrow, content, opts = {}) {
+    // A modal replaces the detail/activity drawer and its dimming layer.
+    closeDockerDrawers();
     $("#infra-modal-title").textContent = title;
     $("#infra-modal-eyebrow").textContent = eyebrow;
     $("#infra-modal-body").innerHTML = content;
+    $("#infra-modal .infra-modal-panel")?.classList.toggle("infra-modal-wide", Boolean(opts.wide));
+    $("#infra-modal .infra-modal-panel")?.classList.remove("infra-log-modal", "is-fullscreen");
     $("#infra-modal").hidden = false;
     document.body.classList.add("modal-open");
   }
@@ -595,11 +695,20 @@
   function closeModal() {
     const modal = $("#infra-modal");
     if (modal) modal.hidden = true;
+    $("#infra-modal .infra-modal-panel")?.classList.remove("infra-modal-wide");
     document.body.classList.remove("modal-open");
     stopLogFollow();
+    state.logGeneration = (state.logGeneration || 0) + 1;
+    if (state.updateWatch.timer) {
+      window.clearInterval(state.updateWatch.timer);
+      state.updateWatch.timer = 0;
+    }
   }
 
-  // ---- 容器日志：跟随 / 过滤 / 下载 ----
+  // ---- 容器日志：虚拟滚动终端 ----
+
+  const LOG_LINE_H = 28;
+  const LOG_BUFFER = 14;
 
   function stopLogFollow() {
     if (state.logStream.timer) {
@@ -607,66 +716,304 @@
       state.logStream.timer = 0;
     }
     state.logStream.follow = false;
+    state.logStream.paused = false;
+    state.logStream.newLines = 0;
   }
 
-  function renderLogOutput() {
-    const output = $("#infra-modal-body .infra-log-output");
-    if (!output) return;
-    const filter = state.logStream.filter.trim().toLowerCase();
-    const raw = state.logStream.raw;
-    if (!raw) { output.textContent = "暂无日志。"; return; }
-    const lines = raw.split("\n");
-    const shown = filter ? lines.filter((line) => line.toLowerCase().includes(filter)) : lines;
-    if (!shown.length) { output.textContent = "没有匹配过滤条件的日志。"; return; }
-    if (filter) {
-      const mark = esc(filter);
-      output.innerHTML = shown.map((line) => esc(line).replace(new RegExp(mark.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), (m) => `<mark>${m}</mark>`)).join("\n");
-    } else {
-      output.textContent = shown.join("\n");
-    }
-    if (state.logStream.follow) output.scrollTop = output.scrollHeight;
+  function logView() {
+    return $("#infra-log-view");
   }
 
-  async function fetchContainerLogs(container, { announce = false } = {}) {
-    try {
-      const payload = await request(`/api/infra/container/logs?hostId=${encodeURIComponent(state.activeHostId)}&container=${encodeURIComponent(container)}&tail=500`);
-      state.logStream.raw = String(payload.result?.logs || "");
-      renderLogOutput();
-    } catch (error) {
-      stopLogFollow();
-      const output = $("#infra-modal-body .infra-log-output");
-      if (output) output.textContent = `日志读取失败：${error.message}`;
-      if (announce) toast(error.message, true);
+  function parseLogLine(line) {
+    const timestamp = line.match(/^\[?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?[ \t]?/);
+    const fullTime = timestamp?.[1] || "";
+    const time = fullTime ? fullTime.slice(11, 19) + (fullTime.match(/[.,](\d+)/)?.[1] ? `.${fullTime.match(/[.,](\d+)/)[1].slice(0, 3).padEnd(3, "0")}` : "") : "";
+    let message = timestamp ? line.slice(timestamp[0].length) : line;
+    // Only explicit level prefixes qualify; incidental words in messages do not.
+    const match = message.match(/^((?:\[[^\]]+\][ \t]*)?)(?:\[(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL)\]|(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL)\b)[ \t]*[:|\-]?[ \t]*/i);
+    const token = (match?.[2] || match?.[3] || "").toUpperCase();
+    if (match) message = match[1] + message.slice(match[0].length);
+    const level = /ERROR|FATAL|CRITICAL/.test(token) ? "error" : /WARN/.test(token) ? "warn" : token === "INFO" ? "info" : /DEBUG|TRACE/.test(token) ? "debug" : "plain";
+    return { fullTime, time, message, level, token };
+  }
+
+  // Longest suffix/prefix overlap also handles a rolling 2000-line response.
+  function appendedLogLines(previous, next) {
+    if (!previous.length) return next.length;
+    const combined = next.concat([null], previous);
+    const prefix = new Array(combined.length).fill(0);
+    for (let i = 1; i < combined.length; i++) {
+      let j = prefix[i - 1];
+      while (j && combined[i] !== combined[j]) j = prefix[j - 1];
+      if (combined[i] === combined[j]) j++;
+      prefix[i] = j;
     }
+    return next.length - prefix[prefix.length - 1];
+  }
+
+  function rebuildLogView({ jumpToFirstMatch = false } = {}) {
+    const ls = state.logStream;
+    const f = ls.filter.trim().toLowerCase();
+    const previousMatchLine = ls.view[ls.matches[ls.matchIdx]];
+    ls.view = [];
+    ls.matches = [];
+    ls.lines.forEach((line, idx) => {
+      if (ls.level !== "all" && ls.parsed[idx]?.level !== ls.level) return;
+      ls.view.push(idx);
+      if (f && line.toLowerCase().includes(f)) ls.matches.push(ls.view.length - 1);
+    });
+    const preserved = ls.matches.findIndex((index) => ls.view[index] === previousMatchLine);
+    ls.matchIdx = ls.matches.length ? (jumpToFirstMatch || preserved < 0 ? 0 : preserved) : -1;
+    renderLogWindow();
+    updateLogToolbar();
+  }
+
+  function highlightedLogText(value, query) {
+    if (!query) return esc(value);
+    const lower = value.toLowerCase();
+    const needle = query.toLowerCase();
+    let cursor = 0;
+    const parts = [];
+    let at;
+    while ((at = lower.indexOf(needle, cursor)) !== -1) {
+      parts.push(esc(value.slice(cursor, at)), `<mark>${esc(value.slice(at, at + query.length))}</mark>`);
+      cursor = at + query.length;
+    }
+    parts.push(esc(value.slice(cursor)));
+    return parts.join("");
+  }
+
+  function renderLogWindow() {
+    const view = logView();
+    if (!view) return;
+    const spacer = view.querySelector(".infra-log-spacer");
+    const win = view.querySelector(".infra-log-window");
+    if (!spacer || !win) return;
+    const ls = state.logStream;
+    const total = ls.view.length;
+    view.classList.toggle("is-wrapped", ls.wrap);
+    spacer.style.height = ls.wrap ? "auto" : `${total * LOG_LINE_H}px`;
+    win.style.position = ls.wrap ? "relative" : "";
+    if (ls.error || !total) {
+      spacer.style.height = "auto";
+      win.style.position = "static";
+      win.innerHTML = `<div class="infra-log-empty">${ls.error ? `日志读取失败：${esc(ls.error)}` : ls.lines.length ? "该级别下没有日志。" : ls.loaded ? "暂无日志。" : "正在读取…"}</div>`;
+      return;
+    }
+    const start = ls.wrap ? 0 : Math.max(0, Math.min(total - 1, Math.floor(view.scrollTop / LOG_LINE_H) - LOG_BUFFER));
+    const end = ls.wrap ? total : Math.min(total, start + Math.ceil(view.clientHeight / LOG_LINE_H) + LOG_BUFFER * 2);
+    const query = ls.filter.trim();
+    const html = [];
+    for (let i = start; i < end; i++) {
+      const lineIdx = ls.view[i];
+      const line = ls.parsed[lineIdx];
+      const current = i === ls.matches[ls.matchIdx] && query;
+      const timeMatch = query && line.fullTime.toLowerCase().includes(query.toLowerCase());
+      html.push(`<div class="infra-log-line level-${line.level}${current ? " current" : ""}" data-line="${lineIdx}" ${ls.wrap ? "" : `style="top:${i * LOG_LINE_H}px"`}>
+        <span class="infra-log-ln">${lineIdx + 1}</span><time class="infra-log-time${timeMatch ? " matched" : ""}" title="${esc(line.fullTime || "原始日志没有时间戳")}">${esc(line.time || "—")}</time>
+        <span class="infra-log-level">${highlightedLogText(line.token || "·", query)}</span><code class="infra-log-lc">${highlightedLogText(line.message, query) || " "}</code>
+        <button class="infra-log-copy" type="button" data-log-copy="${lineIdx}" title="复制完整原文" aria-label="复制第 ${lineIdx + 1} 行" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg></button>
+      </div>`);
+    }
+    win.innerHTML = html.join("");
+  }
+
+  function scrollLogToBottom() {
+    const view = logView();
+    if (!view) return;
+    view.scrollTop = view.scrollHeight;
+    renderLogWindow();
+  }
+
+  function jumpLogMatch(delta) {
+    const ls = state.logStream;
+    if (!ls.matches.length) return;
+    ls.matchIdx = ((ls.matchIdx + delta) % ls.matches.length + ls.matches.length) % ls.matches.length;
+    const view = logView();
+    if (view) {
+      if (ls.wrap) {
+        const target = $(`[data-line="${ls.view[ls.matches[ls.matchIdx]]}"]`, view);
+        if (target) view.scrollTop = Math.max(0, target.offsetTop - view.clientHeight / 2);
+      } else view.scrollTop = Math.max(0, ls.matches[ls.matchIdx] * LOG_LINE_H - view.clientHeight / 2);
+      if (ls.follow) ls.paused = true;
+    }
+    renderLogWindow();
+    updateLogToolbar();
+  }
+
+  function onLogScroll() {
+    if (state.logStream.raf) return;
+    state.logStream.raf = requestAnimationFrame(() => {
+      state.logStream.raf = 0;
+      const view = logView();
+      if (!view) return;
+      const ls = state.logStream;
+      if (!ls.wrap) renderLogWindow();
+      if (!ls.follow) return;
+      const nearBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - LOG_LINE_H * 2.5;
+      if (!nearBottom && !ls.paused) {
+        ls.paused = true;
+        updateLogToolbar();
+      } else if (nearBottom && ls.paused && !ls.filter.trim()) {
+        ls.paused = false;
+        ls.newLines = 0;
+        updateLogToolbar();
+      }
+    });
   }
 
   function updateLogToolbar() {
+    const ls = state.logStream;
     const followBtn = $('[data-log-action="follow"]');
     if (followBtn) {
-      followBtn.classList.toggle("active", state.logStream.follow);
-      followBtn.setAttribute("aria-pressed", state.logStream.follow ? "true" : "false");
-      followBtn.textContent = state.logStream.follow ? "停止跟随" : "跟随";
+      followBtn.classList.toggle("active", ls.follow && !ls.paused);
+      followBtn.setAttribute("aria-pressed", ls.follow ? "true" : "false");
+      followBtn.textContent = ls.follow ? "跟随：开" : "跟随：关";
+    }
+    const count = $("#infra-log-match-count");
+    if (count) {
+      const hasFilter = Boolean(ls.filter.trim());
+      count.textContent = hasFilter
+        ? (ls.matches.length ? `匹配行 ${ls.matchIdx + 1} / ${ls.matches.length}` : "0 / 0")
+        : "";
+    }
+    const nav = $$('[data-log-action="prev"], [data-log-action="next"]');
+    nav.forEach((btn) => { btn.disabled = !ls.matches.length; });
+    const status = $("#infra-log-status");
+    if (status) {
+      status.textContent = ls.error ? "读取失败 · 可重新刷新" : !ls.loaded ? "正在读取日志…" : ls.follow ? (ls.paused ? "跟随已暂停 · 正在查看历史" : "正在跟随 · 每 3 秒刷新") : "跟随已关闭";
+      status.classList.toggle("is-live", ls.follow && !ls.paused);
+    }
+    const total = $("#infra-log-total");
+    if (total) total.textContent = `显示 ${ls.view.length} / ${ls.lines.length} 行 · 最近 2000 行`;
+    const pill = $("#infra-log-newpill");
+    if (pill) {
+      const show = ls.follow && ls.paused;
+      pill.hidden = !show;
+      if (show) {
+        pill.textContent = ls.newLines ? `↓ ${ls.newLines} 条新日志` : "↓ 回到底部";
+        pill.title = ls.filter.trim() ? "清除搜索并回到底部" : "回到底部，恢复跟随";
+      }
+    }
+  }
+
+  async function fetchContainerLogs(container, { announce = false } = {}) {
+    const hostId = state.activeHostId;
+    const logGeneration = state.logGeneration;
+    const requestId = ++state.logStream.requestId;
+    try {
+      const payload = await request(`/api/infra/container/logs?hostId=${encodeURIComponent(state.activeHostId)}&container=${encodeURIComponent(container)}&tail=2000`);
+      if (requestId !== state.logStream.requestId || logGeneration !== state.logGeneration || hostId !== state.activeHostId || container !== state.logStream.container || $("#infra-modal")?.hidden) return;
+      const ls = state.logStream;
+      const original = String(payload.result?.logs || "");
+      const clean = original.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+      const lines = clean ? clean.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n") : [];
+      if (ls.follow && ls.paused) ls.newLines += appendedLogLines(ls.lines, lines);
+      ls.raw = original;
+      ls.lines = lines;
+      ls.parsed = lines.map(parseLogLine);
+      ls.error = "";
+      const firstLoad = !ls.loaded;
+      ls.loaded = true;
+      rebuildLogView();
+      if (!ls.filter.trim() && (firstLoad || (ls.follow && !ls.paused))) scrollLogToBottom();
+      updateLogToolbar();
+    } catch (error) {
+      if (requestId !== state.logStream.requestId || logGeneration !== state.logGeneration || hostId !== state.activeHostId || container !== state.logStream.container || $("#infra-modal")?.hidden) return;
+      stopLogFollow();
+      updateLogToolbar();
+      state.logStream.error = error.message;
+      renderLogWindow();
+      updateLogToolbar();
+      if (announce) toast(error.message, true);
     }
   }
 
   function openLogModal(container) {
     stopLogFollow();
+    state.logGeneration = (state.logGeneration || 0) + 1;
     state.logStream.container = container;
     state.logStream.filter = "";
     state.logStream.raw = "";
+    state.logStream.lines = [];
+    state.logStream.view = [];
+    state.logStream.matches = [];
+    state.logStream.matchIdx = -1;
+    state.logStream.newLines = 0;
+    state.logStream.loaded = false;
+    state.logStream.parsed = [];
+    state.logStream.error = "";
+    state.logStream.level = "all";
+    state.logStream.wrap = window.matchMedia("(max-width: 600px)").matches;
     openModal(`${container} 日志`, "CONTAINER LOGS", `
       <div class="infra-log-toolbar">
-        <input id="infra-log-filter" type="search" placeholder="过滤日志关键字" autocomplete="off" aria-label="过滤日志">
-        <button class="infra-btn" type="button" data-log-action="refresh">刷新</button>
-        <button class="infra-btn" type="button" data-log-action="follow" aria-pressed="false">跟随</button>
-        <button class="infra-btn" type="button" data-log-action="download">下载</button>
+        <div class="infra-log-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+          <input id="infra-log-filter" type="search" placeholder="搜索日志，保留上下文" autocomplete="off" aria-label="搜索日志，Enter 下一个，Shift 加 Enter 上一个">
+          <span id="infra-log-match-count" class="infra-log-match-count"></span>
+          <button class="infra-log-nav" type="button" data-log-action="prev" title="上一个匹配" aria-label="上一个匹配" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"></path></svg></button>
+          <button class="infra-log-nav" type="button" data-log-action="next" title="下一个匹配" aria-label="下一个匹配" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"></path></svg></button>
+        </div>
+        <select id="infra-log-level" class="infra-select" aria-label="筛选日志级别"><option value="all">全部级别</option><option value="error">错误</option><option value="warn">警告</option><option value="info">信息</option><option value="debug">调试</option></select>
+        <div class="infra-log-tools">
+          <button class="infra-btn" type="button" data-log-action="refresh">刷新</button>
+          <button class="infra-btn" type="button" data-log-action="follow" aria-pressed="false">跟随：关</button>
+          <button class="infra-btn ${state.logStream.wrap ? "active" : ""}" type="button" data-log-action="wrap" aria-pressed="${state.logStream.wrap}">自动换行</button>
+          <button class="infra-btn" type="button" data-log-action="fullscreen" aria-pressed="false">全屏</button>
+          <button class="infra-btn" type="button" data-log-action="download" title="下载当前读取的原始日志，不受搜索和筛选影响">下载原文</button>
+        </div>
       </div>
-      <pre class="infra-log-output">正在读取…</pre>`);
+      <div class="infra-log-shell">
+        <div id="infra-log-view" class="infra-log-view" tabindex="0" aria-label="容器日志"><div class="infra-log-spacer"><div class="infra-log-window"><div class="infra-log-empty">正在读取…</div></div></div></div>
+        <button id="infra-log-newpill" class="infra-log-newpill" type="button" data-log-action="jump-bottom" hidden></button>
+      </div>
+      <footer class="infra-log-statusbar"><span id="infra-log-status" role="status">正在读取日志…</span><span id="infra-log-total"></span></footer>`, { wide: true });
+    $("#infra-modal .infra-modal-panel")?.classList.add("infra-log-modal");
+    logView()?.addEventListener("scroll", onLogScroll, { passive: true });
     fetchContainerLogs(container, { announce: true });
   }
 
   function handleLogAction(action) {
     const container = state.logStream.container;
+    if (action === "prev") { jumpLogMatch(-1); return; }
+    if (action === "next") { jumpLogMatch(1); return; }
+    if (action === "wrap") {
+      const ls = state.logStream;
+      const view = logView();
+      const wasBottom = view && view.scrollTop + view.clientHeight >= view.scrollHeight - LOG_LINE_H * 2;
+      const topLine = ls.wrap ? $$(".infra-log-line", view).find((line) => line.offsetTop + line.offsetHeight > view.scrollTop)?.dataset.line : ls.view[Math.floor(view.scrollTop / LOG_LINE_H)];
+      ls.wrap = !ls.wrap;
+      renderLogWindow();
+      const button = $('[data-log-action="wrap"]');
+      button.classList.toggle("active", ls.wrap);
+      button.setAttribute("aria-pressed", String(ls.wrap));
+      if (wasBottom) scrollLogToBottom();
+      else if (topLine !== undefined) {
+        const index = ls.view.indexOf(Number(topLine));
+        view.scrollTop = ls.wrap ? ($(`[data-line="${topLine}"]`, view)?.offsetTop || 0) : Math.max(0, index * LOG_LINE_H);
+        if (!ls.wrap) renderLogWindow();
+      }
+      return;
+    }
+    if (action === "fullscreen") {
+      const panel = $("#infra-modal .infra-modal-panel");
+      const full = panel.classList.toggle("is-fullscreen");
+      const button = $('[data-log-action="fullscreen"]');
+      button.textContent = full ? "退出全屏" : "全屏";
+      button.setAttribute("aria-pressed", String(full));
+      renderLogWindow();
+      return;
+    }
+    if (action === "jump-bottom") {
+      state.logStream.filter = "";
+      $("#infra-log-filter").value = "";
+      rebuildLogView();
+      state.logStream.paused = false;
+      state.logStream.newLines = 0;
+      scrollLogToBottom();
+      updateLogToolbar();
+      return;
+    }
     if (!container) return;
     if (action === "refresh") fetchContainerLogs(container, { announce: true });
     else if (action === "follow") {
@@ -674,6 +1021,8 @@
         stopLogFollow();
       } else {
         state.logStream.follow = true;
+        state.logStream.paused = Boolean(state.logStream.filter.trim());
+        state.logStream.newLines = 0;
         fetchContainerLogs(container);
         state.logStream.timer = window.setInterval(() => {
           if ($("#infra-modal")?.hidden) { stopLogFollow(); updateLogToolbar(); return; }
@@ -682,7 +1031,9 @@
       }
       updateLogToolbar();
     } else if (action === "download") {
-      const blob = new Blob([state.logStream.raw || ""], { type: "text/plain;charset=utf-8" });
+      const ls = state.logStream;
+      const content = ls.raw;
+      const blob = new Blob([content || ""], { type: "text/plain;charset=utf-8" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
       link.download = `${container}.log`;
@@ -729,17 +1080,17 @@
   }
 
   function activate(view) {
-    window.clearInterval(state.pollTimer);
-    state.pollTimer = 0;
+    window.clearTimeout(state.opsTimer);
+    state.opsTimer = 0;
     stopAutoRefresh();
     if (!INFRA_VIEWS.has(view)) return;
     refreshCurrent(false);
-    if (view === "infra-docker") {
-      state.pollTimer = window.setInterval(() => {
-        if (activeView() === "infra-docker") loadOperations().catch(() => {});
-      }, 5000);
-    }
+    loadOperations().catch(() => scheduleOperationPoll(false));
   }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { window.clearTimeout(state.opsTimer); state.opsTimer = 0; }
+    else if (activeView() === "infra-docker") loadOperations().catch(() => scheduleOperationPoll(false));
+  });
 
   // ---- 自动刷新 ----
 
@@ -775,16 +1126,163 @@
     toast("自动刷新已开启（每 15 秒）。");
   }
 
+  // ---- 镜像更新检测 ----
+
+  async function checkImageUpdates(force = false, quiet = false) {
+    if (state.updateChecking || !state.activeHostId) return;
+    const hostId = state.activeHostId;
+    const sequence = ++state.updateSequence;
+    state.updateChecking = true;
+    renderUpdateToolbar();
+    try {
+      const payload = await request(`/api/infra/docker/check-updates?hostId=${encodeURIComponent(hostId)}${force ? "&force=1" : ""}`);
+      if (hostId !== state.activeHostId || sequence !== state.updateSequence) return;
+      state.imageUpdates = payload.updates?.updates || {};
+      const counts = { update: 0, current: 0, unknown: 0, unsupported: 0 };
+      Object.values(state.imageUpdates).forEach(item => { counts[item.status in counts ? item.status : "unknown"]++; });
+      if (!quiet) toast(`检测完成：${counts.update} 个有更新，${counts.current} 个最新，${counts.unknown} 个未能确认，${counts.unsupported} 个暂不支持检测。`);
+      renderDocker();
+    } catch (error) {
+      if (!quiet && sequence === state.updateSequence) toast(error.message, true);
+    } finally {
+      if (sequence === state.updateSequence) { state.updateChecking = false; renderDocker(); }
+    }
+  }
+
+  function availableUpdateNames() {
+    return Object.entries(state.imageUpdates).filter(([name, info]) => info.updateAvailable && info.canUpdate !== false && !activeUpdateFor(name)).map(([name]) => name);
+  }
+
+  function autoCheckImageUpdates(hostId) {
+    if (!hostId || hostId !== state.activeHostId) return;
+    if (!(state.inventory?.containers || []).length) return;
+    checkImageUpdates(false, true).catch(() => {});
+  }
+
+  function renderUpdateToolbar() {
+    const checkBtn = $('[data-infra-action="check-updates"]');
+    if (checkBtn) {
+      checkBtn.disabled = state.updateChecking;
+      checkBtn.textContent = state.updateChecking ? "检测中…" : "检查更新";
+    }
+    const updateAllBtn = $('[data-infra-action="update-all"]');
+    if (updateAllBtn) {
+      const available = availableUpdateNames().length;
+      updateAllBtn.disabled = !available || state.updateChecking || state.batchUpdating;
+      updateAllBtn.textContent = available ? `全部更新 (${available})` : "全部更新";
+    }
+  }
+
+  async function submitContainerUpdate(container, image = "") {
+    const payload = await postAction("/api/infra/containers/update", { hostId: state.activeHostId, container, image }, `容器 ${container} 更新已进入队列。`);
+    await loadOperations();
+    const opId = String(payload.operation?.id || "");
+    if (opId) openUpdateProgressModal(container, opId);
+    window.setTimeout(() => {
+      if (activeView() === "infra-docker") loadDockerInventory(true).catch(() => {});
+    }, 1500);
+  }
+
+  // ---- 更新进度弹窗 ----
+
+  function openUpdateProgressModal(container, opId) {
+    state.updateWatch.opId = opId;
+    state.updateWatch.container = container;
+    openModal(`${container} 更新`, "IMAGE UPDATE", `
+      <div class="infra-update-modal">
+        <div class="infra-update-modal-head">
+          <span class="infra-update-progress-step">正在提交任务…</span>
+          <span class="infra-update-progress-pct"></span>
+        </div>
+        <div class="infra-update-progress-bar infra-update-modal-bar"><b class="indeterminate" style="--p:0%"></b></div>
+        <pre class="infra-update-log" aria-label="更新日志">等待任务开始…</pre>
+        <div class="infra-form-actions">
+          <button class="infra-btn" type="button" data-infra-action="close-modal">后台运行</button>
+          <button class="infra-btn infra-btn-primary" type="button" data-infra-action="close-modal" data-update-done hidden>完成</button>
+        </div>
+      </div>`, { wide: true });
+    loadOperations().catch(() => {});
+  }
+
+  function renderUpdateModal(op) {
+    const modal = $("#infra-modal-body .infra-update-modal");
+    if (!modal) return;
+    const percent = op.progress?.percent;
+    const running = String(op.status) === "running";
+    const queued = String(op.status) === "queued";
+    const done = String(op.status) === "success";
+    const failed = String(op.status) === "failed";
+    const stepEl = modal.querySelector(".infra-update-progress-step");
+    if (stepEl) {
+      stepEl.textContent = queued ? "排队中，等待前面的任务完成…"
+        : done ? (op.result?.warning || "更新完成")
+        : failed ? `更新失败：${op.error || "未知错误"}`
+        : String(op.progress?.step || "执行中…");
+      stepEl.classList.toggle("is-failed", failed);
+      stepEl.classList.toggle("is-done", done);
+    }
+    const pctEl = modal.querySelector(".infra-update-progress-pct");
+    if (pctEl) pctEl.textContent = percent === null || percent === undefined ? "" : `${percent}%`;
+    const bar = modal.querySelector(".infra-update-modal-bar b");
+    if (bar) {
+      bar.classList.toggle("indeterminate", percent === null || percent === undefined || queued);
+      bar.classList.toggle("failed", failed);
+      bar.classList.toggle("done", done);
+      bar.style.setProperty("--p", `${percent || 0}%`);
+    }
+    const logEl = modal.querySelector(".infra-update-log");
+    if (logEl) {
+      const lines = Array.isArray(op.logs) ? op.logs : [];
+      const text = lines.length ? lines.join("\n") : (queued ? "排队中…" : "等待日志输出…");
+      const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 30;
+      logEl.textContent = text;
+      if (atBottom || running || queued) logEl.scrollTop = logEl.scrollHeight;
+    }
+    const doneBtn = modal.querySelector("[data-update-done]");
+    if (doneBtn) doneBtn.hidden = !(done || failed);
+  }
+
+  function updateTargetForm(container, currentImage) {
+    openModal("编辑更新目标", "IMAGE TARGET", `<form id="infra-update-target-form" class="infra-form">
+      <input type="hidden" name="container" value="${esc(container)}">
+      <label class="span-2">镜像（含标签）<input name="image" required value="${esc(currentImage || "")}" placeholder="例如 emby/embyserver:latest"></label>
+      <p class="infra-form-hint">保存后立即拉取该镜像并按原配置重建容器，期间容器会短暂停机。</p>
+      <div class="infra-form-actions"><button class="infra-btn" type="button" data-infra-action="close-modal">取消</button><button class="infra-btn infra-btn-primary" type="submit">更新到该镜像</button></div>
+    </form>`);
+  }
+
+  async function updateAllContainers() {
+    if (state.batchUpdating) return;
+    const names = availableUpdateNames();
+    const hostId = state.activeHostId;
+    if (!names.length) return;
+    state.batchUpdating = true;
+    renderUpdateToolbar();
+    let submitted = 0;
+    try {
+      for (const name of names) {
+        try {
+          await postAction("/api/infra/containers/update", { hostId, container: name }, "");
+          submitted++;
+        } catch (error) { toast(`容器 ${name} 更新提交失败：${error.message}`, true); }
+      }
+      toast(`已提交 ${submitted} 个更新任务${submitted < names.length ? `，${names.length - submitted} 个未提交` : ""}，进度见「活动」。`);
+      await loadOperations();
+    } finally { state.batchUpdating = false; renderUpdateToolbar(); }
+  }
+
   async function postAction(path, body, successMessage) {
     const payload = await request(path, { method: "POST", body: JSON.stringify(body) });
     if (payload.config) state.config = payload.config;
-    toast(successMessage);
+    if (successMessage) toast(successMessage);
     return payload;
   }
 
   document.addEventListener("adaptive:viewchange", (event) => activate(String(event.detail?.view || "")));
   document.addEventListener("click", async (event) => {
     const button = event.target.closest("button, [data-docker-detail-kind]");
+    const toolsMenu = $(".infra-tools-menu");
+    if (toolsMenu?.open && (!toolsMenu.contains(event.target) || button)) toolsMenu.open = false;
     if (!button) return;
     const dockerTab = button.dataset.infraDockerTab;
     if (dockerTab) {
@@ -804,6 +1302,9 @@
       state.dockerTab = "containers";
       state.dockerStateFilter = dockerFilter;
       renderDocker();
+      if (dockerFilter === "hasupdate" && !Object.keys(state.imageUpdates).length) {
+        checkImageUpdates(false, true).catch(() => {});
+      }
       return;
     }
     const dockerDetailKind = button.dataset.dockerDetailKind;
@@ -835,6 +1336,16 @@
       finally { button.disabled = false; }
       return;
     }
+    const logCopy = button.dataset.logCopy;
+    if (logCopy !== undefined) {
+      try {
+        await navigator.clipboard.writeText(state.logStream.lines[Number(logCopy)] ?? "");
+        toast(`已复制第 ${Number(logCopy) + 1} 行。`);
+      } catch (_error) {
+        toast("复制失败。", true);
+      }
+      return;
+    }
     const logAction = button.dataset.logAction;
     if (logAction) {
       handleLogAction(logAction);
@@ -851,7 +1362,7 @@
         if (drawer?.hidden) showDockerDrawer("infra-docker-activity-drawer");
         else closeDockerDrawers();
       }
-      else if (action === "refresh-docker") { button.disabled = true; state.inventory = null; await loadDockerInventory(true); toast("Docker 数据已刷新。"); }
+      else if (action === "refresh-docker") { button.disabled = true; await loadDockerInventory(true); toast("Docker 数据已刷新。"); }
       else if (action === "add-project") projectForm();
       else if (action === "edit-project") projectForm((state.config?.projects || []).find((item) => item.id === button.dataset.projectId) || {});
       else if (action === "delete-project") {
@@ -867,19 +1378,62 @@
           toast("复制失败，请手动复制挂载片段。", true);
         }
       } else if (action === "toggle-auto-refresh") toggleAutoRefresh();
+      else if (action === "check-updates") await checkImageUpdates(true);
+      else if (action === "update-all") await updateAllContainers();
+      else if (action === "update-container") await submitContainerUpdate(button.dataset.container || "");
+      else if (action === "edit-update-target") {
+        const targetName = button.dataset.container || "";
+        const row = dockerRowsForTab("containers").find((item) => containerName(item) === targetName);
+        updateTargetForm(targetName, row?.Image || "");
+      } else if (action === "toggle-restart-policy") {
+        await postAction("/api/infra/containers/restart-policy", { hostId: state.activeHostId, container: button.dataset.container || "", policy: button.dataset.policy || "" }, "重启策略已更新。");
+        await loadDockerInventory(true);
+      } else if (action === "toggle-auto-update") {
+        const container = button.dataset.container || "";
+        const enabled = button.dataset.enabled === "1";
+        await postAction("/api/infra/containers/auto-update", { hostId: state.activeHostId, container, enabled }, enabled ? `已为 ${container} 开启自动更新。` : `已关闭 ${container} 的自动更新。`);
+        const row = dockerRowsForTab("containers").find((item) => containerName(item) === container);
+        if (row) { row.AutoUpdate = enabled; renderDocker(); }
+        else await loadDockerInventory(true);
+      }
     } catch (error) { toast(error.message, true); }
-    finally { if (button.isConnected) button.disabled = false; }
+    finally { if (button.isConnected) button.disabled = false; renderUpdateToolbar(); }
   });
 
+  document.addEventListener("toggle", (event) => {
+    const details = event.target;
+    if (!details.matches?.("[data-container-settings]") || !details.isConnected) return;
+    const key = details.dataset.containerSettings;
+    if (details.open) state.dockerExpanded.add(key);
+    else state.dockerExpanded.delete(key);
+  }, true);
+
   document.addEventListener("change", (event) => {
+    if (event.target.matches("#infra-log-level")) {
+      state.logStream.level = event.target.value;
+      rebuildLogView({ jumpToFirstMatch: true });
+      const view = logView();
+      if (view) { view.scrollTop = 0; renderLogWindow(); }
+      if (state.logStream.matches.length) jumpLogMatch(0);
+    }
+    if (event.target.matches("#infra-docker-group-toggle")) {
+      state.dockerGrouped = event.target.checked;
+      renderDocker();
+    }
     if (event.target.matches("#infra-docker-host-select")) {
       state.activeHostId = event.target.value;
+      state.updateSequence++;
+      state.updateChecking = false;
       state.inventory = null;
+      state.imageUpdates = {};
       loadDockerInventory(true);
     }
     if (event.target.matches("#infra-docker-state-filter")) {
       state.dockerStateFilter = event.target.value || "all";
       renderDocker();
+      if (state.dockerStateFilter === "hasupdate" && !Object.keys(state.imageUpdates).length) {
+        checkImageUpdates(false, true).catch(() => {});
+      }
     }
   });
 
@@ -891,13 +1445,15 @@
     }
     if (event.target.matches("#infra-log-filter")) {
       state.logStream.filter = event.target.value || "";
-      renderLogOutput();
+      if (state.logStream.follow && state.logStream.filter.trim()) state.logStream.paused = true;
+      rebuildLogView({ jumpToFirstMatch: true });
+      if (state.logStream.matches.length) jumpLogMatch(0);
     }
   });
 
   document.addEventListener("submit", async (event) => {
     const form = event.target;
-    if (!["infra-project-form", "infra-image-form"].includes(form.id)) return;
+    if (!["infra-project-form", "infra-image-form", "infra-update-target-form"].includes(form.id)) return;
     event.preventDefault();
     const submit = form.querySelector("[type=submit]");
     if (submit) submit.disabled = true;
@@ -911,6 +1467,9 @@
       } else if (form.id === "infra-image-form") {
         await postAction("/api/infra/images/pull", { hostId: state.activeHostId, image: data.get("image") }, "镜像拉取已进入队列。");
         closeModal(); await loadOperations();
+      } else if (form.id === "infra-update-target-form") {
+        closeModal();
+        await submitContainerUpdate(String(data.get("container") || ""), String(data.get("image") || "").trim());
       }
     } catch (error) { toast(error.message, true); }
     finally { if (submit?.isConnected) submit.disabled = false; }
@@ -920,7 +1479,17 @@
     if (event.target.id === "infra-modal") closeModal();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !$("#infra-modal")?.hidden) closeModal();
+    if (event.key === "Enter" && event.target.matches("#infra-log-filter")) {
+      event.preventDefault();
+      jumpLogMatch(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (event.key === "Escape") {
+      const menu = $(".infra-tools-menu[open]");
+      if (menu) { menu.open = false; $("summary", menu)?.focus(); }
+    }
+    if (event.key === "Escape" && $("#infra-modal .infra-log-modal.is-fullscreen") && !$("#infra-modal")?.hidden) handleLogAction("fullscreen");
+    else if (event.key === "Escape" && !$("#infra-modal")?.hidden) closeModal();
     else if (event.key === "Escape" && !$("#infra-docker-drawer-backdrop")?.hidden) closeDockerDrawers();
     if ((event.key === "Enter" || event.key === " ") && event.target.matches("[data-docker-detail-kind]:not(button)")) {
       event.preventDefault();
@@ -928,5 +1497,34 @@
     }
   });
 
+  window.addEventListener("resize", () => {
+    if (!$("#infra-modal")?.hidden && $("#infra-modal .infra-log-modal")) renderLogWindow();
+  });
+  // Read-only catalog for the command palette; never execute container actions here.
+  window.vistaDockerSearch = {
+    async rows() {
+      await loadConfig();
+      const hostId=state.activeHostId;
+      if(!hostId) return [];
+      const payload=await request(`/api/infra/docker/inventory?hostId=${encodeURIComponent(hostId)}`);
+      const inventory=payload.inventory||{};
+      if(inventory.error) throw new Error(inventory.error);
+      const projects=new Map((inventory.compose||[]).map(p=>[String(p.Name||p.name||'').toLowerCase(),p]));
+      if(hostId!=='local-docker') (state.config?.projects||[]).filter(p=>p.hostId===hostId).forEach(p=>projects.set(String(p.name||p.Name||'').toLowerCase(),p));
+      const open=async(kind,name)=>{
+        state.activeHostId=hostId;
+        await loadDockerInventory(true);
+        if(kind==='container') await openContainerDetail(name);
+        else if(kind==='project') openProjectDetail(name);
+        else { state.dockerTab='images';state.dockerQuery=name;state.dockerStateFilter='all';renderDocker(); }
+      };
+      const row=(kind,name,description)=>({kind:'docker',id:`docker:${hostId}:${kind}:${name}`,title:name,description,open:async()=>{switchView('infra-docker');await open(kind,name);}});
+      return [
+        ...(inventory.containers||[]).map(c=>row('container',containerName(c),`容器 · ${c.Image||''}`)),
+        ...[...projects.values()].map(c=>row('project',c.Name||c.name||c.id, 'Compose 项目')),
+        ...(inventory.images||[]).map(i=>row('image',i.Repository||i.Name||i.ID,`Docker 镜像 · ${i.Tag||'未标记'}`))
+      ];
+    }
+  };
   activate(activeView());
 })();

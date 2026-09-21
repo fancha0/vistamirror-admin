@@ -1,3 +1,6 @@
 pycryptodome>=3.19.0
 qrcode[pil]>=7.4.2
 paramiko>=3.4.0
+
+# 115 client download protocol (large-file STRM playback)
+p115cipher==0.0.5.1

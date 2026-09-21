@@ -1,0 +1,49 @@
+body.vistamirror-fig1-skin #connectivity-trigger { display:grid; place-items:center; flex-shrink:0; }
+#connectivity-trigger svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.7; }
+.connectivity-dialog { width:min(680px,calc(100vw - 24px)); max-height: min(800px,calc(100dvh - 32px)); padding:0; border:1px solid #dfe6f0; border-radius:var(--vm-radius-dialog); background:#fff; color:#26354a; font:var(--vm-font-14)/1.5 var(--vm-font-sans); box-shadow:0 24px 80px #14203940; }
+.connectivity-dialog[open] { display:flex; flex-direction:column; }
+.connectivity-dialog::backdrop { background:#14203966; backdrop-filter:blur(5px); }
+.connectivity-dialog header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:20px 24px; border-bottom:1px solid #e6ebf3; }
+.connectivity-dialog h2 { margin:0; font-size:20px; font-weight:600; }
+.connectivity-dialog header p { margin:4px 0 0; font-size:12px; color:#78869c; }
+.connectivity-dialog button { flex-shrink:0; min-height:38px; padding:0 12px; border:1px solid #dfe6f0; border-radius:10px; background:#f7f9fd; color:#426cb3; cursor:pointer; font:inherit; }
+.connectivity-dialog button:disabled { opacity:.5; cursor:default; }
+.connectivity-dialog button:focus-visible { outline:2px solid #6998f5; outline-offset:2px; }
+.connectivity-controls { display:flex; align-items:center; gap:12px; padding:12px 24px; }
+.connectivity-controls [data-all] { background:#3979f6; border-color:#3979f6; color:#fff; }
+.connectivity-controls span { font-size:12px; color:#78869c; }
+.connectivity-list { overflow-y:auto; min-height:0; padding:0 24px; overscroll-behavior:contain; }
+.connectivity-row { display:flex; align-items:center; gap:14px; padding:14px 0; border-bottom:1px solid #edf0f5; min-height:76px; }
+.connectivity-icon { width:40px; height:40px; flex-shrink:0; border-radius:50%; display:grid; place-items:center; background:#eef1ff; color:#6653c4; font-size:12px; font-weight:600; }
+.connectivity-copy { min-width:0; flex:1; }
+.connectivity-copy strong,.connectivity-copy>span,.connectivity-copy small { display:block; overflow-wrap:anywhere; }
+.connectivity-copy strong { font-weight:600; }
+.connectivity-copy>span { color:#64748b; font-size:12px; }
+.connectivity-copy small { margin-top:3px; color:#78869c; font-size:12px; }
+.connectivity-copy i { display:inline-block; width:7px; height:7px; border-radius:50%; background:#98a3b4; margin-right:6px; }
+[data-status=connected] .connectivity-copy i { background:#1fa875; }
+:is([data-status=error],[data-status=timeout],[data-status=auth_error]) .connectivity-copy i { background:#e35a6c; }
+:is([data-status=testing],[data-status=http_error],[data-status=busy]) .connectivity-copy i { background:#e5a333; }
+.connectivity-row button { width:36px; padding:0; font-size:20px; border-radius:50%; color:#7056e9; background:#f0edff; border-color:transparent; }
+.connectivity-dialog summary { padding:14px 0; cursor:pointer; color:#64748b; }
+.connectivity-dialog footer { display:flex; align-items:center; justify-content:space-between; gap:10px; border-top:1px solid #e6ebf3; padding:14px 24px; }
+.connectivity-dialog footer span { color:#78869c; font-size:12px; }
+@media(max-width:640px) {
+ .connectivity-dialog header,.connectivity-dialog footer { padding:16px; }
+ .connectivity-list { padding:0 16px; }
+ .connectivity-controls { padding:12px 16px; }
+ .connectivity-row { gap:10px; }
+ .connectivity-icon { width:32px; height:32px; font-size:10px; }
+ .connectivity-dialog button { min-height:44px; }
+ .connectivity-row button { width:40px; }
+ body.vistamirror-fig1-skin .frozen-navbar .frozen-navbar-actions { gap:6px; }
+ .navbar-mobile-brand { font-size:14px; }
+}
+
+.connectivity-icon { background:transparent; overflow:hidden; }
+.connectivity-icon img { display:block; width:100%; height:100%; object-fit:contain; }
+.connectivity-row[data-status=testing] [data-probe] { animation:connectivity-spin 1.2s linear infinite; }
+@keyframes connectivity-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .connectivity-row[data-status=testing] [data-probe] { animation:none; } }
+
+body.vistamirror-fig1-skin .connectivity-copy .connectivity-config-link { width:auto;min-height:32px;padding:0 4px;border:0;border-radius:4px;background:transparent;font-size:12px; }

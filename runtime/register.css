@@ -1,3 +1,4 @@
+@import url("ui-tokens.css?v=20260915-ui-1");
 :root {
   --primary: #722ed1;
   --primary-strong: #5b21b6;
@@ -30,7 +31,7 @@ body {
 
 body {
   margin: 0;
-  font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--vm-font-sans);
   color: var(--text);
   background:
     radial-gradient(circle at 12% 8%, rgba(114, 46, 209, 0.16) 0, transparent 42%),
@@ -80,14 +81,14 @@ body {
 .brand-tag {
   margin: 0 0 6px;
   color: #7f739f;
-  font-size: 12px;
+  font-size: var(--vm-font-12);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .register-header h1 {
   margin: 0;
-  font-size: 32px;
+  font-size: var(--vm-font-28);
   line-height: 1.2;
   font-weight: 800;
   letter-spacing: 0.01em;
@@ -96,7 +97,7 @@ body {
 .register-header p {
   margin: 6px 0 0;
   color: var(--muted);
-  font-size: 16px;
+  font-size: var(--vm-font-16);
   line-height: 1.6;
 }
 
@@ -105,7 +106,7 @@ body {
   border-radius: 16px;
   padding: 12px 14px;
   border: 1px solid transparent;
-  font-size: 14px;
+  font-size: var(--vm-font-14);
   line-height: 1.5;
 }
 
@@ -154,14 +155,14 @@ body {
 .meta-item span {
   display: block;
   color: #7a7198;
-  font-size: 13px;
+  font-size: var(--vm-font-12);
   line-height: 1.4;
 }
 
 .meta-item strong {
   display: block;
   margin-top: 8px;
-  font-size: 20px;
+  font-size: var(--vm-font-20);
   line-height: 1.3;
   font-weight: 800;
   color: #2a1f4a;
@@ -180,7 +181,7 @@ body {
   background: var(--primary-soft);
   border: 1px solid #d9c8fa;
   color: var(--primary);
-  font-size: 14px;
+  font-size: var(--vm-font-14);
 }
 
 .register-form {
@@ -196,7 +197,7 @@ body {
 
 .register-form span {
   color: #4d4370;
-  font-size: 14px;
+  font-size: var(--vm-font-14);
   line-height: 1.4;
   font-weight: 600;
 }
@@ -210,7 +211,7 @@ body {
   background: #fff;
   color: var(--text);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
   outline: none;
   transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
@@ -236,7 +237,7 @@ body {
   border-radius: 18px;
   padding: 0 16px;
   font: inherit;
-  font-size: 18px;
+  font-size: var(--vm-font-16);
   font-weight: 700;
   color: #fff;
   background: linear-gradient(135deg, #8a4dff, #722ed1);
@@ -282,7 +283,7 @@ body {
 .server-hint-kicker {
   display: block;
   color: var(--primary);
-  font-size: 12px;
+  font-size: var(--vm-font-12);
   line-height: 1.3;
   font-weight: 800;
 }
@@ -290,7 +291,7 @@ body {
 .server-hint-card h2 {
   margin: 4px 0 0;
   color: #241a45;
-  font-size: 20px;
+  font-size: var(--vm-font-20);
   line-height: 1.35;
 }
 
@@ -311,7 +312,7 @@ body {
 .server-hint-grid span {
   display: block;
   color: #7a7198;
-  font-size: 12px;
+  font-size: var(--vm-font-12);
   line-height: 1.3;
   font-weight: 700;
 }
@@ -320,7 +321,7 @@ body {
   display: block;
   margin-top: 6px;
   color: #2a1f4a;
-  font-size: 18px;
+  font-size: var(--vm-font-16);
   line-height: 1.3;
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -333,7 +334,7 @@ body {
   background: #f6f3fc;
   border: 1px solid #e6dcfa;
   color: #5c527a;
-  font-size: 14px;
+  font-size: var(--vm-font-14);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -351,7 +352,7 @@ body {
   background: #fff;
   color: var(--primary);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
   font-weight: 800;
   cursor: pointer;
   transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
@@ -374,11 +375,11 @@ body {
   }
 
   .register-header h1 {
-    font-size: 27px;
+    font-size: var(--vm-font-28);
   }
 
   .register-header p {
-    font-size: 14px;
+    font-size: var(--vm-font-14);
   }
 
   .meta-grid {
@@ -386,11 +387,11 @@ body {
   }
 
   .meta-item strong {
-    font-size: 18px;
+    font-size: var(--vm-font-16);
   }
 
   .submit-button {
-    font-size: 16px;
+    font-size: var(--vm-font-16);
   }
 
   .server-hint-grid,
@@ -413,7 +414,7 @@ body {
 }
 
 .welcome-mark {
-  font-size: 24px;
+  font-size: var(--vm-font-24);
   line-height: 1;
 }
 
@@ -431,7 +432,7 @@ body {
 
 @media (max-width: 768px) {
   .welcome-mark {
-    font-size: 22px;
+    font-size: var(--vm-font-20);
   }
 }
 
@@ -446,7 +447,7 @@ body {
   order: 2;
   margin-top: 5px;
   color: #1f2937;
-  font-size: 12px;
+  font-size: var(--vm-font-12);
   font-weight: 800;
 }
 
@@ -454,7 +455,7 @@ body {
   order: 1;
   margin-top: 0;
   color: #111827;
-  font-size: 13px;
+  font-size: var(--vm-font-12);
   font-weight: 900;
 }
 
@@ -462,7 +463,7 @@ body {
   order: 2;
   min-height: 20px;
   margin-top: 5px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
   font-weight: 800;
 }
 
@@ -483,31 +484,31 @@ body {
   }
 
   .brand-tag {
-    font-size: 11px;
+    font-size: var(--vm-font-12);
     margin-bottom: 4px;
   }
 
   .register-header h1 {
-    font-size: 23px;
+    font-size: var(--vm-font-24);
   }
 
   .register-header p {
-    font-size: 13px;
+    font-size: var(--vm-font-12);
   }
 
   .message,
   .register-form span {
-    font-size: 13px;
+    font-size: var(--vm-font-12);
   }
 
   .register-form input {
     min-height: 46px;
-    font-size: 14px;
+    font-size: var(--vm-font-14);
   }
 
   .submit-button {
     min-height: 48px;
-    font-size: 15px;
+    font-size: var(--vm-font-14);
   }
 }
 
@@ -560,13 +561,13 @@ body {
 
 .register-header p {
   color: #6b7280;
-  font-size: 20px;
+  font-size: var(--vm-font-20);
   font-weight: 700;
 }
 
 .message {
   border-radius: 14px;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
 }
 
 .meta-section {
@@ -588,12 +589,12 @@ body {
 
 .meta-item span {
   color: #6b7280;
-  font-size: 12px;
+  font-size: var(--vm-font-12);
 }
 
 .meta-item strong {
   color: #1f2937;
-  font-size: 16px;
+  font-size: var(--vm-font-16);
 }
 
 #invite-status-view {
@@ -601,7 +602,7 @@ body {
   background: #eef2ff;
   border-color: #d9ddff;
   color: #4f46e5;
-  font-size: 13px;
+  font-size: var(--vm-font-12);
 }
 
 .register-form {
@@ -615,7 +616,7 @@ body {
 
 .register-form span {
   color: #374151;
-  font-size: 22px;
+  font-size: var(--vm-font-20);
   font-weight: 800;
 }
 
@@ -624,7 +625,7 @@ body {
   border: 2px solid #d1d5db;
   border-radius: 14px;
   color: #111827;
-  font-size: 21px;
+  font-size: var(--vm-font-20);
   font-weight: 700;
   padding: 0 24px;
 }
@@ -638,7 +639,7 @@ body {
   border-radius: 14px;
   background: #4f46e5;
   box-shadow: 0 12px 22px rgba(79, 70, 229, 0.25);
-  font-size: 26px;
+  font-size: var(--vm-font-24);
   font-weight: 900;
 }
 
@@ -678,7 +679,7 @@ body {
 .success-subtitle {
   margin: -6px 0 6px;
   color: #6b7280;
-  font-size: 24px;
+  font-size: var(--vm-font-24);
   line-height: 1.45;
   font-weight: 800;
 }
@@ -706,7 +707,7 @@ body {
   display: block;
   margin: 0 0 10px;
   color: #6b7280;
-  font-size: 23px;
+  font-size: var(--vm-font-24);
   line-height: 1.25;
   font-weight: 900;
 }
@@ -727,7 +728,7 @@ body {
   min-width: 0;
   padding: 0 18px;
   color: #1f2937;
-  font-size: 28px;
+  font-size: var(--vm-font-28);
   line-height: 1.1;
   font-weight: 900;
   overflow-wrap: anywhere;
@@ -744,7 +745,7 @@ body {
   background: #f3f4f6;
   color: #9ca3af;
   font: inherit;
-  font-size: 24px;
+  font-size: var(--vm-font-24);
   cursor: pointer;
 }
 
@@ -803,7 +804,7 @@ body {
 .success-node-main strong {
   display: block;
   color: #111827;
-  font-size: 23px;
+  font-size: var(--vm-font-24);
   line-height: 1.2;
   font-weight: 900;
 }
@@ -812,7 +813,7 @@ body {
   display: block;
   margin-top: 4px;
   color: #6b7280;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
@@ -824,7 +825,7 @@ body {
   background: #e0e7ff;
   color: #4f46e5;
   font-style: normal;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
   line-height: 1;
   font-weight: 900;
 }
@@ -852,12 +853,12 @@ body {
   border-radius: 50%;
   background: #3b82f6;
   color: #fff;
-  font-size: 24px;
+  font-size: var(--vm-font-24);
   font-weight: 900;
 }
 
 .success-tip strong {
-  font-size: 24px;
+  font-size: var(--vm-font-24);
   line-height: 1.3;
   font-weight: 900;
 }
@@ -866,7 +867,7 @@ body {
   min-height: 22px;
   margin: -4px 0 0;
   color: #2563eb;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
   line-height: 1.4;
   font-weight: 700;
 }
@@ -880,7 +881,7 @@ body {
   color: #fff;
   box-shadow: 0 10px 18px rgba(15, 23, 42, 0.24);
   font: inherit;
-  font-size: 28px;
+  font-size: var(--vm-font-28);
   line-height: 1.2;
   font-weight: 900;
   cursor: pointer;
@@ -899,12 +900,12 @@ body {
 
   .register-header h1,
   .success-view h2 {
-    font-size: 34px;
+    font-size: var(--vm-font-36);
   }
 
   .register-header p,
   .success-subtitle {
-    font-size: 18px;
+    font-size: var(--vm-font-16);
   }
 
   .meta-grid,
@@ -915,13 +916,13 @@ body {
   .register-form span,
   .success-credential > span,
   .success-node-section h3 {
-    font-size: 18px;
+    font-size: var(--vm-font-16);
   }
 
   .register-form input,
   .submit-button {
     min-height: 58px;
-    font-size: 19px;
+    font-size: var(--vm-font-20);
   }
 
   .success-check {
@@ -936,7 +937,7 @@ body {
   }
 
   .success-copy-row strong {
-    font-size: 22px;
+    font-size: var(--vm-font-20);
   }
 
   .success-node-card {
@@ -949,16 +950,16 @@ body {
 
   .success-node-main strong,
   .success-tip strong {
-    font-size: 19px;
+    font-size: var(--vm-font-20);
   }
 
   .success-node-main em {
-    font-size: 13px;
+    font-size: var(--vm-font-12);
   }
 
   .success-open-button {
     min-height: 66px;
-    font-size: 22px;
+    font-size: var(--vm-font-20);
   }
 }
 
@@ -975,12 +976,12 @@ body {
 
 .success-view h2 {
   margin-top: 2px;
-  font-size: 30px;
+  font-size: var(--vm-font-28);
 }
 
 .success-subtitle {
   margin: -2px 0 2px;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
   font-weight: 800;
 }
 
@@ -997,7 +998,7 @@ body {
 .success-credential > span,
 .success-node-section h3 {
   margin-bottom: 7px;
-  font-size: 15px;
+  font-size: var(--vm-font-14);
 }
 
 .success-copy-row {
@@ -1009,7 +1010,7 @@ body {
 
 .success-copy-row strong {
   padding: 0 12px;
-  font-size: 17px;
+  font-size: var(--vm-font-16);
 }
 
 .success-copy-row button,
@@ -1017,7 +1018,7 @@ body {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  font-size: 17px;
+  font-size: var(--vm-font-16);
 }
 
 .success-divider {
@@ -1048,18 +1049,18 @@ body {
 }
 
 .success-node-main strong {
-  font-size: 15px;
+  font-size: var(--vm-font-14);
 }
 
 .success-node-main span {
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
 }
 
 .success-node-main em {
   border-radius: 6px;
   padding: 5px 7px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
 }
 
 .success-tip {
@@ -1073,23 +1074,23 @@ body {
 .success-tip span {
   width: 24px;
   height: 24px;
-  font-size: 16px;
+  font-size: var(--vm-font-16);
 }
 
 .success-tip strong {
-  font-size: 15px;
+  font-size: var(--vm-font-14);
 }
 
 .success-feedback {
   min-height: 16px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
 }
 
 .success-open-button {
   min-height: 48px;
   border-radius: 11px;
   box-shadow: 0 8px 14px rgba(15, 23, 42, 0.18);
-  font-size: 18px;
+  font-size: var(--vm-font-16);
 }
 
 @media (min-width: 769px) {
@@ -1108,15 +1109,15 @@ body {
   .success-view .success-check {
     width: 62px;
     height: 62px;
-    font-size: 32px;
+    font-size: var(--vm-font-28);
   }
 
   .success-view h2 {
-    font-size: 25px;
+    font-size: var(--vm-font-24);
   }
 
   .success-subtitle {
-    font-size: 13px;
+    font-size: var(--vm-font-12);
   }
 
   .success-account-card {
@@ -1126,12 +1127,12 @@ body {
   .success-copy-row strong,
   .success-node-main strong,
   .success-tip strong {
-    font-size: 14px;
+    font-size: var(--vm-font-14);
   }
 
   .success-open-button {
     min-height: 44px;
-    font-size: 16px;
+    font-size: var(--vm-font-16);
   }
 }
 
@@ -1162,23 +1163,23 @@ body {
 
 .brand-tag {
   margin-bottom: 2px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
 }
 
 .register-header h1 {
-  font-size: 28px;
+  font-size: var(--vm-font-28);
 }
 
 .register-header p {
   margin-top: 3px;
-  font-size: 14px;
+  font-size: var(--vm-font-14);
 }
 
 .message {
   margin-top: 12px;
   border-radius: 10px;
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
 }
 
 .meta-section {
@@ -1195,18 +1196,18 @@ body {
 }
 
 .meta-item span {
-  font-size: 10px;
+  font-size: var(--vm-font-12);
 }
 
 .meta-item strong {
   margin-top: 5px;
-  font-size: 13px;
+  font-size: var(--vm-font-12);
 }
 
 #invite-status-view {
   min-height: 22px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: var(--vm-font-12);
 }
 
 .register-form {
@@ -1219,7 +1220,7 @@ body {
 }
 
 .register-form span {
-  font-size: 15px;
+  font-size: var(--vm-font-14);
 }
 
 .register-form input {
@@ -1227,13 +1228,13 @@ body {
   border-width: 1px;
   border-radius: 10px;
   padding: 0 14px;
-  font-size: 14px;
+  font-size: var(--vm-font-14);
 }
 
 .submit-button {
   min-height: 46px;
   border-radius: 10px;
-  font-size: 18px;
+  font-size: var(--vm-font-16);
 }
 
 @media (min-width: 769px) {
@@ -1250,11 +1251,11 @@ body {
   }
 
   .register-header h1 {
-    font-size: 24px;
+    font-size: var(--vm-font-24);
   }
 
   .register-header p {
-    font-size: 13px;
+    font-size: var(--vm-font-12);
   }
 
   .meta-grid {
@@ -1262,12 +1263,12 @@ body {
   }
 
   .register-form span {
-    font-size: 14px;
+    font-size: var(--vm-font-14);
   }
 
   .register-form input,
   .submit-button {
     min-height: 42px;
-    font-size: 14px;
+    font-size: var(--vm-font-14);
   }
 }

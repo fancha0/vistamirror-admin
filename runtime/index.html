@@ -8,11 +8,18 @@
   <link rel="icon" type="image/svg+xml" href="/assets/branding/favicon.svg?v=20260625-vm-brand">
   <link rel="apple-touch-icon" href="/assets/branding/apple-touch-icon.png?v=20260625-vm-brand">
   <link rel="manifest" href="/manifest.webmanifest?v=20260625-vm-brand">
-  <link rel="stylesheet" href="styles.css?v=20260819-ios-glass-1">
-  <link rel="stylesheet" href="infra.css?v=20260824-docker-cards-3">
-  <link rel="stylesheet" href="auth.css?v=20260828-featured-2">
+  <link rel="stylesheet" href="styles.css?v=20260915-ui-1">
+  <link rel="stylesheet" href="infra.css?v=20260915-ui-1">
+  <link rel="stylesheet" href="auth.css?v=20260915-ui-1">
+  <link rel="stylesheet" href="dashboard.css?v=20260917-header-clean-1">
+  <link rel="stylesheet" href="ui-system.css?v=20260916-global-search-1">
   <script src="login-backdrop.js?v=20260828-featured-2" defer></script>
   <script src="/brand-theme.js?v=20260625-vm-brand"></script>
+  <link rel="stylesheet" href="connectivity.css?v=20260916-services-1">
+  <link rel="stylesheet" href="service-settings.css?v=20260916-flat-2">
+  <link rel="stylesheet" href="missing.css?v=20260918-dialog-1">
+  <link rel="stylesheet" href="quality.css?v=20260919-compact-2">
+  <link rel="stylesheet" href="strm-playback.css?v=20260921-logs-4">
 </head>
 <body class="auth-pending">
   <section id="admin-auth-loading" class="admin-auth-loading" aria-live="polite">
@@ -74,11 +81,7 @@
         </div>
       </div>
 
-      <label id="global-search-trigger" class="sidebar-search" role="button" tabindex="0" aria-label="打开全局搜索">
-        <span class="sidebar-search-icon">⌕</span>
-        <input id="sidebar-global-search" type="text" placeholder="全局搜索..." aria-label="全局搜索" readonly>
-        <em>Cmd+K</em>
-      </label>
+
 
       <nav class="nav">
         <p class="nav-group-title">总览</p>
@@ -101,6 +104,7 @@
         <p class="nav-group-title">自动化与配置</p>
         <button class="nav-item" data-view="bot-assistant" type="button"><span class="nav-icon">🔔</span>通知配置</button>
         <button class="nav-item" data-view="media-config" type="button"><span class="nav-icon">🗃️</span>媒体库配置</button>
+        <button class="nav-item" data-view="network-services" type="button"><span class="nav-icon">🌐</span>网络与服务</button>
         <button class="nav-item" data-view="ai-config" type="button"><span class="nav-icon">🤖</span>AI 配置</button>
         <button class="nav-item" data-view="task-center" type="button"><span class="nav-icon">⚡</span>任务中心</button>
         <button class="nav-item" data-view="workshop" type="button"><span class="nav-icon">🪄</span>封面工坊</button>
@@ -122,7 +126,13 @@
           aria-label="隐藏侧边栏"
           title="隐藏侧边栏"
         >‹</button>
+        <span class="navbar-mobile-brand" aria-label="VistaMirror">VistaMirror</span>
         <div class="frozen-navbar-actions">
+          <button id="global-search-trigger" class="navbar-search" type="button" aria-label="打开全局搜索" aria-haspopup="dialog" aria-controls="global-search-modal" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5" stroke-linecap="round"/></svg>
+            <span>搜索功能、影视、容器…</span><kbd id="global-search-shortcut">⌘K</kbd>
+          </button>
+          <button id="connectivity-trigger" class="nav-icon-btn" type="button" aria-label="网络连通性检测" title="网络连通性检测" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5M6 10h3l2-4 3 7 2-3h2"/></svg></button>
           <button id="quick-log-btn" class="nav-icon-btn" type="button" aria-label="通知">🌐</button>
           <div class="profile-menu">
             <button
@@ -295,52 +305,24 @@
               <div class="quality-overview-icon" aria-hidden="true">◈</div>
               <div>
                 <div class="quality-title-row">
-                  <h3>全景质量盘点</h3>
+                  <h3>质量盘点</h3>
                 </div>
-                <p class="quality-subtitle">上次扫库时间：<strong id="quality-last-scan-time">未执行重扫</strong></p>
                 <p id="user-action-feedback" class="quality-feedback quality-scan-feedback"></p>
                 <span id="detail-name" class="quality-hidden-meta" aria-hidden="true">未选择用户</span>
               </div>
             </div>
             <div class="quality-overview-actions">
+              <p class="quality-subtitle">上次扫描：<strong id="quality-last-scan-time">未执行重扫</strong></p>
               <button id="quality-rescan-btn" class="primary-btn quality-primary-btn" type="button">重扫媒体库</button>
             </div>
           </section>
 
-          <div class="quality-analysis-grid">
-            <section class="quality-card quality-matrix-card quality-resolution-card">
-              <div class="quality-section-head">
-                <span class="quality-section-icon" aria-hidden="true">◈</span>
-                <div>
-                  <h3>分辨率矩阵</h3>
-                  <p id="quality-resolution-total" class="quality-section-subtitle">等待媒体库扫描</p>
-                </div>
-              </div>
-              <div id="quality-resolution-bars" class="quality-resolution-bars">
-                <div class="quality-resolution-skeleton">正在统计媒体分辨率...</div>
-              </div>
-              <div class="quality-legacy-user-metrics" hidden>
-                <span id="detail-last-login">-</span>
-                <span id="detail-last-activity">-</span>
-                <span id="detail-device-count">0</span>
-                <span id="quality-risk-value">待查看</span>
-              </div>
-            </section>
-
-            <section class="quality-card quality-dynamic-card quality-resolution-focus-card">
-              <div class="quality-section-head">
-                <span class="quality-section-icon purple" aria-hidden="true">◉</span>
-                <div>
-                  <h3 id="quality-resolution-focus-title">质量风险摘要</h3>
-                  <p id="quality-resolution-focus-subtitle" class="quality-section-subtitle">点击左侧分辨率查看详情</p>
-                </div>
-              </div>
-              <div id="quality-resolution-focus-body" class="quality-resolution-focus-body">
-                <div class="quality-resolution-focus-empty">正在准备风险摘要与筛选控制台...</div>
-              </div>
-            </section>
-          </div>
-
+          <section class="quality-card quality-summary">
+            <p id="quality-resolution-total" class="quality-section-subtitle">等待媒体库扫描</p>
+            <div id="quality-resolution-bars" class="quality-resolution-bars"></div>
+            <p class="qa-hint">分辨率仅作为检查线索；信息未知不代表低质量。</p>
+            <div hidden><span id="detail-last-login"></span><span id="detail-last-activity"></span><span id="detail-device-count"></span><span id="quality-risk-value"></span></div>
+          </section>
           <section class="quality-card quality-resolution-detail-card quality-resolution-detail-standalone">
               <div class="quality-section-head">
                 <span class="quality-section-icon purple" aria-hidden="true">◉</span>
@@ -349,6 +331,7 @@
                   <p id="quality-resolution-detail-subtitle" class="quality-section-subtitle">点击左侧分辨率查看影片明细</p>
                 </div>
               </div>
+              <div id="quality-resolution-focus-body"></div>
               <div id="quality-resolution-detail-list" class="quality-resolution-detail-list">
                 <div class="quality-resolution-empty">等待分辨率数据</div>
               </div>
@@ -548,23 +531,14 @@
       <section id="view-missing" class="view-section">
         <div class="dashboard-grid logs-grid">
           <section class="panel">
-            <div class="panel-head compact playback-head playback-head-swap">
-              <div class="toolbar missing-toolbar">
+            <div class="missing-page-head">
+              <div><h3>缺集巡检</h3><p>核对本地库存与 TMDB 已播出单集，集中处理缺失与待复核作品。</p></div>
+              <div class="missing-actions">
+                <button id="missing-refresh-results" class="ghost-btn" type="button">刷新结果</button>
+                <button id="missing-force-refresh-btn" class="ghost-btn" type="button" title="跳过 TMDB 缓存重新巡检，耗时较长">强制刷新资料</button>
                 <button id="missing-scan-btn" class="primary-btn" type="button">立即巡检</button>
-                <label class="field">
-                  <select id="missing-status">
-                    <option value="all">全部状态</option>
-                    <option value="missing">缺失中</option>
-                    <option value="review">需确认</option>
-                    <option value="match_failed">匹配失败</option>
-                  </select>
-                </label>
-                <div class="search-box">
-                  <input id="missing-search" type="search" placeholder="搜索剧名 / 集号 / TMDB ID...">
-                </div>
               </div>
             </div>
-
             <div class="stats-grid missing-stats-grid">
               <article class="stat-card">
                 <p>扫描剧集数</p>
@@ -584,8 +558,20 @@
               </article>
             </div>
 
-            <p id="missing-feedback" class="action-feedback">点击“立即巡检”核对 Emby 已入库季中已播出的单集，未来或未定档集不会计入缺失。</p>
-
+            <div class="missing-run-status">
+              <p id="missing-feedback" role="status" aria-live="polite"></p>
+              <progress id="missing-progress" max="100" hidden aria-label="巡检进度"></progress>
+              <span id="missing-cache-info"></span>
+              <details id="missing-warnings" hidden><summary>巡检警告</summary><ul></ul></details>
+            </div>
+            <div class="missing-filterbar">
+              <input id="missing-search" type="search" aria-label="搜索缺集结果" placeholder="搜索剧名、集号或 TMDB ID…">
+              <select id="missing-status" aria-label="结果状态">
+                <option value="all">全部待处理</option><option value="missing">确认缺失</option>
+                <option value="review">需要复核</option><option value="match_failed">身份未确认</option>
+              </select>
+              <span id="missing-result-count"></span>
+            </div>
             <div id="missing-list" class="missing-card-list" aria-live="polite"></div>
           </section>
         </div>
@@ -1217,15 +1203,33 @@
       <section id="view-strm-115" class="view-section">
         <div class="strm115-page-shell">
           <header class="strm115-page-head">
-            <div><p>资源获取 / STRM 直连</p><h3>STRM 直连控制台</h3><span>将 115 视频目录安全映射为 Emby 可播放的 STRM 媒体库。</span></div>
-            <div class="strm115-page-tags" aria-label="STRM 工作流"><span>115 云盘</span><span>安全增量</span><span>Emby 刷库</span></div>
+            <div><p><i aria-hidden="true"></i> VISTAMIRROR / STREAM ENGINE</p><h3>STRM <span>直连工作台</span></h3><span>云端影片，本地片库。让每一次播放直达内容。</span></div>
+            <div class="strm115-head-actions"><span id="strm115-engine-badge" class="strm115-engine-badge">等待配置</span><div class="strm115-commandbar"><button id="strm115-save-btn" type="button">保存配置</button><button id="strm115-sync-btn" class="is-primary" type="button">执行默认同步</button></div></div>
           </header>
+          <section class="strm115-overview" aria-label="播放流程与同步概况">
+            <div class="strm115-pipeline" aria-label="播放流程示意，不代表连接状态">
+              <div class="strm115-pipeline-title"><span>PLAYBACK ROUTE</span><small>播放流程</small></div>
+              <div class="strm115-route">
+                <div class="strm115-route-node"><span class="strm115-node-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 18h12a4 4 0 0 0 .3-8A6.5 6.5 0 0 0 6 9a4.5 4.5 0 0 0 0 9Z"/></svg></span><div><strong>115 云盘</strong><small>原始视频</small></div></div>
+                <span class="strm115-route-arrow" aria-hidden="true">→</span>
+                <div class="strm115-route-node is-core"><span class="strm115-node-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-8 12h6l-1 8 9-13h-7z"/></svg></span><div><strong>STRM</strong><small>签名直连</small></div></div>
+                <span class="strm115-route-arrow" aria-hidden="true">→</span>
+                <div class="strm115-route-node"><span class="strm115-node-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="3"/><path d="m10 8 5 3-5 3zM8 21h8m-4-4v4"/></svg></span><div><strong>Emby</strong><small>媒体库播放</small></div></div>
+              </div>
+            </div>
+            <div class="strm115-metrics">
+              <div><span>已索引视频</span><strong id="strm115-metric-files">—</strong><small>媒体索引</small></div>
+              <div><span>剩余目录</span><strong id="strm115-metric-pending">—</strong><small>本轮同步</small></div>
+              <div><span>待清理文件</span><strong id="strm115-metric-orphans">—</strong><small>预览后确认清理</small></div>
+              <div class="strm115-metric-time"><span>最近完整同步</span><strong id="strm115-metric-time">—</strong><small id="strm115-metric-date">尚无同步记录</small></div>
+            </div>
+          </section>
           <div class="strm115-workbench-grid">
           <section class="strm115-console" aria-labelledby="strm115-console-title">
             <div class="strm115-console-head">
               <div>
-                <p>连接与输出</p>
-                <h4 id="strm115-console-title">同步配置</h4>
+                <p>CONFIGURATION</p>
+                <h4 id="strm115-console-title">连接与生成</h4>
                 <span>扫描网盘目录，生成由 VistaMirror 签名的稳定 STRM 文件。</span>
               </div>
               <label class="strm115-switch" title="启用 115 STRM">
@@ -1233,18 +1237,26 @@
                 <span>启用服务</span>
               </label>
             </div>
-            <section class="strm115-config-section" aria-label="基础连接">
-              <div class="strm115-section-title"><span>基础连接</span><small>路径和播放地址只在服务器端保存</small></div>
+            <section class="strm115-config-section" aria-label="播放配置">
+              <div class="strm115-section-title"><span><b>01</b> 播放地址</span><small>Emby 可访问的直连入口</small></div>
+              <div class="strm115-fields">
+              <label class="strm115-field-wide"><span>STRM 播放外部地址</span><input id="strm115-public-base-url" type="url" placeholder="例如 https://strm.example.com（反代到 8099）"></label>
+              <label><span>链接格式</span><select id="strm115-link-format"><option value="short_named">短地址 + 原始文件名（推荐）</option><option value="signed">旧版签名链接</option><option value="named">旧版签名链接 + 文件名</option></select></label>
+              <label><span>已有文件</span><input value="智能更新：内容相同跳过，地址变更更新" readonly></label>
+              <label class="strm115-field-wide"><span>链接示例（非播放地址）</span><input id="strm115-url-example" readonly></label>
+              </div>
+            </section>
+            <section class="strm115-config-section" aria-label="文件生成">
+              <div class="strm115-section-title"><span><b>02</b> 文件生成</span><small>输出目录填写容器内路径</small></div>
               <div class="strm115-fields">
               <label><span>115 源目录 CID</span><input id="strm115-source-cid" type="text" placeholder="例如 123456789"></label>
-              <label><span>STRM 输出目录</span><input id="strm115-output-dir" type="text" placeholder="例如 /media/strm/115"></label>
-              <label class="strm115-field-wide"><span>STRM 播放外部地址</span><input id="strm115-public-base-url" type="url" placeholder="例如 https://strm.example.com（反代到 8099）"></label>
+              <label><span>STRM 输出目录</span><input id="strm115-output-dir" type="text" placeholder="例如 /测试/strm115（容器内路径）"></label>
               <label><span>Emby 媒体库 ID（可选）</span><input id="strm115-emby-library-id" type="text" placeholder="留空刷新全部媒体库"></label>
               <label><span>默认同步策略</span><select id="strm115-sync-mode"><option value="safe_incremental">安全增量（推荐）</option><option value="full">受控全量</option></select></label>
               </div>
             </section>
-            <section class="strm115-config-section strm115-config-section-advanced" aria-label="同步策略">
-              <div class="strm115-section-title"><span>同步策略</span><small>按批处理，避免占满网盘和 Emby 资源</small></div>
+            <details class="strm115-config-section strm115-config-section-advanced">
+              <summary class="strm115-section-title"><span><b>03</b> 同步策略</span><small>频率、缓存与定时任务 <i aria-hidden="true">＋</i></small></summary>
               <div class="strm115-fields strm115-fields-compact">
               <label><span>请求间隔（毫秒）</span><input id="strm115-request-interval" type="number" min="300" max="10000" step="100"></label>
               <label><span>每批目录页数</span><input id="strm115-max-pages" type="number" min="1" max="500"></label>
@@ -1252,15 +1264,23 @@
               <label class="strm115-switch-field"><span>定时安全增量</span><input id="strm115-schedule-enabled" type="checkbox"><em>后台分批继续，不扫完不强行重头开始</em></label>
               <label><span>定时间隔（小时）</span><input id="strm115-schedule-interval" type="number" min="1" max="168"></label>
               </div>
-            </section>
+            </details>
+            <div class="strm115-config-note"><span aria-hidden="true">↗</span> 修改后先保存，再执行同步或播放测试。</div>
           </section>
           <aside class="strm115-operations" aria-label="STRM 操作与状态">
+            <section class="strm115-operation-card strm115-playback-test">
+              <div class="strm115-test-heading"><span class="strm115-test-symbol" aria-hidden="true">▶</span><div><p>PLAYBACK LAB</p><h4>播放链路测试</h4></div><span class="strm115-test-limit">1 KiB</span></div><p class="strm115-test-description">从已同步的视频中选择一部，验证直链解析与数据读取。</p>
+              <label for="strm115-test-file">已同步视频（最多 50 项）</label>
+              <select id="strm115-test-file"><option value="">请先同步视频</option></select>
+              <div class="strm115-commandbar"><button id="strm115-playback-test" class="is-primary" type="button">测试播放链路</button><button id="strm115-reload-samples" type="button">刷新视频列表</button></div>
+              <p id="strm115-test-result" role="status">先保存配置，再测试。服务器读取成功后，仍需在 Emby 验证起播和拖动。</p>
+              <a id="strm115-test-link" hidden target="_blank" rel="noopener noreferrer">打开签名播放地址 ↗</a>
+            </section>
             <section class="strm115-operation-card">
-              <div class="strm115-section-title"><span>快捷操作</span><small>写入操作按当前配置直接执行</small></div>
+              <div class="strm115-section-title"><span>同步与维护</span><small>使用已保存配置</small></div>
             <div class="strm115-commandbar">
-              <button id="strm115-save-btn" type="button">保存配置</button>
+              <button id="strm115-rewrite-links-btn" type="button">更新已生成 STRM</button>
               <button id="strm115-preview-btn" type="button">快速校验</button>
-              <button id="strm115-sync-btn" class="is-primary" type="button">执行默认同步</button>
               <button id="strm115-full-sync-btn" type="button">开始受控全量</button>
               <button id="strm115-cleanup-preview-btn" type="button">清理预览</button>
               <button id="strm115-cleanup-confirm-btn" type="button" disabled>确认清理 0 项</button>
@@ -1268,14 +1288,15 @@
               <button id="strm115-log-btn" type="button">运行日志</button>
             </div>
             </section>
+            <p id="strm115-rewrite-result" class="strm115-footnote" role="status">切换链接格式后先保存，再点击“更新已生成 STRM”，最后提交 Emby 刷库。无需重扫网盘。</p>
             <section class="strm115-operation-card strm115-runtime-card">
-              <div class="strm115-section-title"><span>运行状态</span><small>最近一次同步及待处理信息</small></div>
+              <div class="strm115-section-title"><span>同步回执</span><small>最近一次记录</small></div>
             <div class="strm115-monitor">
               <div id="strm115-status" class="strm115-status">等待配置。</div>
               <div class="strm115-log-teaser">同步预览、生成结果与每次播放跳转均会记录。点击“运行日志”查看最近记录。</div>
             </div>
             </section>
-            <p class="strm115-footnote">生成的链接使用专用播放端 `/d/`（容器内默认 8099），支持 Emby 的 GET/HEAD 探测；外部地址应反代到此端口。安全增量每次只处理一批目录页并保存断点。</p>
+            <p class="strm115-footnote">播放入口 <code>/d/</code> · 容器端口 <code>8099</code><br>外部地址需映射至播放端口。安全增量会保存断点，下次继续。</p>
           </aside>
           </div>
         </div>
@@ -1287,14 +1308,25 @@
             <div>
               <p>115 / STRM EVENT STREAM</p>
               <h3 id="strm115-log-title">运行日志</h3>
-              <span>生成预览、同步写入与实际播放跳转记录。</span>
+              <span>同步、文件生成与播放解析 · 每 2 秒自动更新</span>
             </div>
             <div class="strm115-log-actions">
+              <button id="strm115-log-expand" type="button" aria-pressed="false">放大</button>
               <button id="strm115-log-refresh-btn" type="button">刷新</button>
               <button id="strm115-log-close-btn" type="button" aria-label="关闭运行日志">×</button>
             </div>
           </header>
-          <div id="strm115-log-list" class="strm115-log-list"><p>正在读取运行记录…</p></div>
+          <div class="strm115-log-toolbar">
+            <input id="strm115-log-search" type="search" placeholder="搜索文件名、操作或错误…" aria-label="搜索已载入日志">
+            <select id="strm115-log-level" aria-label="日志级别"><option value="all">全部级别</option><option value="info">INFO 信息</option><option value="warning">WARN 警告</option><option value="error">ERROR 错误</option></select>
+            <select id="strm115-log-limit" aria-label="载入条数"><option value="100">100 条</option><option value="500" selected>500 条</option><option value="1000">1000 条</option></select>
+            <label><input id="strm115-log-follow" type="checkbox" checked> 自动跟随</label>
+            <button id="strm115-log-pause" type="button" aria-pressed="false">暂停</button>
+            <button id="strm115-log-copy" type="button">复制</button>
+            <button id="strm115-log-download" type="button">下载</button>
+          </div>
+          <div id="strm115-log-list" class="strm115-log-list" tabindex="0" role="region" aria-label="STRM 运行日志"></div>
+          <footer class="strm115-log-footer"><span id="strm115-log-status" role="status">等待更新</span><span id="strm115-log-count">0 条</span><span id="strm115-log-scope">搜索与导出仅限已载入日志</span></footer>
         </section>
       </div>
 
@@ -1705,106 +1737,76 @@
             <div class="config-shell">
               <div class="config-main">
                 <div class="config-grid settings-core-grid">
-                  <section class="settings-card settings-card-media field-span-2">
-                    <div class="settings-card-head">
-                      <div>
-                        <h4 id="media-server-config-title">媒体服务器核心</h4>
-                        <div class="segment-grid media-server-segment-grid">
-                          <button class="segment-card selected" type="button" data-media-server="emby" aria-pressed="true" onclick="window.handleMediaServerSwitch && window.handleMediaServerSwitch('emby')">
-                            <span class="segment-icon">▶</span>
-                            <strong>Emby</strong>
-                          </button>
-                          <button class="segment-card" type="button" data-media-server="jellyfin" aria-pressed="false" onclick="window.handleMediaServerSwitch && window.handleMediaServerSwitch('jellyfin')">
-                            <span class="segment-icon">J</span>
-                            <strong>Jellyfin</strong>
-                          </button>
+                  <div class="mc-page-head field-span-2">
+                    <h3>媒体库配置</h3>
+                    <p>连接媒体服务器，并为海报、公网请求设置兜底策略。</p>
+                  </div>
+
+                  <section class="settings-card mc-group field-span-2">
+                    <div class="mc-group-label" id="media-server-config-title">媒体服务器核心</div>
+                    <div class="mc-group-card">
+                      <div class="mc-row">
+                        <span class="mc-label">服务器类型</span>
+                        <div class="mc-control">
+                          <div class="segment-grid media-server-segment-grid mc-segmented">
+                            <button class="segment-card selected" type="button" data-media-server="emby" aria-pressed="true" onclick="window.handleMediaServerSwitch && window.handleMediaServerSwitch('emby')">Emby</button>
+                            <button class="segment-card" type="button" data-media-server="jellyfin" aria-pressed="false" onclick="window.handleMediaServerSwitch && window.handleMediaServerSwitch('jellyfin')">Jellyfin</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <label class="mc-label" for="server-url">服务器地址</label>
+                        <div class="mc-control">
+                          <input id="server-url" type="text" placeholder="例如 http://192.168.1.10:8096 或 https://demo.example.com/emby">
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <label class="mc-label" for="api-key">系统 API Key</label>
+                        <div class="mc-control">
+                          <div class="password-field mc-password">
+                            <input id="api-key" type="password" placeholder="输入 Emby 后台生成的 API Key">
+                            <button id="api-key-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 API Key" data-target="api-key" data-open="false">🙈</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <span class="mc-label">连接状态</span>
+                        <div class="mc-control mc-status-control">
+                          <span id="connection-dot" class="mc-status-dot" aria-hidden="true"></span>
+                          <span id="connection-message" class="mc-status-text">尚未连接媒体服务器。填写地址和 API Key 后点击保存。</span>
+                          <span id="media-connection-checked" class="mc-checked"></span>
+                          <span id="connection-latency" class="mc-latency"></span>
+                          <span id="connection-badge" class="status-badge neutral" hidden>未连接</span>
+                          <button id="connection-recheck" class="mc-link-btn" type="button">测试连接</button>
+                        </div>
+                      </div>
+                      <div id="server-summary" class="mc-server-summary" hidden>
+                        <div class="mc-server-logo" id="server-summary-logo" aria-hidden="true">E</div>
+                        <div class="mc-server-meta">
+                          <b id="server-summary-name">Emby Server</b>
+                          <span id="server-summary-meta"></span>
                         </div>
                       </div>
                     </div>
-                    <div class="settings-subgrid">
-                      <label class="field field-span-2">
-                        <span>内网通信地址 (HOST)</span>
-                        <input id="server-url" type="text" placeholder="例如 http://192.168.1.10:8096 或 https://demo.example.com/emby">
-                      </label>
-                      <label class="field field-span-2">
-                        <span>系统 API KEY</span>
-                        <div class="password-field">
-                          <input id="api-key" type="password" placeholder="输入 Emby 后台生成的 API Key">
-                          <button id="api-key-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 API Key" data-target="api-key" data-open="false">🙈</button>
-                        </div>
-                      </label>
-                      <div class="connection-state field-span-2">
-                        <span id="connection-badge" class="status-badge neutral">未连接</span>
-                        <span id="connection-message">尚未连接媒体服务器。填写地址和 API Key 后点击保存。</span>
-                      </div>
-                    </div>
+                    <p class="mc-group-foot">填写服务器地址和 API Key，可先测试连接，再统一保存更改。</p>
                   </section>
 
-                  <section class="settings-card settings-card-tmdb field-span-2">
-                    <div class="settings-card-head">
-                      <h4>TMDB 海报兜底</h4>
-                      <div class="settings-card-actions">
-                        <span id="tmdb-status-tip" class="tmdb-status-badge is-off">已关闭</span>
-                        <button id="tmdb-test-btn" class="ghost-btn" type="button">测试连接</button>
-                      </div>
-                    </div>
-                    <div class="tmdb-switch-row">
-                      <label for="tmdb-enabled" class="tmdb-switch" aria-label="启用 TMDB 海报兜底">
-                        <input id="tmdb-enabled" type="checkbox">
-                        <span class="tmdb-switch-slider"></span>
-                      </label>
-                      <div class="tmdb-switch-copy">
-                        <strong>启用 TMDB 兜底策略</strong>
-                        <p>优先 Emby；若封面不可用，则按标题/季信息尝试 TMDB。</p>
-                      </div>
-                    </div>
-                    <div class="settings-subgrid">
-                      <label class="field field-span-2">
-                        <span>TMDB Bearer Token</span>
-                        <div class="password-field">
-                          <input id="tmdb-token" type="password" placeholder="输入 TMDB Read Access Token (v4)">
-                          <button id="tmdb-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 TMDB Token" data-target="tmdb-token" data-open="false">🙈</button>
-                        </div>
-                      </label>
-                      <label class="field">
-                        <span>TMDB 语言</span>
-                        <input id="tmdb-language" type="text" value="zh-CN" placeholder="zh-CN">
-                      </label>
-                      <label class="field">
-                        <span>TMDB 地区</span>
-                        <input id="tmdb-region" type="text" value="CN" placeholder="CN">
-                      </label>
-                      <p id="tmdb-token-hint" class="tmdb-token-hint field-span-2">TMDB 兜底未启用，系统将仅使用 Emby 海报。</p>
-                    </div>
-                  </section>
-
-                  <section class="settings-card settings-card-network field-span-2">
-                    <div class="settings-card-head">
-                      <div>
-                        <h4>全局网络代理</h4>
-                        <p class="toggle-desc">作用于 TMDB、登录海报墙等公网请求；Emby、Docker 等内网请求不受影响。</p>
-                      </div>
-                      <button id="network-test-btn" class="ghost-btn" type="button">测试连接</button>
-                    </div>
-                    <div class="settings-subgrid">
-                      <label class="field field-span-2">
-                        <span>代理地址</span>
-                        <input id="network-proxy-url" type="text" placeholder="例如 http://192.168.5.1:7890 ，留空为直连">
-                      </label>
-                      <div class="settings-card-actions field-span-2">
-                        <button id="network-save-btn" class="primary-btn" type="button">保存代理配置</button>
-                        <span id="network-proxy-hint" class="tmdb-token-hint">未配置代理，公网请求将直接连接。</span>
-                      </div>
-                    </div>
-                  </section>
                   <p id="settings-env-managed-hint" class="hint-text field-span-2" hidden>
                     该配置由环境变量控制，请在 .env 或 docker-compose.yml 中修改。
                   </p>
 
                 </div>
+                <div class="mc-savebar"><span id="media-save-status" role="status">正在读取配置…</span><div><button type="button" class="mc-mini-btn" data-media-revert disabled>撤销修改</button><button type="button" class="mc-mini-btn mc-save-primary" data-media-save disabled>保存更改</button></div></div>
               </div>
             </div>
           </section>
+        </div>
+      </section>
+
+      <section id="view-network-services" class="view-section">
+        <div class="service-settings-grid">
+          <button class="service-settings-card" type="button" data-service-open="tmdb"><img src="assets/connectivity/tmdb.svg" alt=""><h3>TMDB 海报兜底</h3><p>为缺失海报提供备用图片来源</p><span id="service-tmdb-summary">正在读取配置…</span><small id="service-tmdb-test">尚未测试</small><b>配置 →</b></button>
+          <button class="service-settings-card" type="button" data-service-open="network"><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="8" width="36" height="24" rx="5" fill="none" stroke="currentColor" stroke-width="3"/><path d="M16 40h16M24 32v8M12 20h7l3-6 5 12 3-6h6" fill="none" stroke="currentColor" stroke-width="3"/></svg><h3>网络代理</h3><p>管理 TMDB 等公网服务的访问方式</p><span id="service-network-summary">正在读取配置…</span><small id="service-network-test">尚未测试</small><b>配置 →</b></button>
         </div>
       </section>
 
@@ -1945,30 +1947,40 @@
       <section id="view-infra-docker" class="view-section infra-view">
         <div class="infra-page-shell">
           <header class="infra-page-head infra-page-head-row">
-            <div>
-              <p class="infra-eyebrow">DOCKER / COMPOSE</p>
+            <div class="infra-heading-context">
               <h2>Docker 管理</h2>
-              <p>按服务器集中查看项目、容器和镜像，所有变更进入可追踪操作队列。</p>
+              <label class="infra-host-picker"><span>服务器</span><select id="infra-docker-host-select" class="infra-select" aria-label="选择服务器"></select></label>
             </div>
             <div class="infra-toolbar">
-              <select id="infra-docker-host-select" class="infra-select" aria-label="选择服务器"></select>
-              <button class="infra-btn" type="button" data-infra-action="refresh-docker">刷新</button>
-              <button class="infra-btn" type="button" data-infra-action="toggle-auto-refresh" aria-pressed="false"><span>自动刷新</span></button>
-              <button class="infra-btn" type="button" data-infra-action="pull-image">拉取镜像</button>
-              <button class="infra-btn infra-activity-trigger" type="button" data-infra-action="toggle-docker-activity" aria-controls="infra-docker-activity-drawer">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16M5 7h7l2-2h5v8h-7l-2 2H5"></path></svg>
-                <span>活动</span><b id="infra-activity-count">0</b>
+              <button class="infra-btn infra-activity-trigger" type="button" data-infra-action="toggle-docker-activity" aria-controls="infra-docker-activity-drawer" aria-label="查看操作活动">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-7 3 14 3-7h3"></path></svg>
+                <span>活动</span><b id="infra-activity-count" hidden>0</b>
               </button>
-              <button class="infra-btn infra-btn-primary" type="button" data-infra-action="add-project">添加 Compose</button>
+              <button class="infra-btn infra-btn-primary" type="button" data-infra-action="add-project">＋ 添加 Compose</button>
             </div>
           </header>
-          <div id="infra-docker-metrics" class="infra-docker-metrics" aria-live="polite"></div>
-          <div class="infra-docker-nav-row">
+          <div class="infra-docker-hostbar">
             <div class="infra-tabs" role="tablist" aria-label="Docker 数据类型">
-              <button class="active" type="button" data-infra-docker-tab="containers"><span>容器管理</span><b data-infra-tab-count="containers">0</b></button>
+              <button class="active" type="button" data-infra-docker-tab="containers"><span>容器</span><b data-infra-tab-count="containers">0</b></button>
               <button type="button" data-infra-docker-tab="projects"><span>Compose</span><b data-infra-tab-count="projects">0</b></button>
               <button type="button" data-infra-docker-tab="images"><span>镜像</span><b data-infra-tab-count="images">0</b></button>
             </div>
+
+            <div class="infra-toolbar">
+              <button class="infra-btn" type="button" data-infra-action="refresh-docker">刷新</button>
+              <button class="infra-btn" type="button" data-infra-action="check-updates">检查更新</button>
+              <details class="infra-tools-menu">
+                <summary class="infra-btn">更多操作 <span aria-hidden="true">⌄</span></summary>
+                <div class="infra-tools-popover">
+  <button class="infra-btn" type="button" data-infra-action="update-all" disabled>全部更新</button>
+                  <button class="infra-btn" type="button" data-infra-action="toggle-auto-refresh" aria-pressed="false"><span>自动刷新</span></button>
+                  <button class="infra-btn" type="button" data-infra-action="pull-image">拉取镜像</button>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="infra-docker-status-row">
+            <div id="infra-docker-metrics" class="infra-docker-metrics" aria-live="polite"></div>
             <small id="infra-docker-checked-at" class="infra-docker-checked-at">等待读取 Docker 状态</small>
           </div>
           <section class="infra-card infra-docker-panel">
@@ -1983,13 +1995,9 @@
                 <option value="healthy">健康</option>
                 <option value="attention">需关注</option>
                 <option value="stopped">已停止</option>
+                <option value="hasupdate">有更新</option>
               </select>
-              <div id="infra-container-quick-filters" class="infra-container-quick-filters" role="group" aria-label="快速筛选容器状态">
-                <button class="active" type="button" data-infra-docker-filter="all">全部</button>
-                <button type="button" data-infra-docker-filter="running">运行中</button>
-                <button type="button" data-infra-docker-filter="stopped">已停止</button>
-                <button type="button" data-infra-docker-filter="attention">需关注</button>
-              </div>
+              <label id="infra-docker-group-control" class="infra-group-control"><input id="infra-docker-group-toggle" type="checkbox">按 Compose 分组</label>
               <div id="infra-docker-view-switch" class="infra-view-switch" role="group" aria-label="切换展示方式">
                 <button class="active" type="button" data-infra-docker-presentation="cards" aria-label="卡片视图" title="卡片视图">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"></rect><rect x="14" y="4" width="6" height="6" rx="1"></rect><rect x="4" y="14" width="6" height="6" rx="1"></rect><rect x="14" y="14" width="6" height="6" rx="1"></rect></svg>
@@ -2504,8 +2512,78 @@
     </div>
   </div>
 
-  <script src="script.js?v=20260828-login-ux-1"></script>
-  <script src="infra.js?v=20260824-docker-cards-3"></script>
+<dialog id="service-tmdb-dialog" class="service-settings-dialog" aria-labelledby="service-tmdb-title"><header><h2 id="service-tmdb-title">TMDB 海报兜底</h2><button type="button" data-service-close aria-label="关闭">×</button></header><div class="service-settings-body">                  <section class="service-settings-fields">
+                    <div class="mc-group-label">TMDB 海报兜底</div>
+                    <div class="mc-group-card">
+                      <div class="mc-row">
+                        <span class="mc-label">启用兜底策略</span>
+                        <div class="mc-control">
+                          <label for="tmdb-enabled" class="tmdb-switch mc-switch" aria-label="启用 TMDB 海报兜底">
+                            <input id="tmdb-enabled" type="checkbox">
+                            <span class="tmdb-switch-slider"></span>
+                          </label>
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <label class="mc-label" for="tmdb-token">Bearer Token</label>
+                        <div class="mc-control">
+                          <div class="password-field mc-password">
+                            <input id="tmdb-token" type="password" placeholder="输入 TMDB Read Access Token (v4)">
+                            <button id="tmdb-token-toggle" type="button" class="eye-btn password-toggle" aria-label="显示或隐藏 TMDB Token" data-target="tmdb-token" data-open="false">🙈</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <label class="mc-label" for="tmdb-language">语言</label>
+                        <div class="mc-control">
+                          <input id="tmdb-language" class="mc-mini-input" type="text" value="zh-CN" placeholder="zh-CN">
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <label class="mc-label" for="tmdb-region">地区</label>
+                        <div class="mc-control">
+                          <input id="tmdb-region" class="mc-mini-input" type="text" value="CN" placeholder="CN">
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <span class="mc-label">连通性</span>
+                        <div class="mc-control">
+                          <span id="tmdb-status-tip" class="tmdb-status-badge is-off">已关闭</span>
+                          <button id="tmdb-test-btn" class="mc-link-btn" type="button">测试连接</button>
+                        </div>
+                      </div>
+                    </div>
+                    <p id="tmdb-token-hint" class="tmdb-token-hint mc-group-foot">TMDB 兜底未启用，系统将仅使用 Emby 海报。</p>
+                  </section>
+
+</div><footer><p data-service-feedback role="status"></p><div><button type="button" data-service-close>取消</button><button type="button" data-service-save>保存</button></div></footer></dialog>
+<dialog id="service-network-dialog" class="service-settings-dialog" aria-labelledby="service-network-title"><header><h2 id="service-network-title">网络代理</h2><button type="button" data-service-close aria-label="关闭">×</button></header><div class="service-settings-body">                  <section class="service-settings-fields">
+                    <div class="mc-group-label">网络代理</div>
+                    <div class="mc-group-card">
+                      <div class="mc-row">
+                        <label class="mc-label" for="network-proxy-url">代理地址</label>
+                        <div class="mc-control">
+                          <input id="network-proxy-url" type="text" placeholder="例如 http://192.168.5.1:7890 ，留空为直连">
+                          <button id="network-save-btn" type="button" hidden>保存</button>
+                        </div>
+                      </div>
+                      <div class="mc-row">
+                        <span class="mc-label">连通性</span>
+                        <div class="mc-control">
+                          <span id="network-proxy-hint" class="mc-inline-hint">未配置代理，公网请求将直接连接。</span>
+                          <button id="media-network-reload" class="mc-link-btn" type="button">重新读取</button>
+                          <button id="network-test-btn" class="mc-link-btn" type="button">测试连接</button>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="mc-group-foot">作用于 TMDB、登录海报墙等公网请求；Emby、Docker 等内网请求不受影响。</p>
+                  </section>
+</div><footer><p data-service-feedback role="status"></p><div><button type="button" data-service-close>取消</button><button type="button" data-service-save>保存</button></div></footer></dialog>
+  <script src="missing-detail.js?v=20260918-1"></script>
+  <script src="strm-logs.js?v=20260921-1"></script>
+  <script src="script.js?v=20260919-strm-logs-4"></script>
+  <script src="infra.js?v=20260916-global-search-1"></script>
+  <script src="dashboard.js?v=20260917-header-clean-1"></script>
   <script>
     (function () {
       var storageKey = "embyPulseConfig";
@@ -2588,5 +2666,7 @@
       };
     })();
   </script>
+  <script src="connectivity.js?v=20260916-services-1"></script>
+  <script src="service-settings.js?v=20260916-1"></script>
 </body>
 </html>

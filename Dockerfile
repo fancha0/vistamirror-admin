@@ -1,4 +1,5 @@
 FROM python:3.11-slim
+LABEL io.vistamirror.application="true"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

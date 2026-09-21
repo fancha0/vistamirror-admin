@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 import json
 import re
+import pathlib
+import threading
 import urllib.parse
 import urllib.request
 from typing import Any, Callable, Union
@@ -11,6 +13,7 @@ from typing import Any, Callable, Union
 from .ai_missing_episode_support import MissingEpisodeResult
 from .media_identity_service import MediaIdentityService
 from .missing_episode_inspector import MissingEpisodeInspector
+from .missing_metadata_cache import MissingMetadataCache
 
 EmbyFetcher = Callable[[str], Union[dict[str, Any], list[Any], str, None]]
 
@@ -24,6 +27,9 @@ class MissingEpisodeService:
         tmdb_language: str = "zh-CN",
         tmdb_region: str = "CN",
         identity_resolver: Callable[[dict[str, Any]], str] | None = None,
+        metadata_cache_path: pathlib.Path | None = None,
+        force_refresh: bool = False,
+        urlopen: Callable[..., Any] | None = None,
     ) -> None:
         self.emby_fetcher = emby_fetcher
         self.tmdb_token = str(tmdb_token or "").strip()
@@ -31,6 +37,13 @@ class MissingEpisodeService:
         self.tmdb_region = str(tmdb_region or "CN").strip().upper() or "CN"
         self.identity_resolver = identity_resolver
         self._tmdb_detail_cache: dict[str, dict[str, Any]] = {}
+        self._metadata_cache = MissingMetadataCache(metadata_cache_path) if metadata_cache_path else None
+        self._force_refresh = force_refresh
+        self._urlopen = urlopen or urllib.request.urlopen
+        self._cache_lock = threading.Lock()
+        self._series_cache_policy: dict[str, dict[str, Any]] = {}
+        self._cache_stats = {"hits": 0, "requests": 0, "writes": 0}
+
 
     def scan(
         self,
@@ -132,6 +145,7 @@ class MissingEpisodeService:
             "missingEpisodeCount": missing_episode_count,
             "unknownMatchCount": unknown_match_count,
             "scannedAt": scanned_at,
+            "metadataCache": {**self._cache_stats, "forced": self._force_refresh, "available": bool(self._metadata_cache and self._metadata_cache.available)},
         }
         debug = {
             "scanLimit": safe_scan_limit,
@@ -547,24 +561,57 @@ class MissingEpisodeService:
                 }
         return output
 
+    def _metadata_ttl(self, path: str, payload: dict[str, Any]) -> int:
+        match = re.fullmatch(r"/tv/(\d+)(?:/season/(\d+))?", path)
+        if not match:
+            return 0
+        series_id, season_no = match.groups()
+        if season_no is None:
+            with self._cache_lock:
+                self._series_cache_policy[series_id] = payload
+            return 7 * 86400 if payload.get("status") in {"Ended", "Canceled"} else 2 * 3600
+        with self._cache_lock:
+            detail = self._series_cache_policy.get(series_id, {})
+        ended = detail.get("status") in {"Ended", "Canceled"}
+        latest = max((self._safe_int(s.get("season_number")) for s in detail.get("seasons", []) if isinstance(s, dict) and self._safe_int(s.get("episode_count")) > 0), default=0)
+        episodes = payload.get("episodes") or []
+        dates = [str(e.get("air_date") or "") for e in episodes if isinstance(e, dict)]
+        historic = bool(dates) and len(dates) == len(episodes) and all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and d < date.today().isoformat() for d in dates)
+        return 7 * 86400 if historic and (ended or int(season_no) < latest) else 2 * 3600
+
     def _tmdb_get_json(self, path_with_query: str) -> dict[str, Any]:
         if not self.tmdb_token:
             raise ValueError("TMDB Token 未配置")
-        target = f"https://api.themoviedb.org/3{path_with_query}"
+        parsed = urllib.parse.urlsplit(path_with_query)
+        # Version and locale isolate different representations without storing credentials.
+        key = "v1:" + self.tmdb_language + ":" + self.tmdb_region + ":" + parsed.path + "?" + urllib.parse.urlencode(sorted(urllib.parse.parse_qsl(parsed.query)))
+        cacheable = bool(re.fullmatch(r"/tv/\d+(?:/season/\d+)?", parsed.path))
+        if cacheable and self._metadata_cache and not self._force_refresh:
+            cached = self._metadata_cache.get(key)
+            if cached is not None:
+                self._metadata_ttl(parsed.path, cached)
+                with self._cache_lock:
+                    self._cache_stats["hits"] += 1
+                return cached
         request = urllib.request.Request(
-            target,
-            method="GET",
-            headers={
-                "Authorization": f"Bearer {self.tmdb_token}",
-                "Accept": "application/json",
-            },
+            f"https://api.themoviedb.org/3{path_with_query}", method="GET",
+            headers={"Authorization": f"Bearer {self.tmdb_token}", "Accept": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with self._cache_lock:
+            self._cache_stats["requests"] += 1
+        with self._urlopen(request, timeout=20) as response:
             raw = response.read()
-        if not raw:
-            return {}
-        decoded = json.loads(raw.decode("utf-8", errors="replace"))
-        return decoded if isinstance(decoded, dict) else {}
+        decoded = json.loads(raw.decode("utf-8")) if raw else {}
+        payload = decoded if isinstance(decoded, dict) else {}
+        # Never cache empty/error/incomplete responses as a valid empty inventory.
+        field = "episodes" if "/season/" in parsed.path else "seasons"
+        valid = payload.get("id") is not None and isinstance(payload.get(field), list) and bool(payload[field]) and payload.get("success") is not False
+        if cacheable and valid:
+            ttl = self._metadata_ttl(parsed.path, payload)
+            if self._metadata_cache and self._metadata_cache.put(key, payload, ttl):
+                with self._cache_lock:
+                    self._cache_stats["writes"] += 1
+        return payload
 
     @staticmethod
     def _safe_int(value: Any) -> int:

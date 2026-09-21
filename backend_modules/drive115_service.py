@@ -429,71 +429,56 @@ class Drive115Service:
             items.append({"id": item_id, "name": name, "isDir": is_dir, "pickCode": str(row.get("pc") or row.get("pick_code") or row.get("pickCode") or "").strip(), "sha1": str(row.get("sha") or row.get("sha1") or "").strip(), "size": size})
         return {"items": items, "nextOffset": page_offset + len(raw_rows), "hasMore": len(raw_rows) >= page_limit}
 
-    def resolve_download_url(self, pick_code: str) -> str:
-        """Resolve a fresh 115 download URL without exposing the cookie.
-
-        115's web endpoint usually returns JSON containing a single-use
-        ``file_url_302`` when ``dl=1`` is supplied; it is not itself a 302.
-        Follow that intermediate URL once, while preserving the final URL as a
-        server-only redirect for Emby.
-        """
+    def resolve_download_url(self, pick_code: str, *, user_agent: str = "") -> str:
+        """Resolve via the encrypted client API; never fetch video bytes here."""
         code = str(pick_code or "").strip()
         if not code:
             raise RuntimeError("115 文件缺少 pick_code，无法生成播放直链。")
         if not self.cookie:
             raise RuntimeError("115 Cookie 未配置，请先在 115 网盘页面保存 Cookie。")
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac) AppleWebKit/537.36 Chrome/120 Safari/537.36", "Cookie": self.cookie, "Referer": "https://115.com/"}
-
-        class _NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        try:
+            from p115cipher import rsa_encrypt, rsa_decrypt
+        except ImportError as err:
+            raise RuntimeError("缺少 115 客户端协议依赖，请更新并重新构建 VistaMirror 镜像。") from err
+        payload = json.dumps({"pickcode": code}, separators=(",", ":")).encode("utf-8")
+        data = urllib.parse.urlencode({"data": rsa_encrypt(payload).decode("ascii")}).encode("ascii")
+        request = urllib.request.Request(
+            "https://proapi.115.com/app/chrome/downurl", data=data, method="POST",
+            headers={"Cookie": self.cookie, "User-Agent": user_agent,
+                     "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
                 return None
-
-        opener = urllib.request.build_opener(_NoRedirect())
-
-        def request_without_redirect(url: str, *, include_cookie: bool) -> tuple[str, str]:
-            request = urllib.request.Request(url, headers=headers if include_cookie else {"User-Agent": headers["User-Agent"]}, method="GET")
-            try:
-                with opener.open(request, timeout=self.timeout) as response:
-                    return str(response.headers.get("Location") or "").strip(), response.read().decode("utf-8", errors="replace")
-            except urllib.error.HTTPError as err:
-                location = str(err.headers.get("Location") or "").strip()
-                if location:
-                    return location, ""
-                body = err.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"115 播放直链解析失败（HTTP {err.code}）：{body[:180]}") from err
-            except urllib.error.URLError as err:
-                raise RuntimeError(f"115 播放直链网络错误：{getattr(err, 'reason', err)}") from err
-
-        endpoint = f"https://webapi.115.com/files/download?{urllib.parse.urlencode({'pickcode': code, 'dl': 1})}"
-        location, body = request_without_redirect(endpoint, include_cookie=True)
-        if not location and body:
-            try:
-                payload = json.loads(body)
-            except ValueError:
-                payload = {}
-            data = self._response_data(payload) if isinstance(payload, dict) else {}
-            if isinstance(payload, dict) and payload and payload.get("state") in (False, 0, "0", "false"):
-                reason = str(payload.get("error") or payload.get("msg") or payload.get("message") or "115 下载接口拒绝请求").strip()
-                raise RuntimeError(f"115 播放直链解析失败：{reason[:180]}")
-            for source in (data, payload):
-                if not isinstance(source, dict):
+        try:
+            with urllib.request.build_opener(NoRedirect()).open(request, timeout=self.timeout) as response:
+                result = json.loads(response.read(1024 * 1024).decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            raise RuntimeError(f"115 客户端下载接口返回 HTTP {err.code}，请检查授权或稍后重试。") from err
+        except (urllib.error.URLError, TimeoutError) as err:
+            raise RuntimeError("115 客户端下载接口连接失败，请检查网络或代理。") from err
+        except (ValueError, UnicodeError) as err:
+            raise RuntimeError("115 客户端下载接口返回了无效响应。") from err
+        if not isinstance(result, dict) or result.get("state") not in (True, 1, "1"):
+            reason = str(result.get("error") or result.get("msg") or result.get("message") or "授权失效或接口拒绝请求") if isinstance(result, dict) else "响应格式错误"
+            raise RuntimeError(f"115 播放直链解析失败：{reason[:180]}")
+        try:
+            records = result.get("data")
+            if isinstance(records, str):
+                records = json.loads(rsa_decrypt(records.encode("ascii")))
+            candidates = [records] if isinstance(records, dict) and "url" in records else list(records.values()) if isinstance(records, dict) else []
+            for item in candidates:
+                if not isinstance(item, dict):
                     continue
-                candidate = source.get("file_url_302") or source.get("url") or source.get("download_url")
+                candidate = item.get("url")
                 if isinstance(candidate, dict):
-                    candidate = candidate.get("url") or candidate.get("download_url")
-                if str(candidate or "").startswith(("http://", "https://")):
-                    location = str(candidate)
-                    break
-        if location.startswith(("http://", "https://")) and "file_url_302" in location:
-            # Kept for compatibility with an older response form that embeds
-            # the intermediate URL in the field value.
-            location, _ = request_without_redirect(location, include_cookie=False)
-        elif location.startswith(("http://", "https://")) and body:
-            # `file_url_302` itself is normally the intermediate address.
-            location, _ = request_without_redirect(location, include_cookie=False)
-        if not location.startswith(("http://", "https://")):
-            raise RuntimeError("115 没有返回有效的播放直链，请更新 Cookie 后重试。")
-        return location
+                    candidate = candidate.get("url")
+                parsed = urllib.parse.urlsplit(str(candidate or ""))
+                if parsed.scheme in ("http", "https") and parsed.hostname and not parsed.username:
+                    return str(candidate)
+        except (ValueError, TypeError, UnicodeError) as err:
+            raise RuntimeError("115 下载响应解码失败，请更新 VistaMirror 后重试。") from err
+        raise RuntimeError("115 未返回视频下载地址，请检查文件是否仍然存在及账号下载权限。")
 
     def _target_has_files(self, cid: str, source_files: list[dict[str, Any]]) -> bool:
         expected = [self._file_meta(row) for row in source_files]

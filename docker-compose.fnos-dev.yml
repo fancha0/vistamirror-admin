@@ -10,6 +10,8 @@ services:
     restart: unless-stopped
     # 开发容器需要读取宿主机 Docker Socket；仅用于受信任的飞牛内网环境。
     user: "0:0"
+    depends_on:
+      - node-exporter-dev
     ports:
       - "${FNOS_DEV_ADMIN_PORT:-18091}:8091"
       - "${FNOS_DEV_PLAYBACK_PORT:-18099}:8099"
@@ -26,6 +28,9 @@ services:
       APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME:-admin}
       APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-admin123}
       APP_INFRA_MASTER_KEY: ${APP_INFRA_MASTER_KEY:-}
+      APP_NODE_EXPORTER_URL: "http://${FNOS_NODE_EXPORTER_BIND_IP:-172.17.0.1}:${FNOS_NODE_EXPORTER_PORT:-19100}/metrics"
+      APP_HOST_METRICS_DISK: ${APP_HOST_METRICS_DISK:-}
+      APP_HOST_METRICS_INTERFACE: ${APP_HOST_METRICS_INTERFACE:-}
       VISTAMIRROR_PUBLIC_BASE_URL: ${VISTAMIRROR_PUBLIC_BASE_URL:-}
     volumes:
       # 与正式版完全隔离，开发数据只写入远端 source/data-dev。
@@ -43,3 +48,30 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  node-exporter-dev:
+    image: ${FNOS_NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1}
+    container_name: vistamirror-node-exporter-dev
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    uts: host
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - /:/host:ro,rslave
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=${FNOS_NODE_EXPORTER_BIND_IP:-172.17.0.1}:${FNOS_NODE_EXPORTER_PORT:-19100}
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.filesystem
+      - --collector.netdev
+      - --collector.netclass
+      - --collector.uname
+      - --collector.stat
+      - --collector.filesystem.mount-timeout=2s

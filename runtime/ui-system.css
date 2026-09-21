@@ -1,0 +1,188 @@
+/* Component contracts. Page styles own layout and domain-specific content;
+   this file owns shared typography, spacing and interactive control sizes. */
+body.vistamirror-fig1-skin {
+  --ui-radius-sm: var(--vm-radius-control);
+  --ui-radius-md: var(--vm-radius-card);
+  --ui-radius-lg: var(--vm-radius-card);
+  --ui-control-sm: var(--vm-control-height);
+  --ui-control-md: var(--vm-control-height);
+  font-family: var(--vm-font-sans);
+  font-size: var(--vm-font-14);
+  line-height: 1.5;
+}
+body.vistamirror-fig1-skin :is(button, input, select, textarea) { font-family: var(--vm-font-sans); }
+body.vistamirror-fig1-skin :is(.view-section, .infra-modal, .user-center-modal, .global-search-panel, .radar-live-popover) { font-size: var(--vm-font-14); }
+body.vistamirror-fig1-skin .main-content { padding-inline: var(--vm-page-gutter) !important; }
+body.vistamirror-fig1-skin .main-content > .topbar:not([hidden]) {
+  display: flex !important; flex-wrap: wrap; align-items: center; gap: var(--vm-space-4);
+  min-height: 0; margin: 0 0 var(--vm-space-5); padding: 0 !important;
+  border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important;
+}
+body.vistamirror-fig1-skin .topbar[hidden] { display: none !important; }
+body.vistamirror-fig1-skin #topbar-title,
+body.vistamirror-fig1-skin #view-infra-docker .infra-page-head h2,
+body.vistamirror-fig1-skin #vm-dashboard .db-welcome h1 {
+  font-size: var(--vm-page-title) !important; font-weight: 600; line-height: 1.3; letter-spacing: -.02em; margin: 0;
+}
+body.vistamirror-fig1-skin .topbar-text { font-size: var(--vm-font-12) !important; line-height: 1.5; margin: 4px 0 0; font-weight: 400; }
+body.vistamirror-fig1-skin .topbar-actions { margin-left: auto; gap: var(--vm-space-2); }
+/* The common page header supplies these titles; controls and status remain. */
+body.vistamirror-fig1-skin :is(.mc-page-head, .drive115-page-head, .strm115-page-head > div:first-child, .hdhive-page-head > div:first-child,
+ .quality-title-row, .quality-overview-icon, .annual-ranking-head-left h3) { display: none; }
+body.vistamirror-fig1-skin .hdhive-page-head { justify-content: flex-end; margin-bottom: 12px; }
+body.vistamirror-fig1-skin .strm115-page-head { padding: 0; margin-bottom: 16px; }
+body.vistamirror-fig1-skin :is(.infra-page-shell, .strm115-page-shell) { margin-top: 0; }
+body.vistamirror-fig1-skin :is(.config-shell, .config-main) { min-width: 0; }
+body.vistamirror-fig1-skin :is(.dashboard-grid, .settings-core-grid, .config-grid, .infra-app-grid) { gap: var(--vm-space-4); }
+body.vistamirror-fig1-skin :is(.panel-head, .settings-card-head, .infra-drawer-head) { gap: var(--vm-space-3); }
+body.vistamirror-fig1-skin :is(.panel-head, .settings-card-head, .quality-section-head, .infra-detail-section-head) :is(h3, h4),
+body.vistamirror-fig1-skin :is(.mc-group-label, .strm115-console-head h4, .notify-channel-pane h4, .db-panel h3, .infra-app-title h3) {
+  font-size: var(--vm-font-16) !important; font-weight: 600; line-height: 1.4; letter-spacing: normal;
+}
+body.vistamirror-fig1-skin :is(.primary-btn, .ghost-btn, .mint-btn, .danger-btn, .settings-save-btn, .infra-btn, .infra-action-btn, .mc-savebar button, .form-actions button, .strm115-commandbar button) {
+  min-height: var(--vm-control-height) !important; padding: 0 14px; border-radius: var(--vm-radius-control) !important;
+  font-size: var(--vm-font-14) !important; font-weight: 500; line-height: 1.4;
+}
+body.vistamirror-fig1-skin :is(.field, .settings-card, .infra-form, .mc-control) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]), select),
+body.vistamirror-fig1-skin :is(.infra-select, .filter-group select, .filter-group input) {
+  min-height: var(--vm-control-height) !important; border-radius: var(--vm-radius-control) !important;
+  font-size: var(--vm-font-14) !important; line-height: 1.4;
+}
+body.vistamirror-fig1-skin :is(.field > span, .mc-label, .infra-form label, .settings-card label:not(.tmdb-switch)) {
+  font-size: var(--vm-font-14); line-height: 1.5;
+}
+body.vistamirror-fig1-skin :is(.toggle-desc, .field-hint, .infra-form-hint, .quality-subtitle, .mc-page-head p, .empty-state, .infra-empty, .db-empty) { font-size: var(--vm-font-12); line-height: 1.6; }
+body.vistamirror-fig1-skin :is(.panel, .settings-card, .infra-app-card, .quality-card, .db-panel, .client-stat-card) { border-radius: var(--vm-radius-card); }
+body.vistamirror-fig1-skin :is(.settings-card, .infra-app-card) { padding: var(--vm-space-5); }
+body.vistamirror-fig1-skin .mc-group { padding: 0; }
+body.vistamirror-fig1-skin :is(.toolbar, .filter-group, .form-actions, .infra-toolbar) { gap: var(--vm-space-2); }
+body.vistamirror-fig1-skin :is(.nav-item, .profile-menu-item) { font-size: var(--vm-font-14) !important; font-weight: 500; }
+body.vistamirror-fig1-skin .nav-item { min-height: 40px !important; }
+body.vistamirror-fig1-skin .nav-icon { width: 20px; height: 20px; font-size: 20px; flex-shrink: 0; }
+body.vistamirror-fig1-skin .nav-icon svg { width: 20px; height: 20px; }
+body.vistamirror-fig1-skin :is(.badge, .infra-state-pill, .tmdb-status-badge) { font-size: var(--vm-font-12); line-height: 1.4; }
+body.vistamirror-fig1-skin :is(.stat-card > strong, .client-stat-value, .db-count strong) { font-size: var(--vm-font-28) !important; font-variant-numeric: tabular-nums; }
+body.vistamirror-fig1-skin :is(.infra-modal-panel, .user-center-modal-panel, .global-search-panel, .notify-channel-modal-panel) { border-radius: var(--vm-radius-dialog) !important; }
+body.vistamirror-fig1-skin :is(.infra-modal-head h3, .infra-drawer-head h3, .user-center-modal-head h3, .notify-channel-modal-head h3) { font-size: var(--vm-font-20) !important; font-weight: 600; line-height: 1.4; }
+body.vistamirror-fig1-skin :is(.infra-modal-head, .user-center-modal-head, .infra-drawer-head) { padding: 16px 20px; }
+body.vistamirror-fig1-skin :is(.infra-modal-body, .user-center-modal-body) { padding: 20px; }
+body.vistamirror-fig1-skin :is(.infra-table, .user-center-table, .data-table) { font-size: var(--vm-font-14); }
+body.vistamirror-fig1-skin :is(.infra-table, .user-center-table, .data-table) th { font-size: var(--vm-font-12); font-weight: 600; }
+body.vistamirror-fig1-skin :is(.infra-table, .user-center-table, .data-table) :is(th, td) { padding: 12px 16px; }
+/* Log virtualization assumes its existing row height; do not change row padding. */
+body.vistamirror-fig1-skin :is(pre, code, .infra-log-lines, .infra-log-row, .strm115-log-row) { font-family: var(--vm-font-mono); }
+body.vistamirror-fig1-skin :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid #6998f5; outline-offset: 2px; }
+@media (max-width: 640px) {
+  body.vistamirror-fig1-skin .main-content > .topbar:not([hidden]) { gap: 12px; margin-bottom: 16px; }
+  body.vistamirror-fig1-skin .topbar-actions { max-width: 100%; flex-wrap: wrap; }
+  body.vistamirror-fig1-skin :is(.settings-card, .infra-app-card, .panel) { padding: 16px; }
+  body.vistamirror-fig1-skin .mc-group { padding: 0; }
+  body.vistamirror-fig1-skin :is(.infra-modal-head, .infra-modal-body, .user-center-modal-head, .user-center-modal-body) { padding: 16px; }
+  body.vistamirror-fig1-skin :is(.nav-item, .profile-menu-item) { min-height: 44px !important; }
+}
+
+/* Narrow content must wrap inside its own panel, never be clipped by the page. */
+#view-infra-docker :is(.infra-empty-guide, .infra-empty-steps) { min-width: 0; max-width: 100%; box-sizing: border-box; }
+#view-infra-docker .infra-empty-steps pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+#view-workshop #cover-studio-manual-panel .cover-studio-workspace {
+  grid-template-columns: minmax(180px, .8fr) minmax(0, 1.5fr) minmax(240px, 1fr) !important;
+  gap: 16px !important;
+}
+#view-workshop .cover-studio-settings-pane { grid-template-columns: minmax(0, 1fr); }
+#view-workshop .cover-studio-settings-pane :is(input, select, .field) { min-width: 0; max-width: 100%; }
+body.vistamirror-fig1-skin #vm-dashboard h3 { font-size: var(--vm-font-16) !important; font-weight: 600; }
+body.vistamirror-fig1-skin #view-media-config .mc-label { font-size: var(--vm-font-14) !important; }
+body.vistamirror-fig1-skin :is(.create-user-header h3, .invite-modal-title h3, .user-config-header h3, .invite-manage-header h3) { font-size: var(--vm-font-20) !important; font-weight: 600; }
+body.vistamirror-fig1-skin :is(.create-user-panel, .invite-config-panel, .user-config-panel) :is(input:not([type=checkbox]):not([type=radio]), select) { min-height: var(--vm-control-height); font-size: var(--vm-font-14); }
+@media (max-width: 1120px) and (min-width: 981px) {
+  #view-workshop #cover-studio-manual-panel .cover-studio-workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) !important; }
+}
+@media (max-width: 640px) {
+  #infra-modal .infra-log-tools { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  body.vistamirror-fig1-skin #infra-modal .infra-log-tools .infra-btn { padding-inline: 4px; font-size: var(--vm-font-12) !important; }
+  #notify-channel-modal .notify-channel-modal-head { position: relative; padding: 16px; }
+  #notify-channel-modal .notify-channel-modal-title-wrap { width: 100%; min-width: 0; }
+  #notify-channel-modal .notify-channel-modal-title-wrap > div { width: 100%; min-width: 0; }
+  #notify-channel-modal-title { padding-right: 40px; }
+  #notify-channel-modal-close { position: absolute; right: 12px; top: 12px; width: 36px; min-height: 38px; }
+  #notify-channel-modal-tabs { display: flex; gap: 4px; width: 100%; margin-top: 16px; }
+  body.vistamirror-fig1-skin #notify-channel-modal-tabs button { flex: 1; min-width: 0; padding: 8px 4px; font-size: var(--vm-font-12); white-space: nowrap; }
+}
+
+/* Shared surface policy: one dimming layer, opaque dialogs, quiet inner groups.
+   Specificity intentionally supersedes the legacy glass skin's !important rules. */
+:root {
+  --vm-overlay-bg: rgba(20, 32, 57, .22);
+  --vm-dialog-shadow: 0 18px 52px rgba(20, 32, 57, .16);
+}
+body :is(.user-center-modal, .infra-modal, .global-search-modal,
+  .strm115-log-modal, .moviepilot-detail-modal, .moviepilot-resource-modal,
+  .moviepilot-subscribe-modal, .infra-drawer-backdrop, .mobile-menu-overlay) {
+  background: var(--vm-overlay-bg) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+body :is(.connectivity-dialog, .service-settings-dialog)::backdrop {
+  background: var(--vm-overlay-bg) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+body.vistamirror-fig1-skin :is(.user-center-modal-panel, .infra-modal-panel,
+  .global-search-panel, .moviepilot-detail-panel, .moviepilot-resource-panel,
+  .moviepilot-subscribe-panel, .infra-side-drawer, .mobile-menu-sheet,
+  .mobile-menu-drawer, .radar-live-popover, .profile-menu-panel,
+  .connectivity-dialog, .service-settings-dialog),
+body :is(.user-center-modal-panel, .infra-modal-panel, .global-search-panel,
+  .moviepilot-detail-panel, .moviepilot-resource-panel, .moviepilot-subscribe-panel,
+  .infra-side-drawer, .connectivity-dialog, .service-settings-dialog) {
+  background: #fff !important;
+  border-color: #dfe6f0 !important;
+  box-shadow: var(--vm-dialog-shadow) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* Keep terminal colors and media artwork; flatten only structural form groups. */
+body.vistamirror-fig1-skin :is(.user-center-modal-panel, .service-settings-dialog, .infra-modal-panel)
+  :is(.settings-card, .config-panel, .panel, .mc-group-card,
+    .create-user-card, .user-config-card, .notify-channel-platform-panel,
+    .notify-playback-scope-card, .notify-channel-pane) {
+  background: transparent !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border-color: #e6ebf3 !important;
+}
+/* Page cards remain distinct, without translucent surfaces stacked inside them. */
+body.vistamirror-fig1-skin .main-content :is(.panel, .config-panel, .settings-card) {
+  background: #fff !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+body.vistamirror-fig1-skin .main-content :is(.panel, .config-panel, .settings-card)
+  :is(.panel, .config-panel, .settings-card, .mc-group-card) {
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Global command/search palette */
+body .global-search-panel { width:min(760px,calc(100vw - 24px));max-height:min(780px,calc(100dvh - 48px));display:flex;flex-direction:column; }
+body .global-search-modal { padding: max(24px,7vh) 12px 24px; }
+body .global-search-results { flex:1;min-height:0;max-height:none;overflow-y:auto;padding:8px 12px; }
+.gs-categories { display:flex;gap:6px;padding:8px 16px;overflow-x:auto;flex-shrink:0;border-bottom:1px solid #edf0f5; }
+.gs-categories button { padding:7px 12px;border:0;border-radius:8px;background:transparent;color:#64748b;white-space:nowrap;cursor:pointer;font:inherit; }
+.gs-categories button.active { background:#edf3ff;color:#3979f6; }
+.gs-group { margin:12px 8px 6px;color:#8491a5;font-size:12px;font-weight:500; }
+.gs-item { display:flex;align-items:center;gap:12px;width:100%;min-height:68px;padding:12px;border:1px solid transparent;border-radius:10px;background:#fff;text-align:left;cursor:pointer;font:inherit;color:#26354a; }
+.gs-item.active,.gs-item:hover { background:#f1f6ff;border-color:#d7e5ff; }
+.gs-item>span:nth-child(2) { flex:1;min-width:0; }
+.gs-item strong,.gs-item small { display:block;overflow-wrap:anywhere; }
+.gs-item strong { font-size:14px;font-weight:600; }
+.gs-item small { margin-top:4px;color:#78869c;font-size:12px; }
+.gs-icon { display:grid;place-items:center;width:34px;height:34px;flex-shrink:0;background:#edf3ff;border-radius:8px;color:#3979f6; }
+.gs-enter { color:#a4b0c2; }
+.gs-footer,.gs-status { padding:10px 20px;font-size:12px;color:#78869c;flex-shrink:0; }
+.gs-status:empty { display:none; }
+.gs-footer { border-top:1px solid #edf0f5; }
+.gs-target { outline:2px solid #6998f5;outline-offset:3px; }
+@media(max-width:640px) { body .global-search-modal { padding:12px; }body .global-search-panel { max-height:calc(100dvh - 24px); }.gs-categories { padding:8px; }.gs-categories button { padding:8px 10px; }.gs-footer { padding:10px 12px; } }

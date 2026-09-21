@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import concurrent.futures
+import copy
 import hashlib
 import http.client
 import io
@@ -14,6 +15,7 @@ import socket
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -51,6 +53,33 @@ def _format_bytes(value: Any) -> str:
     return f"{size:.0f} {units[index]}" if index == 0 or size >= 10 else f"{size:.1f} {units[index]}"
 
 
+def _demux_docker_log_stream(payload: bytes) -> bytes:
+    """Strip Docker's 8-byte multiplex frame headers from /containers/{id}/logs output.
+
+    Older code relied on the Content-Type header, but some daemons/proxies omit
+    it, leaking header bytes into the visible log (the stray char before each
+    line). Detect framing structurally instead: a valid stream is an exact
+    sequence of [stream_byte, 0, 0, 0, len(4B BE)] + len bytes frames.
+    TTY containers return raw text without frames; validation keeps it intact.
+    """
+    if len(payload) < 8 or payload[0] not in (0, 1, 2) or payload[1:4] != b"\x00\x00\x00":
+        return payload
+    chunks: list[bytes] = []
+    offset = 0
+    while offset + 8 <= len(payload):
+        if payload[offset] not in (0, 1, 2) or payload[offset + 1:offset + 4] != b"\x00\x00\x00":
+            return payload  # 结构不符，按原始文本返回
+        length = int.from_bytes(payload[offset + 4:offset + 8], "big")
+        frame_end = offset + 8 + length
+        if frame_end > len(payload):
+            return payload
+        chunks.append(payload[offset + 8:frame_end])
+        offset = frame_end
+    if offset != len(payload) or not chunks:
+        return payload
+    return b"".join(chunks)
+
+
 class _UnixSocketHTTPConnection(http.client.HTTPConnection):
     """HTTP transport for the local Docker Engine Unix socket."""
 
@@ -63,6 +92,86 @@ class _UnixSocketHTTPConnection(http.client.HTTPConnection):
         client.settimeout(self.timeout)
         client.connect(self.socket_path)
         self.sock = client
+
+
+# ---- Docker Hub 镜像更新检测 ----
+
+_REGISTRY_URLOPEN: Callable[..., Any] = urllib.request.urlopen
+
+
+def set_registry_urlopen(fn: Callable[..., Any]) -> None:
+    """让 dev_server 注入带全局代理的 urlopen（国内网络访问 Docker Hub 常需要）。"""
+    global _REGISTRY_URLOPEN
+    _REGISTRY_URLOPEN = fn
+
+
+def _split_image_ref(image: str) -> tuple[str, str] | None:
+    """把镜像引用拆成 (repo, tag)；只看 Docker Hub，其他登记处返回 None。"""
+    ref = str(image or "").strip()
+    if not ref or "@" in ref:
+        return None
+    if "/" in ref:
+        first, rest = ref.split("/", 1)
+        if first in {"docker.io", "index.docker.io", "registry-1.docker.io"}:
+            ref = rest
+        elif "." in first or ":" in first or first == "localhost":
+            return None
+    if ":" in ref.split("/")[-1]:
+        repo, tag = ref.rsplit(":", 1)
+    else:
+        repo, tag = ref, "latest"
+    if "/" not in repo:
+        repo = f"library/{repo}"
+    return repo, tag
+
+
+def _docker_hub_remote_digest(repo: str, tag: str) -> set[str]:
+    """通过 Docker Hub Registry API 拿 tag 当前指向的 digest；失败由调用方标记为未知。"""
+    token_req = urllib.request.Request(
+        f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{urllib.parse.quote(repo)}:pull",
+        headers={"Accept": "application/json", "User-Agent": "Vistamirror/1.0"},
+    )
+    with _REGISTRY_URLOPEN(token_req, timeout=15) as response:
+        token = str(json.loads(response.read().decode("utf-8", errors="replace")).get("token") or "")
+    if not token:
+        return set()
+    manifest_req = urllib.request.Request(
+        f"https://registry-1.docker.io/v2/{repo}/manifests/{urllib.parse.quote(tag)}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            # 同时接受 manifest 和 manifest list，digest 以返回头为准
+            "Accept": ", ".join([
+                "application/vnd.oci.image.index.v1+json",
+                "application/vnd.docker.distribution.manifest.list.v2+json",
+                "application/vnd.docker.distribution.manifest.v2+json",
+                "application/vnd.oci.image.manifest.v1+json",
+            ]),
+            "User-Agent": "Vistamirror/1.0",
+        },
+    )
+    with _REGISTRY_URLOPEN(manifest_req, timeout=15) as response:
+        digest = response.headers.get("Docker-Content-Digest")
+        digests = {str(digest).strip()} if digest else set()
+        manifest = json.loads(response.read().decode("utf-8"))
+        # 多架构镜像的 RepoDigest 可能是 index，也可能是平台 manifest。
+        for item in manifest.get("manifests") or []:
+            if item.get("digest"):
+                digests.add(str(item["digest"]))
+        return digests
+
+
+def _local_image_digest(repo_digests: Any, repo: str) -> str:
+    """从镜像的 RepoDigests 里挑出指定 repo 的 digest。"""
+    if not isinstance(repo_digests, list):
+        return ""
+    for entry in repo_digests:
+        text = str(entry or "")
+        if "@" not in text:
+            continue
+        name, digest = text.split("@", 1)
+        if _split_image_ref(name) == (repo, "latest"):
+            return digest.strip()
+    return ""
 
 
 class LocalDockerClient:
@@ -197,6 +306,7 @@ class LocalDockerClient:
             name = str(names[0] or "").lstrip("/") if names else str(item.get("Id") or "")[:12]
             containers.append({
                 "ID": str(item.get("Id") or ""), "Names": name, "Image": str(item.get("Image") or ""),
+                "ImageID": str(item.get("ImageID") or ""),
                 "State": str(item.get("State") or ""), "Status": str(item.get("Status") or ""),
                 "Ports": self._ports_text(item.get("Ports")), "Labels": dict(item.get("Labels") or {}),
             })
@@ -230,17 +340,8 @@ class LocalDockerClient:
 
     def logs(self, container: str, *, tail: int) -> str:
         encoded = urllib.parse.quote(container, safe="")
-        _status, headers, payload = self._request("GET", f"/containers/{encoded}/logs?stdout=1&stderr=1&timestamps=1&tail={tail}", timeout=45)
-        if "application/vnd.docker.raw-stream" in headers.get("content-type", ""):
-            chunks: list[bytes] = []
-            offset = 0
-            while offset + 8 <= len(payload):
-                length = int.from_bytes(payload[offset + 4:offset + 8], "big")
-                offset += 8
-                chunks.append(payload[offset:offset + length])
-                offset += length
-            payload = b"".join(chunks) if chunks else payload
-        return payload.decode("utf-8", errors="replace")
+        _status, _headers, payload = self._request("GET", f"/containers/{encoded}/logs?stdout=1&stderr=1&timestamps=1&tail={tail}", timeout=45)
+        return _demux_docker_log_stream(payload).decode("utf-8", errors="replace")
 
     def container_action(self, container: str, action: str) -> dict[str, Any]:
         encoded = urllib.parse.quote(container, safe="")
@@ -248,16 +349,310 @@ class LocalDockerClient:
         self._request("POST", f"/containers/{encoded}/{action}{suffix}", timeout=90)
         return {"exitCode": 0, "output": f"本机容器 {container} 已执行 {action}"}
 
-    def pull_image(self, image: str) -> dict[str, Any]:
-        _status, _headers, payload = self._request("POST", f"/images/create?fromImage={urllib.parse.quote(image, safe='/:@')}", timeout=900)
-        lines = [line for line in payload.decode("utf-8", errors="replace").splitlines() if line.strip()]
-        messages: list[str] = []
-        for line in lines[-20:]:
+    def inspect_container(self, container: str) -> dict[str, Any]:
+        encoded = urllib.parse.quote(container, safe="")
+        return self._json(f"/containers/{encoded}/json", timeout=30)
+
+    def inspect_image(self, image: str) -> dict[str, Any]:
+        encoded = urllib.parse.quote(image, safe="")
+        return self._json(f"/images/{encoded}/json", timeout=30)
+
+    def create_container(self, name: str, payload: dict[str, Any]) -> str:
+        body = json.dumps(payload).encode("utf-8")
+        _status, _headers, raw = self._request(
+            "POST", f"/containers/create?name={urllib.parse.quote(name, safe='')}",
+            body=body, timeout=60,
+        )
+        data = json.loads(raw.decode("utf-8", errors="replace") or "{}")
+        return str(data.get("Id") or "")
+
+    def rename_container(self, container: str, new_name: str) -> None:
+        encoded = urllib.parse.quote(container, safe="")
+        self._request("POST", f"/containers/{encoded}/rename?name={urllib.parse.quote(new_name, safe='')}", timeout=30)
+
+    def remove_container(self, container: str) -> None:
+        encoded = urllib.parse.quote(container, safe="")
+        self._request("DELETE", f"/containers/{encoded}?force=1&v=0", timeout=30)
+
+    def set_restart_policy(self, container: str, policy: str) -> None:
+        encoded = urllib.parse.quote(container, safe="")
+        body = json.dumps({"RestartPolicy": {"Name": policy, "MaximumRetryCount": 0}}).encode("utf-8")
+        self._request("POST", f"/containers/{encoded}/update", body=body, timeout=30)
+
+    def restart_policies(self, containers: list[dict[str, Any]]) -> dict[str, str]:
+        """按容器名返回重启策略（always/unless-stopped/no…），inspect 并发执行。"""
+        policies: dict[str, str] = {}
+
+        def fetch(row: dict[str, Any]) -> tuple[str, str]:
+            name = str(row.get("Names") or row.get("Name") or "").lstrip("/")
+            container_id = str(row.get("Id") or row.get("ID") or name)
             try:
-                data = json.loads(line)
-                messages.append(str(data.get("status") or data.get("error") or line))
+                info = self.inspect_container(container_id)
+                host_config = info.get("HostConfig") if isinstance(info, dict) else {}
+                restart = host_config.get("RestartPolicy") if isinstance(host_config, dict) else {}
+                return name, str(restart.get("Name") or "no") or "no"
             except Exception:
-                messages.append(line)
+                return name, ""
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            for name, policy in executor.map(fetch, containers):
+                if name:
+                    policies[name] = policy
+        return policies
+
+    def recreate_container(self, container: str, image: str, progress: Callable[..., None] | None = None) -> dict[str, Any]:
+        """拉取新镜像并按原配置原地重建容器；失败自动回滚。"""
+        def report(step: str, percent: int | None = None, *, log: bool = True) -> None:
+            if progress:
+                try:
+                    progress(step, percent, log=log)
+                except TypeError:
+                    progress(step, percent)
+                except Exception:
+                    pass
+
+        self.assert_update_supported(self.inspect_container(container))
+        report(f"拉取镜像 {image}", 5)
+        log_fn = getattr(progress, "log", None)
+        if progress is not None:
+            layers: dict[str, list[int]] = {}
+            finished_layers: set[str] = set()
+
+            def on_pull_event(event: dict[str, Any]) -> None:
+                layer = str(event.get("id") or "")
+                detail = event.get("progressDetail") if isinstance(event.get("progressDetail"), dict) else {}
+                current = int(detail.get("current") or 0)
+                total = int(detail.get("total") or 0)
+                status_text = str(event.get("status") or "")
+                if layer and total > 0:
+                    layers[layer] = [current, total]
+                if layer and status_text in ("Pull complete", "Already exists") and layer not in finished_layers:
+                    finished_layers.add(layer)
+                    if callable(log_fn):
+                        log_fn(f"pull: 层 {layer} {'已存在' if status_text == 'Already exists' else '下载完成'}")
+                if not layer and status_text.startswith("Status:") and callable(log_fn):
+                    log_fn(f"pull: {status_text}")
+                if layers:
+                    downloaded = sum(item[0] for item in layers.values())
+                    overall = sum(item[1] for item in layers.values())
+                    if overall > 0:
+                        report(f"拉取镜像 {image}", 5 + int(downloaded / overall * 55), log=False)
+
+            self.pull_image_stream(image, on_event=on_pull_event)
+        else:
+            pull_result = self.pull_image(image)
+            if callable(log_fn):
+                for line in str(pull_result.get("output") or "").splitlines():
+                    if line.strip():
+                        log_fn(f"pull: {line.strip()}")
+        report("读取容器配置", 62)
+        info = self.inspect_container(container)
+        self.assert_update_supported(info)
+        name = str(info.get("Name") or container).lstrip("/")
+        old_id = str(info.get("Id") or container)
+        was_running = bool((info.get("State") or {}).get("Running"))
+        config = copy.deepcopy(info.get("Config") or {})
+        config["Image"] = image
+        host_config = copy.deepcopy(info.get("HostConfig") or {})
+        # Inspect 的 Mounts 包含匿名卷的真实名称，复用它们避免创建空的新卷。
+        explicit = {m.get("Target") for m in host_config.get("Mounts") or []}
+        binds = list(host_config.get("Binds") or [])
+        explicit.update(b.split(":")[1] for b in binds if ":" in b)
+        for mount in info.get("Mounts") or []:
+            if mount.get("Type") == "volume" and mount.get("Destination") not in explicit:
+                binds.append(f"{mount['Name']}:{mount['Destination']}:{'rw' if mount.get('RW') else 'ro'}")
+        host_config["Binds"] = binds
+        networks = (info.get("NetworkSettings") or {}).get("Networks") or {}
+        endpoints = {key: {k: copy.deepcopy(v) for k, v in value.items()
+                           if k in {"IPAMConfig", "Links", "Aliases", "DriverOpts", "GwPriority"}}
+                     for key, value in networks.items()}
+        # Docker 自动生成的容器 ID 别名不能沿用。
+        for endpoint in endpoints.values():
+            if endpoint.get("Aliases"):
+                endpoint["Aliases"] = [x for x in endpoint["Aliases"] if x not in {old_id, old_id[:12]}]
+        payload: dict[str, Any] = {**config, "HostConfig": host_config}
+        network_mode = str(host_config.get("NetworkMode") or "")
+        if endpoints and network_mode not in {"host", "none"} and not network_mode.startswith("container:"):
+            payload["NetworkingConfig"] = {"EndpointsConfig": endpoints}
+        backup_name = f"{name}-vm-old-{uuid.uuid4().hex[:10]}"
+        renamed = False
+        new_id = ""
+        disconnected = []
+        try:
+            if was_running:
+                report("停止容器", 70)
+                self.container_action(old_id, "stop")
+            report("备份旧容器", 78)
+            self.rename_container(old_id, backup_name)
+            renamed = True
+            # 释放旧端点的静态 IP，失败时按原配置重新连接。
+            for network, endpoint in endpoints.items():
+                if endpoint.get("IPAMConfig"):
+                    self._request("POST", f"/networks/{urllib.parse.quote(network, safe='')}/disconnect",
+                                  body=json.dumps({"Container": old_id, "Force": True}).encode())
+                    disconnected.append(network)
+            report("创建新容器", 86)
+            new_id = self.create_container(name, payload)
+            if not new_id:
+                raise InfraError("Docker 未返回新容器 ID。", status=502, code="recreate_failed")
+            if was_running:
+                report("启动并检查新容器", 94)
+                self.container_action(new_id, "start")
+                self.wait_container_ready(new_id)
+        except Exception as err:
+            report("更新失败，回滚中", None)
+            rollback_errors = []
+            if new_id:
+                try:
+                    self.remove_container(new_id)
+                except Exception as rollback_err:
+                    rollback_errors.append(f"清理新容器：{rollback_err}")
+            if renamed:
+                try:
+                    self.rename_container(old_id, name)
+                except Exception as rollback_err:
+                    rollback_errors.append(f"恢复名称：{rollback_err}")
+            for network in disconnected:
+                try:
+                    self._request("POST", f"/networks/{urllib.parse.quote(network, safe='')}/connect",
+                                  body=json.dumps({"Container": old_id, "EndpointConfig": endpoints[network]}).encode())
+                except Exception as rollback_err:
+                    rollback_errors.append(f"恢复网络 {network}：{rollback_err}")
+            if was_running:
+                try:
+                    self.container_action(old_id, "start")
+                except Exception as rollback_err:
+                    rollback_errors.append(f"恢复运行：{rollback_err}")
+            if rollback_errors:
+                raise InfraError(f"更新失败：{err}；回滚未完成（旧容器 {old_id}）：{'；'.join(rollback_errors)}",
+                                 status=502, code="rollback_failed") from err
+            raise
+        report("清理旧容器", 98)
+        warning = ""
+        try:
+            self.remove_container(old_id)
+        except Exception as err:
+            warning = f"新容器已就绪，旧容器 {backup_name} 清理失败，请手动处理：{err}"
+            report(warning, 98)
+        return {"exitCode": 0, "output": f"容器 {name} 已按镜像 {image} 重建完成。", "warning": warning}
+
+    @staticmethod
+    def update_block_reason(info: dict[str, Any]) -> str:
+        config = info.get("Config") or {}
+        labels = config.get("Labels") or info.get("Labels") or {}
+        labels = labels if isinstance(labels, dict) else {}
+        identity = str(info.get("Id") or info.get("ID") or "")
+        hostname = str(os.environ.get("HOSTNAME") or socket.gethostname())
+        image = str(config.get("Image") or info.get("Image") or "")
+        ref = _split_image_ref(image)
+        own_name = str(os.environ.get("APP_INFRA_SELF_CONTAINER") or "").strip()
+        name = str(info.get("Name") or info.get("Names") or "").lstrip("/")
+        if (labels.get("io.vistamirror.application") == "true"
+                or (ref and ref[0] == "lishiya003/vistamirror-admin")
+                or (identity and len(hostname) >= 12 and identity.startswith(hostname))
+                or (own_name and own_name in {identity, name})):
+            return "VistaMirror 容器请在宿主机通过 Docker Compose 拉取并重建，避免更新进程停止自身。"
+        host = info.get("HostConfig") or {}
+        state = info.get("State") if isinstance(info.get("State"), dict) else {}
+        if host.get("AutoRemove") or state.get("Paused") or info.get("State") == "paused":
+            return "自动删除或暂停的容器暂不支持原地更新，请先调整状态或使用 Compose。"
+        if labels.get("com.docker.swarm.service.id"):
+            return "Swarm 服务请通过编排器更新。"
+        return ""
+
+    @classmethod
+    def assert_update_supported(cls, info: dict[str, Any]) -> None:
+        reason = cls.update_block_reason(info)
+        if reason:
+            raise InfraError(reason, status=409, code="container_update_protected")
+
+    def wait_container_ready(self, container: str, *, timeout: float = 180, interval: float = 2) -> None:
+        started = time.monotonic()
+        while True:
+            state = self.inspect_container(container).get("State") or {}
+            health = (state.get("Health") or {}).get("Status")
+            if not state.get("Running") or state.get("Restarting") or health == "unhealthy":
+                raise InfraError("新容器未稳定运行或健康检查失败。", code="container_not_ready")
+            elapsed = time.monotonic() - started
+            if health == "healthy" or (not health and elapsed >= 5):
+                return
+            if elapsed >= timeout:
+                raise InfraError("新容器健康检查超时。", code="container_health_timeout")
+            time.sleep(interval)
+
+    def pull_image(self, image: str) -> dict[str, Any]:
+        return self.pull_image_stream(image)
+
+    def pull_image_stream(self, image: str, on_event: Callable[[dict[str, Any]], None] | None = None, *, timeout: int = 1500) -> dict[str, Any]:
+        """流式拉取镜像：逐行解析 Docker 的 JSON 进度事件，on_event 实时回调。"""
+        if not self.available:
+            raise InfraError(
+                "未检测到本机 Docker Socket。请在 Compose 中挂载 /var/run/docker.sock:/var/run/docker.sock 后重建容器。",
+                status=503,
+                code="local_docker_socket_missing",
+            )
+        connection = _UnixSocketHTTPConnection(self.socket_path, timeout=max(60, min(int(timeout), 1800)))
+        messages: list[str] = []
+        try:
+            connection.request("POST", f"/images/create?fromImage={urllib.parse.quote(image, safe='/:@')}")
+            response = connection.getresponse()
+            status = int(response.status)
+            if status >= 400:
+                detail = response.read(1024 * 1024).decode("utf-8", errors="replace").strip()
+                raise InfraError(f"本机 Docker 返回 HTTP {status}{f'：{detail}' if detail else ''}", status=502, code="local_docker_api_failed")
+            buffer = b""
+            while True:
+                try:
+                    chunk = response.read1(65536)
+                except (TimeoutError, socket.timeout) as err:
+                    raise InfraError("拉取镜像超时：网络或镜像源异常，请检查 NAS 的 Docker 代理/加速器配置。", status=504, code="image_pull_timeout") from err
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw_line, buffer = buffer.split(b"\n", 1)
+                    text = raw_line.decode("utf-8", errors="replace").strip()
+                    if not text:
+                        continue
+                    try:
+                        event = json.loads(text)
+                    except Exception:
+                        continue
+                    if event.get("error"):
+                        raise InfraError(f"拉取镜像失败：{event.get('error')}", status=502, code="image_pull_failed")
+                    if on_event:
+                        try:
+                            on_event(event)
+                        except Exception:
+                            pass
+                    status_text = str(event.get("status") or "")
+                    if status_text and not event.get("progressDetail"):
+                        messages.append(status_text if not event.get("id") else f"{event.get('id')}: {status_text}")
+            for raw_line in buffer.split(b"\n"):
+                text = raw_line.decode("utf-8", errors="replace").strip()
+                if not text:
+                    continue
+                try:
+                    event = json.loads(text)
+                except Exception:
+                    continue
+                if event.get("error"):
+                    raise InfraError(f"拉取镜像失败：{event.get('error')}", status=502, code="image_pull_failed")
+                if on_event:
+                    try:
+                        on_event(event)
+                    except Exception:
+                        pass
+        except PermissionError as err:
+            raise InfraError(
+                "Docker Socket 无访问权限。请为 VistaMirror 设置可访问 Socket 的用户/组，或在受信任的内网环境以 root 运行该容器。",
+                status=503,
+                code="local_docker_socket_permission",
+            ) from err
+        except OSError as err:
+            raise InfraError(f"无法连接本机 Docker Socket：{err}", status=502, code="local_docker_unavailable") from err
+        finally:
+            connection.close()
         return {"exitCode": 0, "output": "\n".join(messages[-12:]) or f"镜像 {image} 拉取完成"}
 
 
@@ -443,6 +838,16 @@ class InfraOperationManager:
         self._lock = threading.RLock()
         self._target_locks: dict[str, threading.Lock] = {}
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="infra-operation")
+        # 此进程无法继续上一次启动中的线程，不让遗留记录永久阻塞更新。
+        with self._lock:
+            rows = self._load()
+            interrupted = False
+            for row in rows:
+                if row.get("status") in {"queued", "running"}:
+                    row.update(status="failed", finishedAt=_now_iso(), error="服务重启导致任务中断，请检查容器和备份状态后重试。")
+                    interrupted = True
+            if interrupted:
+                self._save(rows)
 
     def _load(self) -> list[dict[str, Any]]:
         if not self.path.exists():
@@ -456,13 +861,18 @@ class InfraOperationManager:
     def _save(self, rows: list[dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(".tmp")
-        temp.write_text(json.dumps(rows[-300:], ensure_ascii=False, indent=2), encoding="utf-8")
+        completed = [row for row in rows if row.get("status") not in {"queued", "running"}][-300:]
+        keep = {row.get("id") for row in completed}
+        retained = [row for row in rows if row.get("status") in {"queued", "running"} or row.get("id") in keep]
+        temp.write_text(json.dumps(retained, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(self.path)
 
     def list(self, *, limit: int = 80) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._load()
-        return list(reversed(rows[-max(1, min(int(limit), 300)):]))
+        active = [row for row in reversed(rows) if row.get("status") in {"queued", "running"}]
+        finished = [row for row in reversed(rows) if row.get("status") not in {"queued", "running"}]
+        return active + finished[:max(0, max(1, min(int(limit), 300)) - len(active))]
 
     def _update(self, operation_id: str, **changes: Any) -> dict[str, Any]:
         with self._lock:
@@ -478,6 +888,45 @@ class InfraOperationManager:
             self._save(rows)
             return current
 
+    def _append_log(self, operation_id: str, line: str) -> None:
+        with self._lock:
+            rows = self._load()
+            for row in rows:
+                if str(row.get("id")) == operation_id:
+                    logs = row.get("logs") if isinstance(row.get("logs"), list) else []
+                    logs.append(f"[{_now_iso()[11:19]}] {str(line)}")
+                    row["logs"] = logs[-500:]
+                    break
+            self._save(rows)
+
+    class _Reporter:
+        """传给任务回调的进度上报器：report(step, percent) 更新进度并落一行日志，.log(line) 只落日志。"""
+
+        def __init__(self, manager: "InfraOperationManager", operation_id: str) -> None:
+            self._manager = manager
+            self._operation_id = operation_id
+            self._last_key: tuple[str, Any] = ("", None)
+            self._last_at = 0.0
+
+        def __call__(self, step: str, percent: int | float | None = None, *, log: bool = True) -> None:
+            pct = None if percent is None else max(0, min(100, int(percent)))
+            key = (str(step), pct)
+            now = time.monotonic()
+            if not log and now - self._last_at < 1.0:
+                return  # 节流：同阶段同百分比的密集事件不重复写盘
+            self._last_key = key
+            self._last_at = now
+            self._manager._update(self._operation_id, progress={
+                "step": str(step),
+                "percent": pct,
+                "at": _now_iso(),
+            })
+            if log:
+                self.log(str(step) if pct is None else f"{step}（{pct}%）")
+
+        def log(self, line: str) -> None:
+            self._manager._append_log(self._operation_id, line)
+
     def submit(
         self,
         *,
@@ -485,7 +934,8 @@ class InfraOperationManager:
         action: str,
         target: str,
         description: str,
-        callback: Callable[[], dict[str, Any]],
+        callback: Callable[..., dict[str, Any]],
+        with_progress: bool = False,
     ) -> dict[str, Any]:
         operation = {
             "id": uuid.uuid4().hex,
@@ -499,22 +949,33 @@ class InfraOperationManager:
             "finishedAt": "",
             "result": {},
             "error": "",
+            "progress": {},
+            "logs": [],
         }
         with self._lock:
             rows = self._load()
+            if action == "container_update":
+                for existing in rows:
+                    if (existing.get("hostId") == host_id and existing.get("target") == target
+                            and existing.get("action") == action and existing.get("status") in {"queued", "running"}):
+                        raise InfraError("该容器已有更新任务，请等待完成。", status=409, code="update_already_pending")
             rows.append(operation)
             self._save(rows)
             target_lock = self._target_locks.setdefault(host_id, threading.Lock())
 
         def run() -> None:
             with target_lock:
+                reporter = InfraOperationManager._Reporter(self, operation["id"])
+                reporter.log(f"任务开始：{description}")
                 self._update(operation["id"], status="running", startedAt=_now_iso())
                 try:
-                    result = callback()
-                    self._update(operation["id"], status="success", finishedAt=_now_iso(), result=result, error="")
+                    result = callback(reporter) if with_progress else callback()
+                    reporter.log("任务完成。")
+                    self._update(operation["id"], status="success", finishedAt=_now_iso(), result=result, error="", progress={"step": "完成", "percent": 100, "at": _now_iso()})
                     if self.event_logger:
                         self.event_logger(level="info", module="docker", action=action, message=description, status=200, detail={"hostId": host_id, "target": target})
                 except Exception as err:
+                    reporter.log(f"任务失败：{str(err)[:300]}")
                     self._update(operation["id"], status="failed", finishedAt=_now_iso(), error=str(err)[:800])
                     if self.event_logger:
                         self.event_logger(level="error", module="docker", action=action, message=f"{description}失败。", status=500, detail={"hostId": host_id, "target": target, "error": str(err)[:500]})
@@ -540,12 +1001,17 @@ class InfraService:
         self.runner_factory = runner_factory
         self._lock = threading.RLock()
         self.operations = InfraOperationManager(self.data_dir / "infra_operations.json", event_logger=event_logger)
+        self._update_check_cache: dict[str, dict[str, Any]] = {}
+        self._inventory_details_cache: dict[str, dict[str, Any]] = {}
+        self._update_check_locks: dict[str, threading.Lock] = {}
+        self._update_revision: dict[str, int] = {}
 
     @staticmethod
     def _default_config() -> dict[str, Any]:
         return {
             "hosts": [],
             "projects": [],
+            "autoUpdate": {},
         }
 
     @staticmethod
@@ -806,10 +1272,63 @@ class InfraService:
                 rows.append(dict(value))
         return rows
 
+    def _auto_update_flags(self, host_id: str) -> dict[str, bool]:
+        with self._lock:
+            config = self._load()
+        flags = config.get("autoUpdate")
+        if not isinstance(flags, dict):
+            return {}
+        per_host = flags.get(host_id)
+        if not isinstance(per_host, dict):
+            return {}
+        return {str(name): bool(on) for name, on in per_host.items()}
+
+    def _enrich_inventory(self, host_id: str, inventory: dict[str, Any]) -> dict[str, Any]:
+        """给容器清单补充：服务版本、重启策略、自动更新标记。"""
+        containers = inventory.get("containers") or []
+        flags = self._auto_update_flags(host_id)
+        key = tuple(sorted(str(row.get("ID") or row.get("Id") or row.get("Names")) for row in containers))
+        with self._lock:
+            cached = self._inventory_details_cache.get(host_id) or {}
+        restart = dict(cached.get("restart") or {})
+        version = str(cached.get("version") or "")
+        if cached.get("key") != key or time.monotonic() - cached.get("at", 0) >= 60:
+            try:
+                if self._is_local_host_id(host_id):
+                    client = self._local_docker()
+                    version = str(client.version().get("Version") or "")
+                    restart = client.restart_policies(containers)
+                else:
+                    runner = self._runner(self._host(host_id))
+                    version_result = runner.run("docker version --format '{{.Server.Version}}'", timeout=20)
+                    version = str(version_result.get("stdout") or "").strip()
+                    policy_result = runner.run(
+                        "docker ps -aq | xargs -r docker inspect --format '{{.Name}} {{.HostConfig.RestartPolicy.Name}}'",
+                        timeout=30,
+                    )
+                    if int(policy_result.get("exitCode") or 0) == 0:
+                        for line in str(policy_result.get("stdout") or "").splitlines():
+                            parts = line.strip().split(None, 1)
+                            if len(parts) == 2:
+                                restart[parts[0].lstrip("/")] = parts[1] or "no"
+            except Exception:
+                pass  # 增强信息失败不影响清单主流程
+            with self._lock:
+                self._inventory_details_cache[host_id] = {"key": key, "at": time.monotonic(), "restart": restart, "version": version}
+        for row in containers:
+            name = str(row.get("Names") or row.get("Name") or "").lstrip("/")
+            if name:
+                row["RestartPolicy"] = restart.get(name, "")
+                row["AutoUpdate"] = bool(flags.get(name))
+                row["UpdateBlockedReason"] = (LocalDockerClient.update_block_reason(row) if self._is_local_host_id(host_id)
+                                              else "远程容器请使用 Compose 更新。")
+        inventory["serverVersion"] = version
+        return inventory
+
     def docker_inventory(self, host_id: str) -> dict[str, Any]:
         if self._is_local_host_id(host_id):
             inventory = self._local_docker().inventory()
-            return {"hostId": LOCAL_DOCKER_HOST_ID, **inventory, "checkedAt": _now_iso()}
+            return self._enrich_inventory(host_id, {"hostId": LOCAL_DOCKER_HOST_ID, **inventory, "checkedAt": _now_iso()})
         host = self._host(host_id)
         runner = self._runner(host)
         containers_result = runner.run("docker ps -a --no-trunc --format '{{json .}}'", timeout=30)
@@ -818,13 +1337,203 @@ class InfraService:
         for result in (containers_result, images_result, compose_result):
             if int(result.get("exitCode") or 0) != 0:
                 raise InfraError(str(result.get("stderr") or "Docker 查询失败。"), status=502, code="docker_query_failed")
-        return {
+        return self._enrich_inventory(host_id, {
             "hostId": host_id,
             "containers": self._json_rows(str(containers_result.get("stdout") or "")),
             "images": self._json_rows(str(images_result.get("stdout") or "")),
             "compose": self._json_rows(str(compose_result.get("stdout") or "")),
             "checkedAt": _now_iso(),
-        }
+        })
+
+    def check_image_updates(self, host_id: str, *, force: bool = False) -> dict[str, Any]:
+        with self._lock:
+            lock = self._update_check_locks.setdefault(host_id, threading.Lock())
+        with lock:
+            return self._check_image_updates(host_id, force=force)
+
+    def _check_image_updates(self, host_id: str, *, force: bool = False) -> dict[str, Any]:
+        """对比本地镜像 digest 与 Docker Hub 远端 digest，判断哪些容器有更新。
+
+        结果按主机缓存 10 分钟，避免频繁打 registry。非 Docker Hub 镜像标记为 unsupported。
+        """
+        now = time.time()
+        with self._lock:
+            revision = self._update_revision.get(host_id, 0)
+            cached = self._update_check_cache.get(host_id)
+            if cached and not force and now - float(cached.get("at") or 0) < 600:
+                return dict(cached["payload"])
+        inventory = self.docker_inventory(host_id)
+        containers = inventory.get("containers") or []
+        # 按镜像去重，同一镜像只查一次远端
+        images: dict[str, list[str]] = {}
+        for row in containers:
+            image = str(row.get("Image") or "").strip()
+            name = str(row.get("Names") or row.get("Name") or "").lstrip("/")
+            if image and name:
+                images.setdefault(image, []).append(name)
+
+        # 本地 digest
+        container_digests: dict[str, str] = {}
+        if self._is_local_host_id(host_id):
+            client = self._local_docker()
+            def running_digest(row: dict[str, Any]) -> tuple[str, str]:
+                name = str(row.get("Names") or row.get("Name") or "").lstrip("/")
+                image = str(row.get("Image") or "")
+                try:
+                    image_id = row.get("ImageID") or client.inspect_container(str(row.get("ID") or name)).get("Image")
+                    if not image_id:
+                        return name, ""
+                    info = client.inspect_image(str(image_id))
+                    ref = _split_image_ref(image)
+                    return name, _local_image_digest(info.get("RepoDigests"), ref[0]) if ref else ""
+                except Exception:
+                    return name, ""
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+                container_digests.update(executor.map(running_digest, containers))
+        else:
+            runner = self._runner(self._host(host_id))
+            for row in containers:
+                name = str(row.get("Names") or row.get("Name") or "").lstrip("/")
+                image = str(row.get("Image") or "")
+                inspected = runner.run(f"docker inspect {shlex.quote(name)} --format '{{{{.Image}}}}'", timeout=30)
+                image_id = str(inspected.get("stdout") or "").strip()
+                digest = ""
+                if int(inspected.get("exitCode") or 0) == 0 and re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+                    result = runner.run(f"docker image inspect {shlex.quote(image_id)} --format '{{{{json .RepoDigests}}}}'", timeout=30)
+                    if int(result.get("exitCode") or 0) == 0:
+                        try:
+                            ref = _split_image_ref(image)
+                            digest = _local_image_digest(json.loads(str(result.get("stdout") or "[]")), ref[0]) if ref else ""
+                        except ValueError:
+                            pass
+                container_digests[name] = digest
+
+        # 远端 digest（并发，失败标记 unknown）
+        def remote_digest(image: str) -> tuple[str, set[str]]:
+            ref = _split_image_ref(image)
+            if not ref:
+                return image, set()
+            try:
+                return image, _docker_hub_remote_digest(ref[0], ref[1])
+            except Exception:
+                return image, set()
+
+        remote_digests: dict[str, set[str]] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            for image, digest in executor.map(remote_digest, images.keys()):
+                remote_digests[image] = digest
+
+        updates: dict[str, dict[str, Any]] = {}
+        by_name = {str(row.get("Names") or row.get("Name") or "").lstrip("/"): row for row in containers}
+        for image, names in images.items():
+            remote = remote_digests.get(image) or set()
+            for name in names:
+                local = container_digests.get(name) or ""
+                status = ("unsupported" if not _split_image_ref(image) else
+                          "unknown" if not remote or not local else
+                          "current" if local in remote else "update")
+                reason = str(by_name[name].get("UpdateBlockedReason") or "")
+                updates[name] = {"image": image, "status": status, "updateAvailable": status == "update",
+                                 "canUpdate": not reason, "blockedReason": reason,
+                                 "localDigest": local[-12:], "remoteDigest": (sorted(remote)[0] if remote else "")[-12:]}
+        payload = {"hostId": host_id, "updates": updates, "checkedAt": _now_iso()}
+        with self._lock:
+            if self._update_revision.get(host_id, 0) == revision:
+                self._update_check_cache[host_id] = {"at": now, "payload": payload}
+        return dict(payload)
+
+    def submit_container_update(self, host_id: str, container: str, image: str = "") -> dict[str, Any]:
+        """拉取新镜像并原地重建容器（本机）；远程主机交给 Compose 或提示手动。"""
+        if not DOCKER_TARGET_PATTERN.match(str(container or "")):
+            raise InfraError("容器标识格式不正确。", code="invalid_container")
+        inventory = self.docker_inventory(host_id)
+        row = next((item for item in inventory.get("containers") or []
+                    if str(item.get("Names") or item.get("Name") or "").lstrip("/") == container), None)
+        if not row:
+            raise InfraError("没有找到该容器，可能已被删除。", status=404, code="container_not_found")
+        target_image = str(image or row.get("Image") or "").strip()
+        if not DOCKER_TARGET_PATTERN.match(target_image):
+            raise InfraError("镜像名称格式不正确。", code="invalid_image")
+        if self._is_local_host_id(host_id):
+            client = self._local_docker()
+            client.assert_update_supported(client.inspect_container(container))
+            def callback(report):
+                try:
+                    return self._local_docker().recreate_container(container, target_image, progress=report)
+                finally:
+                    with self._lock:
+                        self._update_revision[host_id] = self._update_revision.get(host_id, 0) + 1
+                        self._update_check_cache.pop(host_id, None)
+                        self._inventory_details_cache.pop(host_id, None)
+        else:
+            raise InfraError("远程主机上的容器请使用所属 Compose 项目的「拉取并更新」，或 SSH 到服务器手动操作。", code="remote_container_update_unsupported")
+        return self.operations.submit(
+            host_id=host_id,
+            action="container_update",
+            target=container,
+            description=f"更新容器 {container} → {target_image}",
+            callback=callback,
+            with_progress=True,
+        )
+
+    def set_restart_policy(self, host_id: str, container: str, policy: str) -> dict[str, Any]:
+        allowed = {"always", "unless-stopped", "no", "on-failure"}
+        if policy not in allowed:
+            raise InfraError("不支持的重启策略。", code="invalid_restart_policy")
+        if not DOCKER_TARGET_PATTERN.match(str(container or "")):
+            raise InfraError("容器标识格式不正确。", code="invalid_container")
+        if self._is_local_host_id(host_id):
+            self._local_docker().set_restart_policy(container, policy)
+        else:
+            self._checked_run(host_id, f"docker update --restart={shlex.quote(policy)} {shlex.quote(container)}", timeout=30)
+        with self._lock:
+            self._inventory_details_cache.pop(host_id, None)
+        return {"hostId": host_id, "container": container, "restartPolicy": policy}
+
+    def set_auto_update(self, host_id: str, container: str, enabled: bool) -> dict[str, Any]:
+        if not DOCKER_TARGET_PATTERN.match(str(container or "")):
+            raise InfraError("容器标识格式不正确。", code="invalid_container")
+        if enabled:
+            if not self._is_local_host_id(host_id):
+                raise InfraError("远程容器请使用 Compose 更新。", code="remote_container_update_unsupported")
+            client = self._local_docker()
+            client.assert_update_supported(client.inspect_container(container))
+        with self._lock:
+            config = self._load()
+            auto = config.get("autoUpdate") if isinstance(config.get("autoUpdate"), dict) else {}
+            per_host = auto.get(host_id) if isinstance(auto.get(host_id), dict) else {}
+            per_host[container] = bool(enabled)
+            auto[host_id] = per_host
+            config["autoUpdate"] = auto
+            self._save(config)
+        return {"hostId": host_id, "container": container, "autoUpdate": bool(enabled)}
+
+    def run_auto_image_updates(self) -> dict[str, int]:
+        """后台巡检：对开启自动更新的容器，有新版就排队重建。"""
+        with self._lock:
+            config = self._load()
+        auto = config.get("autoUpdate") if isinstance(config.get("autoUpdate"), dict) else {}
+        summary = {"checked": 0, "queued": 0}
+        for host_id, per_host in auto.items():
+            if not isinstance(per_host, dict):
+                continue
+            flagged = [name for name, on in per_host.items() if on]
+            if not flagged:
+                continue
+            try:
+                updates = self.check_image_updates(str(host_id), force=True).get("updates") or {}
+            except Exception:
+                continue
+            for name in flagged:
+                info = updates.get(name) or {}
+                summary["checked"] += 1
+                if info.get("updateAvailable") and info.get("canUpdate", True):
+                    try:
+                        self.submit_container_update(str(host_id), name)
+                        summary["queued"] += 1
+                    except InfraError:
+                        continue
+        return summary
 
     def docker_stats(self, host_id: str) -> dict[str, Any]:
         if self._is_local_host_id(host_id):

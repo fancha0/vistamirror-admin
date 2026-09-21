@@ -24,3 +24,14 @@ venv/
 data/*.json
 data/*.jsonl
 data/*.log
+
+# Development previews and evidence are kept locally, outside release images
+runtime/dashboard-preview.html
+runtime/prototype-dashboard.html
+runtime/proto_dash*.png
+docs/screenshots/
+.env.local
+.fnos-dev.env
+.playwright-mcp/
+
+.env.fnos-dev

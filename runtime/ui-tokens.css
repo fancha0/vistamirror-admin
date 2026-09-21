@@ -1,0 +1,28 @@
+/* Shared scales for application pages, authentication and standalone previews. */
+:root {
+  --vm-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --vm-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --vm-font-12: 12px;
+  --vm-font-14: 14px;
+  --vm-font-16: 16px;
+  --vm-font-20: 20px;
+  --vm-font-24: 24px;
+  --vm-font-28: 28px;
+  --vm-font-36: 36px;
+  --vm-page-title: 24px;
+  --vm-control-height: 38px;
+  --vm-radius-control: 10px;
+  --vm-radius-card: 16px;
+  --vm-radius-dialog: 20px;
+  --vm-space-1: 4px;
+  --vm-space-2: 8px;
+  --vm-space-3: 12px;
+  --vm-space-4: 16px;
+  --vm-space-5: 20px;
+  --vm-space-6: 24px;
+  --vm-space-8: 32px;
+  --vm-page-gutter: 24px;
+}
+@media (max-width: 640px) {
+  :root { --vm-page-title: 22px; --vm-control-height: 44px; --vm-page-gutter: 12px; }
+}

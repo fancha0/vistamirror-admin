@@ -8,62 +8,50 @@ class Drive115TransferTests(unittest.TestCase):
     def make_service(self):
         return Drive115Service({"enabled": True, "cookie": "UID=test; CID=test", "defaultCid": "100"})
 
-    def test_playback_url_follows_json_file_url_302(self):
+    def test_playback_uses_encrypted_client_api_without_fetching_video(self):
         service = self.make_service()
         opened = []
-
         class Response:
-            def __init__(self, body="", location=""):
-                self.body = body.encode("utf-8")
-                self.headers = {"Location": location}
-
-            def read(self):
-                return self.body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return False
-
+            def read(self, limit):
+                self_limit = limit
+                return b'{"state":true,"data":"encrypted"}'
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
         class Opener:
             def open(self, request, timeout=None):
                 opened.append(request)
-                if "webapi.115.com/files/download" in request.full_url:
-                    return Response('{"state":true,"data":{"file_url_302":"https://bridge.example/once"}}')
-                if request.full_url != "https://bridge.example/once":
-                    raise AssertionError(request.full_url)
-                return Response(location="https://cdn.example/video.mkv")
-
-        with patch("backend_modules.drive115_service.urllib.request.build_opener", return_value=Opener()):
-            result = service.resolve_download_url("pick-123")
-
+                return Response()
+        with patch("backend_modules.drive115_service.urllib.request.build_opener", return_value=Opener()), patch("p115cipher.rsa_decrypt", return_value=b'{"123":{"url":{"url":"https://cdn.example/video.mkv"}}}'):
+            result = service.resolve_download_url("pick-123", user_agent="Emby-test")
         self.assertEqual(result, "https://cdn.example/video.mkv")
-        self.assertIn("dl=1", opened[0].full_url)
-        self.assertIsNone(opened[1].get_header("Cookie"))
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened[0].full_url, "https://proapi.115.com/app/chrome/downurl")
+        self.assertEqual(opened[0].method, "POST")
+        self.assertEqual(opened[0].get_header("User-agent"), "Emby-test")
+        self.assertTrue(opened[0].data.startswith(b"data="))
+        self.assertNotIn(b"pick-123", opened[0].data)
 
     def test_playback_url_surfaces_expired_cookie_response(self):
-        service = self.make_service()
-
         class Response:
-            headers = {"Location": ""}
-
-            def read(self):
-                return '{"state":false,"errno":990001,"error":"登录超时，请重新登录。"}'.encode("utf-8")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return False
-
+            def read(self, limit): return '{"state":false,"error":"登录超时，请重新登录。"}'.encode()
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
         class Opener:
-            def open(self, request, timeout=None):
-                return Response()
-
+            def open(self, *args, **kwargs): return Response()
         with patch("backend_modules.drive115_service.urllib.request.build_opener", return_value=Opener()):
             with self.assertRaisesRegex(RuntimeError, "登录超时"):
-                service.resolve_download_url("pick-123")
+                self.make_service().resolve_download_url("pick-123")
+
+    def test_playback_rejects_invalid_decrypted_url(self):
+        class Response:
+            def read(self, limit): return b'{"state":true,"data":{"123":{"url":{"url":"file:///etc/passwd"}}}}'
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+        class Opener:
+            def open(self, *args, **kwargs): return Response()
+        with patch("backend_modules.drive115_service.urllib.request.build_opener", return_value=Opener()):
+            with self.assertRaisesRegex(RuntimeError, "未返回"):
+                self.make_service().resolve_download_url("pick-123")
 
     def test_submit_uses_single_file_id_and_user_id(self):
         service = self.make_service()

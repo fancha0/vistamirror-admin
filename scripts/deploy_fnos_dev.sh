@@ -57,15 +57,13 @@ if [[ -f "${CONFIG_FILE}" ]]; then
   echo "[3/4] 同步开发环境配置"
   scp -q -P "${FNOS_SSH_PORT}" "${CONFIG_FILE}" \
     "${FNOS_SSH_TARGET}:${REMOTE_SOURCE}/.env.fnos-dev"
-  COMPOSE_ENV="--env-file .env.fnos-dev"
 else
   echo "[3/4] 未找到 .fnos-dev.env，使用项目默认开发参数"
-  COMPOSE_ENV=""
 fi
 
 echo "[4/4] 在飞牛本地构建并重启开发容器"
 ssh -o StrictHostKeyChecking=accept-new -p "${FNOS_SSH_PORT}" "${FNOS_SSH_TARGET}" \
-  "cd '${REMOTE_SOURCE}' && docker compose ${COMPOSE_ENV} -f docker-compose.fnos-dev.yml up -d --build --remove-orphans && docker compose ${COMPOSE_ENV} -f docker-compose.fnos-dev.yml ps"
+  "cd '${REMOTE_SOURCE}' && bash scripts/fnos_dev_compose.sh"
 
 DEV_HOST="${FNOS_SSH_TARGET#*@}"
 DEV_PORT="${FNOS_DEV_ADMIN_PORT:-18091}"

@@ -89,7 +89,10 @@ from backend_modules.hdhive_service import (
     normalize_hdhive_config as module_normalize_hdhive_config,
     public_hdhive_config,
 )
-from backend_modules.infra_service import InfraError, InfraService
+from backend_modules.dashboard_service import LibraryTrendService
+from backend_modules.host_metrics_service import HostMetricsService
+from backend_modules.connectivity_service import targets as connectivity_targets, public_target, probe as connectivity_probe
+from backend_modules.infra_service import InfraError, InfraService, set_registry_urlopen
 from backend_modules.ip_locator import build_ip_display
 from backend_modules.media_identity_service import MediaIdentityService
 from backend_modules.notification_event_factory import PlaybackNotificationEventFactory
@@ -113,6 +116,7 @@ from backend_modules.notification_platform import (
 )
 from backend_modules.playback_event_logger import append_playback_event
 from backend_modules.playback_history_service import PlaybackHistoryService
+from backend_modules.strm_event_log import recent_events as read_strm_events, sanitize as sanitize_strm_event
 from backend_modules.project_event_logger import append_project_event, clear_project_events, read_project_events, redact_sensitive
 from backend_modules.store import app_store
 from backend_modules.cover_studio_service import (
@@ -246,6 +250,7 @@ HDHIVE_CHECKIN_STOP = threading.Event()
 COVER_STUDIO_SCHEDULE_STOP = threading.Event()
 _COVER_STUDIO_SERVICE: CoverStudioService | None = None
 _INFRA_SERVICE: InfraService | None = None
+_INFRA_SERVICE_LOCK = threading.Lock()
 COVER_STUDIO_SCHEDULER: CoverStudioScheduler | None = None
 
 EMBY_ENV_FIELD_MAP: dict[str, str] = {
@@ -320,6 +325,10 @@ def _write_project_event(
     status: int | str = "",
     detail: Any = None,
 ) -> None:
+    if module == "strm115":
+        message = sanitize_strm_event(message)
+        detail = sanitize_strm_event(detail)
+        request_path = sanitize_strm_event(request_path)
     try:
         append_project_event(
             PROJECT_EVENT_LOG_FILE,
@@ -339,9 +348,29 @@ def _write_project_event(
 
 def _infra_service() -> InfraService:
     global _INFRA_SERVICE
-    if _INFRA_SERVICE is None:
-        _INFRA_SERVICE = InfraService(data_dir=DATA_DIR, event_logger=_write_project_event)
-    return _INFRA_SERVICE
+    with _INFRA_SERVICE_LOCK:
+        if _INFRA_SERVICE is None:
+            _INFRA_SERVICE = InfraService(data_dir=DATA_DIR, event_logger=_write_project_event)
+        return _INFRA_SERVICE
+
+
+LIBRARY_TREND_SERVICE = LibraryTrendService()
+HOST_METRICS_SERVICE = HostMetricsService.from_env()
+INFRA_AUTO_UPDATE_STOP = threading.Event()
+
+
+def _infra_auto_update_loop() -> None:
+    """每 6 小时巡检一次开启「自动更新」的容器，有新版就排队重建。"""
+    while not INFRA_AUTO_UPDATE_STOP.wait(6 * 3600):
+        try:
+            summary = _infra_service().run_auto_image_updates()
+            if summary.get("queued"):
+                _write_project_event(
+                    level="info", module="docker", action="infra_auto_update",
+                    message=f"自动更新巡检：检查 {summary.get('checked', 0)} 个容器，排队更新 {summary['queued']} 个。",
+                )
+        except Exception as err:
+            print(f"[infra_auto_update] {err}")
 
 
 def _cover_studio_service() -> CoverStudioService:
@@ -870,6 +899,9 @@ def _urlopen_global(request: urllib.request.Request, *, timeout: float, context:
     if context is not None:
         return urllib.request.urlopen(request, context=context, timeout=timeout)
     return urllib.request.urlopen(request, timeout=timeout)
+
+
+set_registry_urlopen(_urlopen_global)  # Docker Hub 更新检测走全局代理
 
 
 def _env_managed_ai_fields() -> list[str]:
@@ -1646,6 +1678,10 @@ def _write_strm115_config_unlocked(config: dict[str, Any]) -> None:
     temporary.replace(STRM115_CONFIG_FILE)
 
 
+def _write_strm_event(**event: Any) -> None:
+    _write_project_event(**sanitize_strm_event(event))
+
+
 def _strm115_schedule_loop() -> None:
     """Run one bounded incremental batch per interval; never overlaps manual sync."""
     last_run = 0.0
@@ -1661,12 +1697,12 @@ def _strm115_schedule_loop() -> None:
         if not STRM115_SYNC_LOCK.acquire(blocking=False):
             continue
         try:
-            service = Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=Drive115Service(_apply_drive115_env_overrides(_read_store_unlocked().get("drive115Config"))))
+            service = Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=Drive115Service(_apply_drive115_env_overrides(_read_store_unlocked().get("drive115Config"))), event_callback=_write_strm_event)
             result = service.sync(mode="safe_incremental")
-            _write_project_event(level="info" if result.get("ok") else "warning", module="strm115", action="strm115_scheduled_sync", message="115 STRM 定时安全增量已执行。", detail=result.get("summary") if isinstance(result.get("summary"), dict) else {})
+            _write_project_event(level="info" if result.get("ok") else "warning", module="strm115", action="strm115_scheduled_sync", message="115 STRM 定时安全增量已执行。" if result.get("ok") else "定时同步部分完成，存在失败文件。", detail=result.get("summary") if isinstance(result.get("summary"), dict) else {})
             last_run = now
         except Exception as err:
-            _write_project_event(level="warning", module="strm115", action="strm115_scheduled_sync_failed", message="115 STRM 定时同步失败。", detail={"error": str(err)})
+            _write_project_event(level="error", module="strm115", action="strm115_scheduled_sync_failed", message="115 STRM 定时同步失败。", detail={"error": str(err)})
             last_run = now
         finally:
             STRM115_SYNC_LOCK.release()
@@ -1915,6 +1951,13 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/moviepilot/config":
             self._handle_moviepilot_config_get()
             return
+        if path == "/api/network/connectivity":
+            rows = self._connectivity_targets()
+            self._send_json(200, {"ok": True, "targets": [public_target(row) for row in rows]})
+            return
+        if path == "/api/tmdb/config":
+            self._handle_tmdb_config(False)
+            return
         if path == "/api/network/config":
             self._handle_network_config_get()
             return
@@ -1992,6 +2035,18 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/infra/container/logs":
             self._handle_infra_container_logs_get(parsed.query)
+            return
+        if path == "/api/dashboard/host-metrics":
+            self._send_json(200, {"ok": True, "status": HOST_METRICS_SERVICE.snapshot()})
+            return
+        if path == "/api/emby/ping":
+            self._handle_emby_ping()
+            return
+        if path == "/api/dashboard/library-trend":
+            self._handle_dashboard_library_trend(parsed.query)
+            return
+        if path == "/api/infra/docker/check-updates":
+            self._handle_infra_docker_check_updates_get(parsed.query)
             return
         if path == "/api/infra/operations":
             self._handle_infra_operations_get(parsed.query)
@@ -2074,6 +2129,15 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/infra/containers/action":
             self._handle_infra_container_action()
             return
+        if path == "/api/infra/containers/update":
+            self._handle_infra_container_update()
+            return
+        if path == "/api/infra/containers/restart-policy":
+            self._handle_infra_container_restart_policy()
+            return
+        if path == "/api/infra/containers/auto-update":
+            self._handle_infra_container_auto_update()
+            return
         if path == "/api/infra/images/pull":
             self._handle_infra_image_pull()
             return
@@ -2094,6 +2158,20 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/moviepilot/config":
             self._handle_moviepilot_config_save()
+            return
+        if path == "/api/network/connectivity":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            target_id = payload.get("targetId") if isinstance(payload, dict) else None
+            row = next((row for row in self._connectivity_targets() if row["id"] == target_id), None)
+            if row is None:
+                self._send_json(400, {"ok": False, "error": "未知检测目标"})
+                return
+            self._send_json(200, {"ok": True, "result": connectivity_probe(row)})
+            return
+        if path == "/api/tmdb/config":
+            self._handle_tmdb_config(True)
             return
         if path == "/api/network/config":
             self._handle_network_config_save()
@@ -2173,8 +2251,14 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/drive115/strm/config":
             self._handle_strm115_config_save()
             return
+        if path == "/api/drive115/strm/playback-test":
+            self._handle_strm115_playback_test()
+            return
         if path == "/api/drive115/strm/sync":
             self._handle_strm115_sync()
+            return
+        if path == "/api/drive115/strm/rewrite-links":
+            self._handle_strm115_rewrite_links()
             return
         if path == "/api/drive115/strm/cleanup":
             self._handle_strm115_cleanup()
@@ -2532,6 +2616,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             tmdb_token=tmdb_token,
             tmdb_language=tmdb_language,
             tmdb_region=tmdb_region,
+            metadata_cache_path=DATA_DIR / "missing_tmdb_cache.sqlite3",
+            force_refresh=payload.get("forceRefresh") is True,
+            urlopen=_urlopen_global,
         )
 
         worker = threading.Thread(
@@ -3337,6 +3424,85 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         self._infra_response(lambda: {"operation": _infra_service().submit_container_action(str(body.get("hostId") or "").strip(), str(body.get("container") or "").strip(), str(body.get("action") or "").strip())})
 
+    def _handle_emby_ping(self) -> None:
+        """媒体库配置页「重新检测」：计时访问 /System/Info，返回延迟与服务器信息。"""
+        base_url = str(self.headers.get("X-Emby-Base-Url") or "").strip().rstrip("/")
+        api_key = str(self.headers.get("X-Emby-Api-Key") or "").strip()
+        if not base_url or not api_key:
+            self._send_json(400, {"ok": False, "error": "请先填写服务器地址和 API Key。"})
+            return
+        started = time.perf_counter()
+        try:
+            info = self._emby_request(base_url=base_url, api_key=api_key, path="/System/Info")
+        except Exception:
+            self._send_json(502, {"ok": False, "error": "无法连接媒体服务器，请检查地址与网络。"})
+            return
+        latency_ms = max(1, round((time.perf_counter() - started) * 1000))
+        info = info if isinstance(info, dict) else {}
+        self._send_json(200, {
+            "ok": True,
+            "latencyMs": latency_ms,
+            "serverName": str(info.get("ServerName") or ""),
+            "version": str(info.get("Version") or ""),
+        })
+
+    def _handle_dashboard_library_trend(self, query: str) -> None:
+        try:
+            base_url = str(self.headers.get("X-Emby-Base-Url") or "").strip().rstrip("/")
+            api_key = str(self.headers.get("X-Emby-Api-Key") or "").strip()
+            if not base_url or not api_key:
+                self._send_json(400, {"ok": False, "error": "请先配置 Emby 连接。"})
+                return
+            offset = int(self._infra_query_value(query, "offset", "0"))
+            result = LIBRARY_TREND_SERVICE.get(base_url, api_key, offset,
+                lambda path: self._emby_request(base_url=base_url, api_key=api_key, path=path))
+            self._send_json(200, {"ok": True, "trend": result})
+        except Exception:
+            self._send_json(502, {"ok": False, "error": "入库趋势读取失败，请检查 Emby 连接后重试。"})
+
+    def _handle_infra_docker_check_updates_get(self, query: str) -> None:
+        host_id = self._infra_query_value(query, "hostId")
+        force = self._infra_query_value(query, "force") in {"1", "true", "yes"}
+        self._infra_response(lambda: {"updates": _infra_service().check_image_updates(host_id, force=force)})
+
+    def _handle_infra_container_update(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        def action() -> dict[str, Any]:
+            host_id = str(body.get("hostId") or "").strip()
+            container = str(body.get("container") or "").strip()
+            operation = _infra_service().submit_container_update(host_id, container, str(body.get("image") or "").strip())
+            self._log_event(module="docker", action="infra_container_update", message=f"已提交容器更新任务：{container}", status=200, detail={"hostId": host_id, "container": container})
+            return {"operation": operation}
+
+        self._infra_response(action)
+
+    def _handle_infra_container_restart_policy(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+
+        def action() -> dict[str, Any]:
+            host_id = str(body.get("hostId") or "").strip()
+            container = str(body.get("container") or "").strip()
+            result = _infra_service().set_restart_policy(host_id, container, str(body.get("policy") or "").strip())
+            self._log_event(module="docker", action="infra_restart_policy", message=f"已调整容器重启策略：{container} → {result['restartPolicy']}", status=200, detail={"hostId": host_id, "container": container})
+            return {"result": result}
+
+        self._infra_response(action)
+
+    def _handle_infra_container_auto_update(self) -> None:
+        body = self._read_json_body()
+        if body is None:
+            return
+        self._infra_response(lambda: {"result": _infra_service().set_auto_update(
+            str(body.get("hostId") or "").strip(),
+            str(body.get("container") or "").strip(),
+            bool(body.get("enabled")),
+        )})
+
     def _handle_infra_image_pull(self) -> None:
         body = self._read_json_body()
         if body is None:
@@ -3650,6 +3816,16 @@ class AppHandler(SimpleHTTPRequestHandler):
             "config": config,
             "envManaged": _env_managed_network_fields(),
         })
+
+    def _connectivity_targets(self):
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            media = _apply_emby_env_overrides(store.get("embyConfig"))
+            notifications = _apply_notification_env_overrides(store.get("notificationConfig"), legacy_bot_config=store.get("botConfig"))
+            moviepilot = _apply_moviepilot_env_overrides(store.get("moviePilotConfig"))
+        # Public services use the global proxy, then the same environment fallback.
+        proxy = _network_proxy_url() or urllib.request.getproxies().get("https", "")
+        return connectivity_targets(media, notifications, moviepilot, proxy)
 
     def _handle_network_config_save(self) -> None:
         payload = self._read_json_body()
@@ -4655,6 +4831,40 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _handle_tmdb_config(self, save: bool) -> None:
+        fields = ("tmdbEnabled", "tmdbToken", "tmdbLanguage", "tmdbRegion")
+        payload = self._read_json_body() if save else None
+        if save and payload is None:
+            return
+        locked = []
+        if _env_override_value("APP_TMDB_TOKEN") or _env_override_value("TMDB_TOKEN"):
+            locked = ["tmdbToken", "tmdbEnabled"]
+        with STORE_LOCK:
+            store = _read_store_unlocked()
+            config = _apply_emby_env_overrides(store.get("embyConfig"))
+            if save:
+                incoming = payload.get("config") if isinstance(payload, dict) else None
+                if not isinstance(incoming, dict):
+                    self._send_json(400, {"ok": False, "error": "配置格式错误"})
+                    return
+                draft = dict(config)
+                for field in fields:
+                    if field in incoming and field not in locked:
+                        draft[field] = bool(incoming[field]) if field == "tmdbEnabled" else str(incoming[field] or "").strip()
+                if draft["tmdbEnabled"] and not draft["tmdbToken"]:
+                    self._send_json(400, {"ok": False, "error": "启用海报兜底前请填写 Token"})
+                    return
+                draft["tmdbLanguage"] = draft["tmdbLanguage"] or "zh-CN"
+                draft["tmdbRegion"] = (draft["tmdbRegion"] or "CN").upper()
+                raw = dict(store.get("embyConfig") or {})
+                for field in fields:
+                    if field not in locked:
+                        raw[field] = draft[field]
+                store["embyConfig"] = raw
+                _write_store_unlocked(store)
+                config = _apply_emby_env_overrides(raw)
+        self._send_json(200, {"ok": True, "config": {field: config[field] for field in fields}, "envManaged": locked})
+
     def _handle_tmdb_test(self) -> None:
         payload = self._read_json_body()
         if payload is None:
@@ -4811,13 +5021,13 @@ class AppHandler(SimpleHTTPRequestHandler):
     def _strm115_service(self) -> Strm115Service:
         with STRM115_LOCK:
             config = _read_strm115_config_unlocked()
-        return Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store())
+        return Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store(), event_callback=_write_strm_event)
 
     def _handle_strm115_config_get(self) -> None:
         with STRM115_LOCK:
             config = _read_strm115_config_unlocked()
-        service = Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store())
-        self._send_json(200, {"ok": True, "strm115Config": public_strm115_config(config), "status": service.status()})
+        service = Strm115Service(config=config, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store(), event_callback=_write_strm_event)
+        self._send_json(200, {"ok": True, "strm115Config": public_strm115_config(config), "status": service.status(), "samples": service.playback_samples()})
 
     def _handle_strm115_status_get(self) -> None:
         try:
@@ -4828,8 +5038,12 @@ class AppHandler(SimpleHTTPRequestHandler):
         self._send_json(200, {"ok": True, "status": status})
 
     def _handle_strm115_logs_get(self) -> None:
-        events, total = read_project_events(PROJECT_EVENT_LOG_FILE, module="strm115", limit=100)
-        self._send_json(200, {"ok": True, "events": events, "total": total, "returned": len(events)})
+        params = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        try:
+            limit = max(100, min(1000, int(params.get("limit", ["500"])[0])))
+        except (TypeError, ValueError):
+            limit = 500
+        self._send_json(200, {"ok": True, **read_strm_events(PROJECT_EVENT_LOG_FILE, limit)})
 
     def _handle_strm115_config_save(self) -> None:
         payload = self._read_json_body()
@@ -4846,8 +5060,21 @@ class AppHandler(SimpleHTTPRequestHandler):
             level="info", module="strm115", action="strm115_config_saved", message="115 STRM 配置已保存。", status=200,
             detail={"enabled": bool(saved.get("enabled")), "sourceCid": saved.get("sourceCid"), "outputDir": saved.get("outputDir")},
         )
-        service = Strm115Service(config=saved, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store())
-        self._send_json(200, {"ok": True, "strm115Config": public_strm115_config(saved), "status": service.status()})
+        service = Strm115Service(config=saved, index_path=STRM115_INDEX_FILE, drive=self._drive115_service_from_store(), event_callback=_write_strm_event)
+        self._send_json(200, {"ok": True, "strm115Config": public_strm115_config(saved), "status": service.status(), "samples": service.playback_samples()})
+
+    def _handle_strm115_playback_test(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        try:
+            result = self._strm115_service().test_playback(str(payload.get("fileId") or ""), user_agent=self.headers.get("User-Agent", ""))
+        except Exception as err:
+            self._log_event(level="error", module="strm115", action="strm115_test_failed", message="播放链路测试失败。", detail={"error": str(err)})
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        self._log_event(level="info", module="strm115", action="strm115_test_done", message="播放链路测试通过。", detail={"name": result.get("fileName"), "readBytes": result.get("readBytes"), "elapsedMs": result.get("elapsedMs")})
+        self._send_json(200, result)
 
     def _handle_strm115_sync(self) -> None:
         payload = self._read_json_body()
@@ -4863,16 +5090,34 @@ class AppHandler(SimpleHTTPRequestHandler):
             finally:
                 STRM115_SYNC_LOCK.release()
         except Exception as err:
-            self._log_event(level="warning", module="strm115", action="strm115_sync_failed", message="115 STRM 同步失败。", detail={"error": str(err), "dryRun": dry_run, "mode": mode})
+            self._log_event(level="error", module="strm115", action="strm115_sync_failed", message="115 STRM 同步失败。", detail={"error": str(err), "dryRun": dry_run, "mode": mode})
             self._send_json(502, {"ok": False, "error": str(err)})
             return
         self._log_event(
             level="info" if result.get("ok") else "warning", module="strm115", action="strm115_sync_preview" if dry_run else "strm115_sync",
-            message="115 STRM 预览完成。" if dry_run else "115 STRM 同步完成。", status=200,
+            message=("115 STRM 预览完成。" if dry_run else "115 STRM 同步完成。" if result.get("summary", {}).get("complete") else "本批同步完成，已保存断点。") if result.get("ok") else "115 STRM 同步部分完成，存在失败文件。", status=200,
             detail=result.get("summary") if isinstance(result.get("summary"), dict) else {},
         )
         result["status"] = self._strm115_service().status()
         self._send_json(200, result)
+
+    def _handle_strm115_rewrite_links(self) -> None:
+        if self._read_json_body() is None:
+            return
+        if not STRM115_SYNC_LOCK.acquire(blocking=False):
+            self._send_json(409, {"ok": False, "error": "STRM 同步或维护正在执行，请稍后重试。"})
+            return
+        try:
+            result = self._strm115_service().rewrite_links()
+        except Exception as err:
+            self._log_event(level="error", module="strm115", action="strm115_rewrite_failed", message="更新 STRM 地址失败。", detail={"error": str(err)})
+            self._send_json(502, {"ok": False, "error": str(err)})
+            return
+        finally:
+            STRM115_SYNC_LOCK.release()
+        self._log_event(level="info" if result["ok"] else "warning", module="strm115", action="strm115_rewrite_links", message="已更新现有 STRM 播放地址。" if result["ok"] else "STRM 地址更新部分完成，存在失败文件。", detail=result["summary"])
+        # Partial failures remain a structured result so the UI can report counts.
+        self._send_json(200, {**result, "ok": True, "complete": result["ok"]})
 
     def _handle_strm115_cleanup(self) -> None:
         payload = self._read_json_body()
@@ -4899,20 +5144,26 @@ class AppHandler(SimpleHTTPRequestHandler):
         file_id = raw_file_id.rsplit(".", 1)[0] if public_path and "." in raw_file_id else raw_file_id
         params = urllib.parse.parse_qs(query, keep_blank_values=False)
         try:
-            record = self._strm115_service().resolve_file(
-                file_id,
-                expires=str((params.get("exp") or [""])[0]),
-                signature=str((params.get("sig") or [""])[0]),
-            )
+            service = self._strm115_service()
+            if public_path and file_id.startswith("s_"):
+                record = service.resolve_short_file(file_id)
+            else:
+                record = service.resolve_file(
+                    file_id,
+                    expires=str((params.get("exp") or [""])[0]),
+                    signature=str((params.get("sig") or [""])[0]),
+                )
+            file_id = str(record.get("id") or file_id)
             pick_code = str(record.get("pickCode") or "").strip()
             if not pick_code:
                 raise RuntimeError("STRM 索引缺少 115 pick_code，请重新同步。")
-            location, cache_hit = self._strm115_service().resolve_playback_url(record)
+            location, cache_hit = self._strm115_service().resolve_playback_url(record, user_agent=self.headers.get("User-Agent", ""))
         except RuntimeError as err:
+            self._log_event(level="error", module="strm115", action="strm115_playback_failed", message="115 STRM 播放解析失败。", detail={"fileId": file_id, "error": str(err)[:240]})
             self._send_json(403, {"ok": False, "error": str(err)})
             return
         except Exception as err:
-            self._log_event(level="warning", module="strm115", action="strm115_playback_failed", message="115 STRM 播放地址解析失败。", detail={"fileId": file_id, "error": str(err)})
+            self._log_event(level="error", module="strm115", action="strm115_playback_failed", message="115 STRM 播放地址解析失败。", detail={"fileId": file_id, "error": str(err)})
             self._send_json(502, {"ok": False, "error": "115 播放地址解析失败。"})
             return
         self._log_event(
@@ -8840,6 +9091,10 @@ def main() -> None:
     STRM115_SCHEDULE_STOP.clear()
     strm115_schedule_thread = threading.Thread(target=_strm115_schedule_loop, name="strm115-scheduler", daemon=True)
     strm115_schedule_thread.start()
+    HOST_METRICS_SERVICE.start()
+    INFRA_AUTO_UPDATE_STOP.clear()
+    infra_auto_update_thread = threading.Thread(target=_infra_auto_update_loop, name="infra-auto-update", daemon=True)
+    infra_auto_update_thread.start()
     COVER_STUDIO_SCHEDULE_STOP.clear()
     COVER_STUDIO_SCHEDULER = CoverStudioScheduler(
         stop_event=COVER_STUDIO_SCHEDULE_STOP,
@@ -8868,6 +9123,8 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        HOST_METRICS_SERVICE.stop()
+        INFRA_AUTO_UPDATE_STOP.set()
         HDHIVE_CHECKIN_STOP.set()
         STRM115_SCHEDULE_STOP.set()
         COVER_STUDIO_SCHEDULE_STOP.set()

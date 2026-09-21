@@ -31,6 +31,7 @@ const SIDEBAR_NAV_ICONS = {
   "user-center": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"></path>',
   "client-control": '<rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M8 21h8M12 17v4"></path>',
   "bot-assistant": '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path>',
+  "network-services": '<rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4M7 10h3l2-3 2 6 2-3h2"></path>',
   "media-config": '<path d="M4 19.5V5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2.5M8 7h6M8 11h6"></path>',
   "ai-config": '<rect x="4" y="7" width="16" height="13" rx="3"></rect><path d="M12 3v4M8 12h.01M16 12h.01M8 16h8"></path>',
   "task-center": '<path d="m9 11 3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>',
@@ -195,7 +196,7 @@ const DEFAULT_NOTIFICATION_CAPABILITIES = {
   upcomingEvents: []
 };
 
-const TOPBAR_VISIBLE_VIEWS = new Set(["logs", "user-center", "task-center", "media-config", "ai-config"]);
+const TOPBAR_VISIBLE_VIEWS = new Set(["content-ranking", "users", "missing", "logs", "moviepilot-search", "drive-115", "strm-115", "hdhive", "user-center", "client-control", "bot-assistant", "media-config", "network-services", "ai-config", "task-center", "workshop", "about-support"]);
 
 const DEFAULT_AI_CONFIG = {
   enabled: false,
@@ -538,7 +539,7 @@ const appState = {
   mediaCounts: null,
   qualityResolutionStats: null,
   qualityResolutionItemsByBucket: {},
-  qualityResolutionActiveBucket: "uhd",
+  qualityResolutionActiveBucket: "all",
   qualityResolutionFilters: {
     type: "all",
     keyword: "",
@@ -1017,6 +1018,8 @@ function normalizeStrm115Config(rawConfig) {
   const config = rawConfig && typeof rawConfig === "object" ? rawConfig : {};
   return {
     enabled: Boolean(config.enabled),
+    includeFileName: Boolean(config.includeFileName),
+    linkFormat: ["signed", "named", "short_named"].includes(config.linkFormat) ? config.linkFormat : (config.includeFileName ? "named" : "signed"),
     sourceCid: String(config.sourceCid || "").trim(),
     outputDir: String(config.outputDir || "").trim(),
     publicBaseUrl: String(config.publicBaseUrl || "").trim().replace(/\/$/, ""),
@@ -1441,8 +1444,7 @@ const elements = {
   navItems: document.querySelectorAll(".nav-item"),
   primarySidebar: document.getElementById("primary-sidebar"),
   sidebarToggleBtn: document.getElementById("sidebar-toggle-btn"),
-  sidebarGlobalSearchTrigger: document.getElementById("global-search-trigger"),
-  sidebarGlobalSearchInput: document.getElementById("sidebar-global-search"),
+  globalSearchTrigger: document.getElementById("global-search-trigger"),
   viewSections: document.querySelectorAll(".view-section"),
   overviewStatsGrid: document.getElementById("overview-stats-grid"),
   mainContent: document.querySelector(".main-content"),
@@ -1672,6 +1674,13 @@ const elements = {
   disconnectBtn: document.getElementById("disconnect-btn"),
   connectionBadge: document.getElementById("connection-badge"),
   connectionMessage: document.getElementById("connection-message"),
+  connectionDot: document.getElementById("connection-dot"),
+  connectionLatency: document.getElementById("connection-latency"),
+  connectionRecheck: document.getElementById("connection-recheck"),
+  serverSummary: document.getElementById("server-summary"),
+  serverSummaryLogo: document.getElementById("server-summary-logo"),
+  serverSummaryName: document.getElementById("server-summary-name"),
+  serverSummaryMeta: document.getElementById("server-summary-meta"),
   settingsEnvManagedHint: document.getElementById("settings-env-managed-hint"),
   statMovies: document.getElementById("stat-movies"),
   statMoviesSub: document.getElementById("stat-movies-sub"),
@@ -1950,7 +1959,7 @@ const VIEW_META = {
   users: {
     icon: "✅",
     title: "质量盘点",
-    subtitle: "聚焦用户健康度、策略状态与可用性检查"
+    subtitle: "查看媒体分辨率分布与资源信息"
   },
   missing: {
     icon: "🧩",
@@ -2047,10 +2056,11 @@ const VIEW_META = {
     title: "封面工坊",
     subtitle: "管理媒体库视图封面预览、应用与恢复"
   },
+  "network-services": { icon: "🌐", title: "网络与服务", subtitle: "配置外部服务与网络访问方式" },
   "media-config": {
     icon: "🗃️",
     title: "媒体库配置",
-    subtitle: "管理媒体服务器连接、API Key 与 TMDB 兜底策略"
+    subtitle: "管理 Emby / Jellyfin 连接与 API Key"
   },
   "ai-config": {
     icon: "🤖",
@@ -4790,7 +4800,7 @@ function getQualityItemResolution(item) {
   return { width, height, label };
 }
 
-function getQualityPosterPayload(item) {
+function getQualityPosterPayload(item, { maxWidth = 220 } = {}) {
   const itemType = String(item?.Type || "").toLowerCase();
   const itemId = String(item?.Id || "").trim();
   const itemPrimaryTag = String(item?.ImageTags?.Primary || "").trim();
@@ -4799,28 +4809,29 @@ function getQualityPosterPayload(item) {
   const seriesPrimaryTag = String(item?.SeriesPrimaryImageTag || "").trim();
   const parentPrimaryTag = String(item?.ParentPrimaryImageTag || "").trim();
   const candidates = [];
-  const pushCandidate = (id, imageTag = "") => {
+  const pushCandidate = (id, imageTag = "", source = "item_primary") => {
     const normalizedId = String(id || "").trim();
     if (!normalizedId || candidates.some((candidate) => candidate.id === normalizedId)) {
       return;
     }
-    candidates.push({ id: normalizedId, imageTag: String(imageTag || "").trim() });
+    candidates.push({ id: normalizedId, imageTag: String(imageTag || "").trim(), source });
   };
 
   if (itemType === "episode") {
-    pushCandidate(seriesId, seriesPrimaryTag);
-    pushCandidate(parentId, parentPrimaryTag);
+    pushCandidate(seriesId, seriesPrimaryTag, "series_primary");
+    pushCandidate(parentId, parentPrimaryTag, "parent_primary");
     pushCandidate(itemId, itemPrimaryTag);
   } else {
     pushCandidate(itemId, itemPrimaryTag);
-    pushCandidate(seriesId, seriesPrimaryTag);
-    pushCandidate(parentId, parentPrimaryTag);
+    pushCandidate(seriesId, seriesPrimaryTag, "series_primary");
+    pushCandidate(parentId, parentPrimaryTag, "parent_primary");
   }
+  pushCandidate(item?.PrimaryImageItemId, "", "primary_image_item");
 
   for (const candidate of candidates) {
-    const posterUrl = buildEmbyPrimaryPosterUrl(candidate.id, { maxWidth: 220, quality: 90, imageTag: candidate.imageTag });
+    const posterUrl = buildEmbyPrimaryPosterUrl(candidate.id, { maxWidth, quality: 90, imageTag: candidate.imageTag });
     if (posterUrl) {
-      return { url: posterUrl, itemId: candidate.id, imageTag: candidate.imageTag };
+      return { url: posterUrl, itemId: candidate.id, imageTag: candidate.imageTag, source: candidate.source };
     }
   }
 
@@ -4828,6 +4839,7 @@ function getQualityPosterPayload(item) {
 }
 
 function classifyQualityResolution({ width = 0, height = 0 } = {}) {
+  if (!(width > 0 || height > 0)) return "unknown";
   if (width >= 3840 || height >= 2160) {
     return "uhd";
   }
@@ -4880,7 +4892,8 @@ function buildQualityResolutionStats(items = []) {
     { key: "uhd", title: "Ultra HD / 4K", subtitle: "2160P 与更高规格", count: 0, className: "resolution-uhd" },
     { key: "fhd", title: "1080P Full HD", subtitle: "主流高清片源", count: 0, className: "resolution-fhd" },
     { key: "hd", title: "720P HD", subtitle: "轻量高清片源", count: 0, className: "resolution-hd" },
-    { key: "low", title: "低清 / 需洗版", subtitle: "低于 720P 或缺少分辨率", count: 0, className: "resolution-low" }
+    { key: "low", title: "低于 720P", subtitle: "低分辨率", count: 0, className: "resolution-low" },
+    { key: "unknown", title: "信息未知", subtitle: "未获取到分辨率", count: 0, className: "resolution-unknown" }
   ];
   const bucketMap = new Map(buckets.map((bucket) => [bucket.key, bucket]));
   const itemsByBucket = Object.fromEntries(buckets.map((bucket) => [bucket.key, []]));
@@ -4895,6 +4908,7 @@ function buildQualityResolutionStats(items = []) {
     itemsByBucket[bucketKey].push({
       itemId: String(item.Id || ""),
       title: buildQualityDisplayTitle(item),
+      year: item.ProductionYear || "",
       type: String(item.Type || "Item"),
       resolution: resolution.label,
       width: resolution.width,
@@ -5048,6 +5062,7 @@ function bindQualityResolutionFocusControls() {
       ...appState.qualityResolutionFilters,
       type: elements.qualityResolutionFilterType?.value || "all"
     });
+    appState.qualityPage = 1;
     renderQualityResolutionDetail();
   });
   elements.qualityResolutionFilterKeyword?.addEventListener("input", () => {
@@ -5055,6 +5070,7 @@ function bindQualityResolutionFocusControls() {
       ...appState.qualityResolutionFilters,
       keyword: elements.qualityResolutionFilterKeyword?.value || ""
     });
+    appState.qualityPage = 1;
     renderQualityResolutionDetail();
   });
   elements.qualityResolutionFilterSort?.addEventListener("change", () => {
@@ -5062,6 +5078,7 @@ function bindQualityResolutionFocusControls() {
       ...appState.qualityResolutionFilters,
       sort: elements.qualityResolutionFilterSort?.value || "resolution_desc"
     });
+    appState.qualityPage = 1;
     renderQualityResolutionDetail();
   });
   elements.qualityResolutionExportBtn?.addEventListener("click", exportQualityResolutionCurrentList);
@@ -5073,40 +5090,20 @@ function renderQualityResolutionFocusPanel(activeBucket, entries, filteredEntrie
   }
   const filters = normalizeQualityResolutionFilters(appState.qualityResolutionFilters);
   appState.qualityResolutionFilters = filters;
-  const metrics = buildQualityResolutionRiskMetrics(entries, filteredEntries, stats, activeBucket);
-  const metricRows = metrics
-    .map(
-      (metric) => `
-      <article class="quality-resolution-focus-metric">
-        <span>${escapeHtml(metric.label)}</span>
-        <strong>${escapeHtml(metric.value)}</strong>
-        <small>${escapeHtml(metric.hint)}</small>
-      </article>
-    `
-    )
-    .join("");
-  const previewRows = filteredEntries
-    .slice(0, 4)
-    .map(
-      (entry) => `
-      <div class="quality-resolution-focus-item">
-        <span class="quality-resolution-focus-item-name" title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</span>
-        <span class="quality-resolution-focus-item-res">${escapeHtml(entry.resolution)}</span>
-      </div>
-    `
-    )
-    .join("");
-
+  const input = elements.qualityResolutionFilterKeyword;
+  const focused = input && document.activeElement === input;
+  const caret = focused ? input.selectionStart : null;
+  const typedValue = focused ? input.value : "";
   elements.qualityResolutionFocusBody.innerHTML = `
-    <div class="quality-resolution-risk-grid">${metricRows}</div>
+
     <div class="quality-resolution-filter-row">
       <label class="quality-filter-field">
         <span>类型</span>
         <select id="quality-resolution-filter-type">
           <option value="all" ${filters.type === "all" ? "selected" : ""}>全部</option>
-          <option value="movie" ${filters.type === "movie" ? "selected" : ""}>Movie</option>
-          <option value="episode" ${filters.type === "episode" ? "selected" : ""}>Episode</option>
-          <option value="series" ${filters.type === "series" ? "selected" : ""}>Series</option>
+          <option value="movie" ${filters.type === "movie" ? "selected" : ""}>电影</option>
+          <option value="episode" ${filters.type === "episode" ? "selected" : ""}>单集</option>
+          <option value="series" ${filters.type === "series" ? "selected" : ""}>电视剧</option>
         </select>
       </label>
       <label class="quality-filter-field keyword">
@@ -5126,11 +5123,9 @@ function renderQualityResolutionFocusPanel(activeBucket, entries, filteredEntrie
       <button id="quality-resolution-export-btn" class="quality-mini-action-btn" type="button">导出 CSV</button>
     </div>
     <p id="quality-resolution-filter-summary" class="quality-resolution-filter-summary">当前命中 ${filteredEntries.length.toLocaleString("zh-CN")} / ${entries.length.toLocaleString("zh-CN")} 条</p>
-    <div class="quality-resolution-focus-list">
-      ${previewRows || `<div class="quality-resolution-focus-empty">当前筛选条件下没有命中条目</div>`}
-    </div>
   `;
   bindQualityResolutionFocusControls();
+  if (focused) { elements.qualityResolutionFilterKeyword.value = typedValue; elements.qualityResolutionFilterKeyword.focus(); elements.qualityResolutionFilterKeyword.setSelectionRange(caret, caret); }
 }
 
 function renderQualityResolutionDetail() {
@@ -5146,9 +5141,9 @@ function renderQualityResolutionDetail() {
     return;
   }
 
-  const activeKey = appState.qualityResolutionActiveBucket || stats.buckets[0]?.key || "uhd";
-  const activeBucket = stats.buckets.find((bucket) => bucket.key === activeKey) || stats.buckets[0];
-  const entries = Array.isArray(stats.itemsByBucket?.[activeBucket.key]) ? stats.itemsByBucket[activeBucket.key] : [];
+  const activeKey = appState.qualityResolutionActiveBucket || "all";
+  const activeBucket = stats.buckets.find(bucket => bucket.key === activeKey) || {key:"all",title:"全部资源"};
+  const entries = activeBucket.key === "all" ? Object.values(stats.itemsByBucket || {}).flat() : stats.itemsByBucket?.[activeBucket.key] || [];
   const filteredEntries = applyQualityResolutionFilters(entries);
   appState.qualityResolutionFilteredEntries = filteredEntries;
   appState.qualityResolutionFocusBucketKey = activeBucket.key;
@@ -5163,10 +5158,10 @@ function renderQualityResolutionDetail() {
   renderQualityResolutionFocusPanel(activeBucket, entries, filteredEntries, stats);
 
   if (elements.qualityResolutionDetailTitle) {
-    elements.qualityResolutionDetailTitle.textContent = `${activeBucket.title} 影片明细`;
+    elements.qualityResolutionDetailTitle.textContent = `${activeBucket.title} · 资源列表`;
   }
   if (elements.qualityResolutionDetailSubtitle) {
-    elements.qualityResolutionDetailSubtitle.textContent = `${filteredEntries.length.toLocaleString("zh-CN")} / ${entries.length.toLocaleString("zh-CN")} 部影片 / 剧集`;
+    elements.qualityResolutionDetailSubtitle.textContent = `${filteredEntries.length.toLocaleString("zh-CN")} / ${entries.length.toLocaleString("zh-CN")} 项媒体资源`;
   }
 
   if (!entries.length) {
@@ -5178,27 +5173,55 @@ function renderQualityResolutionDetail() {
     return;
   }
 
-  elements.qualityResolutionDetailList.innerHTML = filteredEntries
-    .slice(0, 120)
-    .map((entry, index) => {
-      const poster = entry.posterUrl
-        ? `<img src="${escapeHtml(entry.posterUrl)}" alt="${escapeHtml(entry.title)}" loading="${index < 3 ? "eager" : "lazy"}" onerror="this.outerHTML='&lt;div class=&quot;quality-resolution-poster-fallback&quot;&gt;No&lt;/div&gt;'">`
-        : `<div class="quality-resolution-poster-fallback">No</div>`;
-      return `
-        <article class="quality-resolution-media-item">
-          <div class="quality-resolution-poster">${poster}</div>
-          <div class="quality-resolution-media-main">
-            <h4 title="${escapeHtml(entry.title)}">${escapeHtml(entry.title)}</h4>
-            <div class="quality-resolution-media-meta">
-              <span class="quality-resolution-badge">${escapeHtml(entry.resolution)}</span>
-              <span class="quality-resolution-type">${escapeHtml(entry.type)}</span>
-            </div>
-            <p class="quality-resolution-path" title="${escapeHtml(entry.path)}">${escapeHtml(entry.path)}</p>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
+  const pages = Math.max(1, Math.ceil(filteredEntries.length / 24));
+  const page = appState.qualityPage = Math.min(pages, Math.max(1, appState.qualityPage || 1));
+  const start = (page - 1) * 24;
+  elements.qualityResolutionDetailList.innerHTML = `<div class="qa-columns"><span>资源</span><span>视频规格</span><span>检查提示</span><span></span></div>` + filteredEntries.slice(start, start + 24).map((entry, index) => `
+    <article class="qa-resource">
+      <div class="qa-poster">${entry.posterUrl ? `<img src="${escapeHtml(entry.posterUrl)}" alt="" loading="lazy" onerror="this.hidden=true">` : '<span>暂无海报</span>'}</div>
+      <div class="qa-name"><h4>${escapeHtml(entry.title)}</h4><span>${qualityTypeLabel(entry.type)}${entry.year ? " · " + escapeHtml(String(entry.year)) : ""}</span></div>
+      <span class="qa-resolution">${escapeHtml(entry.resolution)}</span>
+      <span class="qa-check ${entry.width || entry.height ? "" : "is-unknown"}">${entry.width || entry.height ? "已获取尺寸" : "分辨率未知"}</span>
+      <button type="button" class="ghost-btn" data-quality-detail="${start + index}" aria-haspopup="dialog">查看 ↗</button>
+    </article>`).join("") + `<nav class="qa-pagination" aria-label="资源分页"><span>共 ${filteredEntries.length} 项 · 第 ${page} / ${pages} 页</span><button type="button" class="ghost-btn" data-quality-page="${page-1}" ${page===1?'disabled':''}>上一页</button><button type="button" class="ghost-btn" data-quality-page="${page+1}" ${page===pages?'disabled':''}>下一页</button></nav>`;
+  elements.qualityResolutionDetailList.querySelectorAll('[data-quality-page]').forEach(button => button.onclick = () => {
+    appState.qualityPage = Number(button.dataset.qualityPage);
+    renderQualityResolutionDetail();
+    elements.qualityResolutionDetailList.scrollIntoView({block:'start'});
+  });
+  elements.qualityResolutionDetailList.querySelectorAll('[data-quality-detail]').forEach(button => button.onclick = () => openQualityDetail(filteredEntries[Number(button.dataset.qualityDetail)]));
+}
+
+function qualityTypeLabel(type) {
+  return ({movie:'电影',episode:'单集',series:'电视剧'})[String(type).toLowerCase()] || '媒体';
+}
+function openQualityDetail(entry) {
+  let dialog = document.getElementById('quality-detail-dialog');
+  if (!dialog) {
+    dialog = document.createElement('dialog');dialog.id='quality-detail-dialog';dialog.className='qa-dialog';
+    dialog.setAttribute('aria-labelledby','qa-detail-title');document.body.append(dialog);
+    dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right)dialog.close();}});
+  }
+  if(dialog.open) return;
+  const rows = [...(appState.qualityResolutionFilteredEntries || [])];
+  if(!rows.includes(entry)) rows.push(entry);
+  let index = rows.indexOf(entry);
+  dialog.innerHTML = `<header><div><small>媒体检查</small><h2 id="qa-detail-title">资源详情</h2></div><button type="button" data-qa-close aria-label="关闭详情" autofocus>×</button></header><div class="qa-dialog-body"></div><footer><p data-qa-position></p><div><button type="button" data-qa-prev>← 上一项</button><button type="button" data-qa-next>下一项 →</button></div></footer>`;
+  const prev=dialog.querySelector('[data-qa-prev]'),next=dialog.querySelector('[data-qa-next]');
+  function update(){
+    const item=rows[index];
+    dialog.querySelector('.qa-dialog-body').innerHTML=`<div class="qa-detail-hero">${item.posterUrl ? `<img src="${escapeHtml(item.posterUrl)}" alt="" onerror="this.hidden=true">` : '<div class="qa-art-empty">暂无海报</div>'}<div><h3>${escapeHtml(item.title)}</h3><p>${qualityTypeLabel(item.type)}${item.year ? ' · '+escapeHtml(String(item.year)) : ''}</p></div></div><div class="qa-detail-note"><strong>${item.width || item.height ? '已获取视频尺寸' : '分辨率信息待补充'}</strong><p>${item.width || item.height ? '尺寸来自媒体服务器；不代表码率、音轨等信息已经完整。' : '服务器未提供可用尺寸，暂不判断视频清晰度。'}</p></div><dl><dt>分辨率</dt><dd>${escapeHtml(item.resolution)}</dd><dt>视频尺寸</dt><dd>${Number(item.width) || '未知'} × ${Number(item.height) || '未知'}</dd><dt>文件路径</dt><dd class="qa-path">${escapeHtml(item.path)}</dd></dl><button type="button" data-qa-copy>复制路径</button><p data-qa-feedback role="status"></p>`;
+    dialog.querySelector('[data-qa-position]').textContent=`当前筛选结果 · ${index+1} / ${rows.length}`;
+    prev.disabled=index===0;next.disabled=index===rows.length-1;
+    dialog.querySelector('.qa-dialog-body').scrollTop=0;
+    dialog.querySelector('[data-qa-copy]').onclick=async()=>{
+      const feedback=dialog.querySelector('[data-qa-feedback]');
+      try { const text=String(item.path || '');if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(text);else {const input=document.createElement('textarea');input.value=text;input.style.cssText='position:fixed;opacity:0';dialog.append(input);input.select();const ok=document.execCommand('copy');input.remove();dialog.querySelector('[data-qa-copy]').focus();if(!ok)throw Error();} feedback.textContent='路径已复制'; }
+      catch(_){feedback.textContent='复制失败，可选中上方路径手动复制。';}
+    };
+  }
+  prev.onclick=()=>{if(index>0){index--;update();}};next.onclick=()=>{if(index<rows.length-1){index++;update();}};
+  dialog.querySelector('[data-qa-close]').onclick=()=>dialog.close();update();dialog.showModal();
 }
 
 function renderQualityResolutionMatrix() {
@@ -5216,51 +5239,14 @@ function renderQualityResolutionMatrix() {
     return;
   }
 
-  const buckets = Array.isArray(stats.buckets) ? stats.buckets : [];
-  const maxCount = Math.max(1, ...buckets.map((bucket) => Number(bucket.count || 0)));
-  if (elements.qualityResolutionTotal) {
-    elements.qualityResolutionTotal.textContent = stats.total
-      ? `已统计 ${stats.total.toLocaleString("zh-CN")} 部电影 / 剧集`
-      : "暂未获取到媒体分辨率";
-  }
-
-  if (!stats.total) {
-    elements.qualityResolutionBars.innerHTML = `<div class="quality-resolution-empty">暂无可统计的媒体分辨率数据</div>`;
-    renderQualityResolutionDetail();
-    return;
-  }
-
-  elements.qualityResolutionBars.innerHTML = buckets
-    .map((bucket) => {
-      const count = Number(bucket.count || 0);
-      const width = Math.max(count > 0 ? 6 : 0, Math.round((count / maxCount) * 100));
-      const activeClass = bucket.key === appState.qualityResolutionActiveBucket ? "is-active" : "";
-      return `
-        <article class="quality-resolution-row ${bucket.className || ""} ${activeClass}" data-resolution-bucket="${bucket.key}">
-          <div class="quality-resolution-row-head">
-            <div class="quality-resolution-label">
-              <strong>${bucket.title}</strong>
-              <span>${bucket.subtitle}</span>
-            </div>
-            <div class="quality-resolution-count">${count.toLocaleString("zh-CN")}<small>部</small></div>
-          </div>
-          <div class="quality-resolution-track" aria-hidden="true">
-            <div class="quality-resolution-fill" style="--bar-width: ${width}%"></div>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
-
-  elements.qualityResolutionBars.querySelectorAll("[data-resolution-bucket]").forEach((card) => {
-    card.addEventListener("click", () => {
-      const key = String(card.dataset.resolutionBucket || "").trim();
-      if (!key || key === appState.qualityResolutionActiveBucket) {
-        return;
-      }
-      appState.qualityResolutionActiveBucket = key;
-      renderQualityResolutionMatrix();
-    });
+  const buckets = [{key:'all',title:'全部资源',count:stats.total || 0}, ...(stats.buckets || [])];
+  if(elements.qualityResolutionTotal) elements.qualityResolutionTotal.textContent = `已统计 ${stats.total || 0} 项媒体资源`;
+  const colors={uhd:'#426ea6',fhd:'#7b9cc5',hd:'#b0c7df',low:'#d2b47a',unknown:'#c8ced7',all:'#26354a'};
+  const total=Number(stats.total || 0);
+  const title=bucket=>({uhd:'4K',fhd:'1080P',hd:'720P',low:'低于 720P',unknown:'信息未知',all:'全部资源'})[bucket.key] || bucket.title;
+  elements.qualityResolutionBars.innerHTML = `<div class="qa-distribution" aria-label="媒体分辨率分布">${buckets.filter(b=>b.key!=='all'&&b.count>0).map(b=>`<button type="button" style="flex:${Number(b.count)};background:${colors[b.key] || '#c8ced7'}" data-resolution-bucket="${b.key}" aria-label="${escapeHtml(title(b))}，${b.count} 项" title="${escapeHtml(title(b))} · ${total ? (b.count/total*100).toFixed(1) : 0}%"></button>`).join('')}</div><div class="qa-legend">`+buckets.map(bucket => `<button type="button" class="qa-bucket ${bucket.key === appState.qualityResolutionActiveBucket ? 'is-active' : ''}" data-resolution-bucket="${bucket.key}" aria-pressed="${bucket.key === appState.qualityResolutionActiveBucket}"><span><i style="background:${colors[bucket.key] || '#c8ced7'}"></i>${escapeHtml(title(bucket))}</span><strong>${Number(bucket.count || 0).toLocaleString('zh-CN')}<small>${bucket.key==='all' ? '项资源' : (total ? (bucket.count/total*100).toFixed(1) : '0')+'%'}</small></strong></button>`).join('')+`</div>`;
+  elements.qualityResolutionBars.querySelectorAll('[data-resolution-bucket]').forEach(button=>button.onclick=()=>{
+    appState.qualityResolutionActiveBucket=button.dataset.resolutionBucket;appState.qualityPage=1;renderQualityResolutionMatrix();
   });
   renderQualityResolutionDetail();
 }
@@ -6253,8 +6239,72 @@ function renderConnectionState(connected, message, tone = "neutral") {
       elements.connectionBadge.className = "status-badge status-disabled";
     }
   }
+  if (elements.connectionDot) {
+    elements.connectionDot.className = `mc-status-dot${connected ? " is-ok" : tone === "danger" ? " is-err" : ""}`;
+  }
   if (elements.connectionMessage) {
     elements.connectionMessage.textContent = message;
+  }
+  if (!connected && elements.connectionLatency) {
+    elements.connectionLatency.textContent = "";
+  }
+  renderMediaServerSummary();
+}
+
+function renderMediaServerSummary() {
+  if (!elements.serverSummary) {
+    return;
+  }
+  const info = appState.systemInfo;
+  if (!info) {
+    elements.serverSummary.hidden = true;
+    return;
+  }
+  const serverType = getActiveMediaServerType();
+  const label = MEDIA_SERVER_META[serverType]?.label || "Emby";
+  if (elements.serverSummaryLogo) {
+    elements.serverSummaryLogo.textContent = label.charAt(0).toUpperCase();
+  }
+  if (elements.serverSummaryName) {
+    elements.serverSummaryName.textContent = info.ServerName || `${label} Server`;
+  }
+  if (elements.serverSummaryMeta) {
+    const parts = [];
+    if (info.Version) {
+      parts.push(`版本 ${info.Version}`);
+    }
+    const counts = appState.mediaCounts || {};
+    const movieCount = Number(counts.MovieCount ?? 0);
+    const seriesCount = Number(counts.SeriesCount ?? 0);
+    if (movieCount) {
+      parts.push(`${movieCount.toLocaleString("zh-CN")} 部电影`);
+    }
+    if (seriesCount) {
+      parts.push(`${seriesCount.toLocaleString("zh-CN")} 部电视剧`);
+    }
+    parts.push(`${appState.users.length} 个用户`);
+    elements.serverSummaryMeta.textContent = parts.join(" · ");
+  }
+  elements.serverSummary.hidden = false;
+}
+
+async function refreshConnectionLatency() {
+  if (!elements.connectionLatency) {
+    return;
+  }
+  const serverUrl = String(appState.config?.serverUrl || "").trim();
+  const apiKey = String(appState.config?.apiKey || "").trim();
+  if (!serverUrl || !apiKey) {
+    elements.connectionLatency.textContent = "";
+    return;
+  }
+  try {
+    const result = await inviteApiFetch("/api/emby/ping", {
+      headers: { "X-Emby-Base-Url": serverUrl, "X-Emby-Api-Key": apiKey }
+    });
+    elements.connectionLatency.textContent = result?.ok && result.latencyMs ? `延迟 ${result.latencyMs}ms` : "";
+  } catch (_error) {
+    elements.connectionLatency.textContent = "";
   }
 }
 
@@ -7383,7 +7433,16 @@ function renderLogs() {
     .join("");
 }
 
+let missingListRequest = 0;
+let missingSearchTimer;
+let missingPollActive = false;
+function missingNotice(message) {
+  appState.missingNotice = message;
+  renderMissing();
+}
 function renderMissing() {
+  const forceButton = document.getElementById("missing-force-refresh-btn");
+  if (forceButton) forceButton.disabled = Boolean(appState.missingLoading);
   if (!elements.missingList) {
     return;
   }
@@ -7405,6 +7464,10 @@ function renderMissing() {
     elements.missingStatMissingEpisodes.textContent = String(summary.missingEpisodeCount || 0);
   }
 
+  if (elements.missingScanBtn) {
+    elements.missingScanBtn.disabled = Boolean(appState.missingLoading);
+    elements.missingScanBtn.textContent = appState.missingLoading ? "巡检中…" : "立即巡检";
+  }
   const scannedAt = summary.scannedAt ? formatDate(summary.scannedAt) : "尚未巡检";
   const scanProgress = appState.missingScanStatus?.progress && typeof appState.missingScanStatus.progress === "object"
     ? appState.missingScanStatus.progress
@@ -7414,24 +7477,44 @@ function renderMissing() {
   const currentTitle = String(scanProgress.currentTitle || "").trim();
   const statusText = appState.missingLoading
     ? `正在巡检 ${total ? `${completed}/${total}` : "准备中"}${currentTitle ? `：${currentTitle}` : ""}...`
-    : `最近巡检：${scannedAt}。`;
-  const warningText = warnings.length ? `警告：${warnings[0]}` : "";
-  if (elements.missingFeedback) {
-    elements.missingFeedback.textContent = warningText ? `${statusText} ${warningText}` : statusText;
+    : appState.missingScannedOnce ? "巡检结果已就绪 · 仅列出需要处理的作品" : "尚未开始巡检";
+  if (elements.missingFeedback) elements.missingFeedback.textContent = appState.missingNotice || statusText;
+  const progress = document.getElementById("missing-progress");
+  if (progress) {
+    progress.hidden = !appState.missingLoading;
+    if (total) progress.value = Math.min(100, completed / total * 100);
+    else progress.removeAttribute("value");
   }
-
+  const cache = summary.metadataCache;
+  const cacheInfo = document.getElementById("missing-cache-info");
+  if (cacheInfo) cacheInfo.textContent = appState.missingLoading ? statusText + " · 下方保留上次完成结果" :
+    `最近巡检：${scannedAt} · 本地库存实时核对，未来或未定档集不计缺失。` +
+    (cache ? ` TMDB 缓存命中 ${cache.hits || 0} 次 / 请求 ${cache.requests || 0} 次${cache.forced ? "（强制刷新）" : ""}${cache.available === false ? " · 缓存不可用" : ""}` : "");
+  const warningBox = document.getElementById("missing-warnings");
+  if (warningBox) {
+    warningBox.hidden = !warnings.length;
+    warningBox.querySelector("summary").textContent = `巡检警告（${warnings.length}）`;
+    warningBox.querySelector("ul").innerHTML = warnings.map(w => `<li>${escapeHtml(String(w))}</li>`).join("");
+  }
+  const count = document.getElementById("missing-result-count");
+  if (count) count.textContent = `${rows.length} 部待处理作品`;
+  const filtered = Boolean(elements.missingSearch?.value.trim() || (elements.missingStatus?.value && elements.missingStatus.value !== "all"));
+  // Polling must not collapse details or reset scrolling through episode lists.
+  const renderKey = JSON.stringify([rows, filtered, stale, appState.missingScannedOnce, rows.length ? false : appState.missingLoading]);
+  if (appState.missingRenderKey === renderKey) return;
+  appState.missingRenderKey = renderKey;
   if (!rows.length) {
     elements.missingList.innerHTML = `
       <div class="missing-empty-state">
-        <strong>${stale ? "旧版巡检结果需要更新" : appState.missingScannedOnce ? "未发现需要处理的缺集" : "尚未开始缺集巡检"}</strong>
-        <span>${stale ? "为避免旧算法误报未来未播集，请点击“立即巡检”生成严格结果。" : appState.missingScannedOnce ? "已确认作品不会显示未来未播集。" : "点击“立即巡检”，将只对 TMDB 已播出集进行核对。"}</span>
+        <strong>${filtered ? "没有符合条件的结果" : appState.missingLoading ? "正在核对媒体库" : stale ? "旧版巡检结果需要更新" : appState.missingScannedOnce ? "未发现需要处理的缺集" : "尚未开始缺集巡检"}</strong>
+        <span>${filtered ? "试试其他关键词或切换到全部待处理。" : appState.missingLoading ? "巡检在后台运行，完成后自动更新结果。" : stale ? "为避免旧算法误报未来未播集，请点击“立即巡检”生成严格结果。" : appState.missingScannedOnce ? "已确认作品不会显示未来未播集。" : "点击“立即巡检”，将只对 TMDB 已播出集进行核对。"}</span>
       </div>
     `;
     return;
   }
 
   elements.missingList.innerHTML = rows
-    .map((row) => {
+    .map((row, index) => {
       const seriesName = escapeHtml(String(row?.seriesName || "未命名剧集"));
       const status = String(row?.status || "");
       const year = escapeHtml(String(row?.year || ""));
@@ -7443,24 +7526,18 @@ function renderMissing() {
         : Array.isArray(row?.missingEpisodes)
           ? row.missingEpisodes.map((item) => `E${item}`)
           : [];
-      const futureLabels = Array.isArray(row?.futureLabels) ? row.futureLabels : [];
-      const referenceLabels = Array.isArray(row?.referenceMissingLabels) ? row.referenceMissingLabels : [];
       const seasonRows = Array.isArray(row?.seasonRows) ? row.seasonRows : [];
-      const mappingConfidence = String(row?.mappingConfidence || "").toLowerCase();
       const reasonText = String(row?.reason || row?.mappingWarning || "").trim();
-      const scannedAtText = row?.scannedAt ? formatDate(row.scannedAt) : scannedAt;
       const statusBadge =
         status === "missing"
           ? `<span class="badge badge-danger">缺失中</span>`
           : status === "review"
             ? `<span class="badge badge-warning">需确认</span>`
             : `<span class="badge badge-warning">身份未确认</span>`;
-      const confidenceText =
-        mappingConfidence === "high" ? "集号映射可靠" : mappingConfidence === "medium" ? "按 Emby 条目继续" : "集号映射需确认";
       const posterMarkup = posterUrl
         ? `<img class="missing-poster" src="${escapeHtml(posterUrl)}" alt="${seriesName} 海报" loading="lazy" onerror="this.closest('.missing-poster-wrap').classList.add('is-empty');this.remove()">`
         : "";
-      const labelsMarkup = (labels, className, emptyText, maxItems = 18) => {
+      const labelsMarkup = (labels, className, emptyText, maxItems = Infinity) => {
         if (!labels.length) {
           return `<span class="${className} is-empty">${escapeHtml(emptyText)}</span>`;
         }
@@ -7477,25 +7554,6 @@ function renderMissing() {
         : status === "review"
           ? "需要复核"
           : "身份未确认";
-      const seasonMarkup = seasonRows.length
-        ? seasonRows
-            .map((season) => {
-              const seasonNo = Number(season?.seasonNo || 0);
-              const existing = Number(season?.existingCount ?? (Array.isArray(season?.existingEpisodes) ? season.existingEpisodes.length : 0));
-              const aired = Number(season?.airedCount ?? (Array.isArray(season?.airedEpisodes) ? season.airedEpisodes.length : 0));
-              const future = Array.isArray(season?.futureEpisodes) ? season.futureEpisodes.length : 0;
-              const missing = Array.isArray(season?.missingEpisodes) ? season.missingEpisodes.length : 0;
-              return `
-                <div class="missing-season-row">
-                  <strong>S${String(seasonNo || 0).padStart(2, "0")}</strong>
-                  <span>本地 ${existing} / 已播 ${aired}</span>
-                  ${missing ? `<em>缺 ${missing} 集</em>` : `<em class="is-complete">已播完整</em>`}
-                  ${future ? `<small>未来 ${future} 集</small>` : ""}
-                </div>
-              `;
-            })
-            .join("")
-        : `<div class="missing-season-row is-empty">暂无可核对的季数据</div>`;
       return `
         <article class="missing-media-card ${status === "missing" ? "is-missing" : "is-review"}">
           <div class="missing-poster-wrap">${posterMarkup}<span class="missing-poster-fallback">无海报</span></div>
@@ -7509,20 +7567,8 @@ function renderMissing() {
             </div>
             <div class="missing-card-summary">${escapeHtml(compactSummary)}</div>
             ${missingLabels.length ? `<div class="missing-card-chips">${labelsMarkup(missingLabels, "missing-episode-chip", "无", 7)}</div>` : ""}
-            <details class="missing-card-details">
-              <summary>查看详情</summary>
-              <div class="missing-season-list">${seasonMarkup}</div>
-              <div class="missing-card-groups">
-              <div class="missing-episode-group">
-                <span>确认缺失</span>
-                <div>${labelsMarkup(missingLabels, "missing-episode-chip", "无")}</div>
-              </div>
-              ${futureLabels.length ? `<div class="missing-episode-group is-future"><span>未来未播</span><div>${labelsMarkup(futureLabels, "missing-episode-chip", "")}</div></div>` : ""}
-              ${referenceLabels.length ? `<div class="missing-episode-group is-reference"><span>参考差集</span><div>${labelsMarkup(referenceLabels, "missing-episode-chip", "")}</div></div>` : ""}
-              </div>
-              ${reasonText ? `<p class="missing-card-warning">${escapeHtml(reasonText)}</p>` : ""}
-              <footer>TMDB ${escapeHtml(String(row?.tmdbId || "未确认"))} · ${escapeHtml(confidenceText)}<br>巡检：${escapeHtml(scannedAtText)}</footer>
-            </details>
+            ${reasonText ? `<p class="missing-card-warning">${escapeHtml(reasonText)}</p>` : ""}
+            <button type="button" class="missing-detail-open" data-missing-detail="${index}" aria-haspopup="dialog">查看缺集详情 <span aria-hidden="true">↗</span></button>
           </div>
         </article>
       `;
@@ -7531,9 +7577,9 @@ function renderMissing() {
 }
 
 async function loadMissingList(options = {}) {
-  const quiet = Boolean(options.quiet);
+  const request = ++missingListRequest;
   const params = new URLSearchParams();
-  params.set("limit", "2000");
+  params.set("limit", "5000");
   const keyword = String(elements.missingSearch?.value || "").trim();
   const status = String(elements.missingStatus?.value || "all").trim();
   if (keyword) {
@@ -7545,6 +7591,7 @@ async function loadMissingList(options = {}) {
 
   try {
     const payload = await inviteApiFetch(`/api/missing/list?${params.toString()}`);
+    if (request !== missingListRequest) return [];
     appState.missingRows = Array.isArray(payload?.rows) ? payload.rows : [];
     appState.missingSummary = payload?.summary && typeof payload.summary === "object" ? payload.summary : appState.missingSummary;
     appState.missingWarnings = Array.isArray(payload?.warnings) ? payload.warnings : [];
@@ -7553,9 +7600,7 @@ async function loadMissingList(options = {}) {
     renderMissing();
     return appState.missingRows;
   } catch (error) {
-    if (!quiet && elements.missingFeedback) {
-      elements.missingFeedback.textContent = `读取缺集结果失败：${error.message || "未知错误"}`;
-    }
+    if (request === missingListRequest) missingNotice(`读取缺集结果失败：${error.message || "未知错误"}。可点击“刷新结果”重试。`);
     throw error;
   }
 }
@@ -7567,7 +7612,7 @@ function summaryHasScanData(summary) {
   return Boolean(summary.scannedAt || Number(summary.scannedSeries || 0) > 0);
 }
 
-async function scanMissingEpisodes() {
+async function scanMissingEpisodes({ forceRefresh = false } = {}) {
   if (appState.missingLoading) {
     return;
   }
@@ -7580,12 +7625,16 @@ async function scanMissingEpisodes() {
   const tmdbToken = String(appState.config.tmdbToken || "").trim();
   if (!tmdbToken) {
     if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = "请先在媒体库配置里填写 TMDB Token。";
+      elements.missingFeedback.textContent = "请先在“网络与服务 → TMDB 海报兜底”填写并保存 Token。";
     }
     return;
   }
 
+  appState.missingNotice = "";
   appState.missingLoading = true;
+  renderMissing();
+  const forceButton = document.getElementById("missing-force-refresh-btn");
+  if (forceButton) forceButton.disabled = true;
   if (elements.missingScanBtn) {
     elements.missingScanBtn.disabled = true;
     elements.missingScanBtn.textContent = "巡检中...";
@@ -7602,6 +7651,7 @@ async function scanMissingEpisodes() {
         tmdbLanguage: appState.config.tmdbLanguage || "zh-CN",
         tmdbRegion: appState.config.tmdbRegion || "CN",
         scanLimit: 2000,
+        forceRefresh,
       }),
     });
     appState.missingScanStatus = started?.status || null;
@@ -7613,7 +7663,7 @@ async function scanMissingEpisodes() {
       elements.missingScanBtn.textContent = "立即巡检";
     }
     if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = `缺集巡检失败：${error.message || "未知错误"}`;
+      appState.missingNotice = `缺集巡检失败：${error.message || "未知错误"}。可刷新结果重新检查后台状态。`;
     }
     addSyncEvent("缺集巡检失败", String(error?.message || "未知错误"), "danger");
     renderMissing();
@@ -7621,66 +7671,51 @@ async function scanMissingEpisodes() {
 }
 
 async function pollMissingScanStatus() {
-  const timeoutAt = Date.now() + 20 * 60 * 1000;
-  while (Date.now() < timeoutAt) {
-    const payload = await inviteApiFetch("/api/missing/scan/status");
-    const status = payload?.status && typeof payload.status === "object" ? payload.status : {};
-    appState.missingScanStatus = status;
-    appState.missingLoading = Boolean(status.running);
-    renderMissing();
-
-    if (!status.running) {
-      if (status.error) {
-        if (elements.missingFeedback) {
-          elements.missingFeedback.textContent = String(status.error);
+  if (missingPollActive) return;
+  missingPollActive = true;
+  try {
+    const timeoutAt = Date.now() + 20 * 60 * 1000;
+    while (Date.now() < timeoutAt) {
+      const payload = await inviteApiFetch("/api/missing/scan/status");
+      const status = payload?.status || {};
+      appState.missingScanStatus = status;
+      appState.missingLoading = Boolean(status.running);
+      renderMissing();
+      if (!status.running) {
+        if (status.error) missingNotice(`巡检失败：${status.error}。上次完成结果已保留。`);
+        else {
+          await loadMissingList({ quiet: true });
+          missingNotice("巡检完成，结果已更新。完整作品不会列入待处理列表。");
         }
-        addSyncEvent("缺集巡检失败", String(status.error), "danger");
-      } else {
-        await loadMissingList({ quiet: true });
-        appState.missingScannedOnce = true;
-        appState.missingStale = false;
-        if (elements.missingFeedback) {
-          elements.missingFeedback.textContent = "巡检完成，已更新缺集结果。";
-        }
-        addSyncEvent("缺集巡检完成", "缺集管理已完成全库巡检并刷新结果。", "success");
+        return;
       }
-      break;
+      await new Promise(resolve => window.setTimeout(resolve, 1500));
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    missingNotice("巡检仍在后台运行。点击“刷新结果”继续查看进度。");
+  } catch (error) {
+    missingNotice(`暂时无法获取巡检状态：${error.message || "网络异常"}。点击“刷新结果”重试。`);
+  } finally {
+    missingPollActive = false;
   }
-
-  if (appState.missingLoading && Date.now() >= timeoutAt) {
-    if (elements.missingFeedback) {
-      elements.missingFeedback.textContent = "巡检仍在后台运行，已停止本页等待；稍后刷新结果即可。";
-    }
-  }
-
-  appState.missingLoading = false;
-  if (elements.missingScanBtn) {
-    elements.missingScanBtn.disabled = false;
-    elements.missingScanBtn.textContent = "立即巡检";
-  }
-  renderMissing();
 }
 
 async function resumeMissingScanIfRunning() {
-  if (appState.missingLoading) return;
+  if (missingPollActive) return;
   try {
     const payload = await inviteApiFetch("/api/missing/scan/status");
-    const status = payload?.status && typeof payload.status === "object" ? payload.status : {};
+    const status = payload?.status || {};
     appState.missingScanStatus = status;
-    if (!status.running) return;
-
-    appState.missingLoading = true;
+    appState.missingLoading = Boolean(status.running);
+    if (status.error) appState.missingNotice = `巡检失败：${status.error}。上次完成结果已保留。`;
     renderMissing();
-    await pollMissingScanStatus();
-  } catch (_) {
-    // The list remains usable if the optional scan-status request fails.
+    if (status.running) await pollMissingScanStatus();
+  } catch (error) {
+    missingNotice(`暂时无法获取巡检状态：${error.message || "网络异常"}。可刷新结果重试。`);
   }
 }
 
 function persistLocalState() {
-  saveJson(STORAGE_KEYS.config, appState.config);
+  saveJson(STORAGE_KEYS.config, appState.mediaConfigEditor?.dirty ? appState.mediaConfigEditor.baseline.config : appState.config);
   saveJson(STORAGE_KEYS.invites, appState.invites);
   saveJson(STORAGE_KEYS.renewals, appState.renewals);
   saveJson(STORAGE_KEYS.botConfig, appState.botConfig);
@@ -8920,44 +8955,108 @@ function markSettingsSaveSuccess() {
   }, 1000);
 }
 
+function mediaEditor() {
+  return appState.mediaConfigEditor ||= { baseline: null, dirty: false, saving: false, switching: false, message: "", networkReady: false };
+}
+
+function captureMediaDraft() {
+  const type = getActiveMediaServerType();
+  const config = normalizeAppConfig({
+    ...appState.config,
+    mediaServers: { ...appState.config.mediaServers, [type]: {
+      ...getMediaServerConfig(type), serverUrl: normalizeServerUrl(elements.serverUrl.value), apiKey: elements.apiKey.value.trim()
+    } },
+    serverUrl: normalizeServerUrl(elements.serverUrl.value), apiKey: elements.apiKey.value.trim(),
+    tmdbEnabled: appState.config.tmdbEnabled, tmdbToken: appState.config.tmdbToken,
+    tmdbLanguage: appState.config.tmdbLanguage, tmdbRegion: appState.config.tmdbRegion
+  });
+  return { config: JSON.parse(JSON.stringify(config)), proxy: mediaEditor().baseline?.proxy || "" };
+}
+
+function updateMediaEditor() {
+  const editor = mediaEditor();
+  if (!editor.baseline) return;
+  editor.dirty = JSON.stringify(captureMediaDraft()) !== JSON.stringify(editor.baseline);
+  const message = document.getElementById("media-save-status");
+  if (message) {
+    message.textContent = editor.saving ? "正在保存，请稍候…" : editor.message || (editor.dirty ? "有未保存修改" : "所有修改已保存");
+    message.classList.toggle("is-dirty", editor.dirty);
+  }
+  document.querySelectorAll('[data-media-save], [data-media-revert]').forEach(button => {
+    button.disabled = editor.saving || !editor.dirty;
+  });
+  if (appState.activeView === "media-config" && elements.settingsSaveBtn) {
+    elements.settingsSaveBtn.textContent = editor.saving ? "保存中…" : "保存更改";
+    elements.settingsSaveBtn.disabled = editor.saving || !editor.dirty;
+  }
+}
+
+function mediaConnectionFingerprint() {
+  return JSON.stringify([getActiveMediaServerType(), elements.serverUrl.value.trim(), elements.apiKey.value.trim()]);
+}
+
+function invalidateMediaConnection() {
+  appState.systemInfo = null;
+  renderConnectionState(false, elements.serverUrl.value.trim() && elements.apiKey.value.trim() ? "配置已变更，待重新检测。" : "未配置：请填写服务器地址和 API Key。");
+  const stamp = document.getElementById("media-connection-checked");
+  if (stamp) stamp.textContent = "";
+}
+
+function revertMediaConfig() {
+  const editor = mediaEditor();
+  if (!editor.baseline || editor.saving) return;
+  appState.config = JSON.parse(JSON.stringify(editor.baseline.config));
+  elements.networkProxyUrl.value = editor.baseline.proxy;
+  editor.dirty = false;
+  editor.message = "已撤销未保存修改";
+  hydrateInputs();
+  invalidateMediaConnection();
+  updateMediaEditor();
+}
+
 async function saveMediaConfig() {
-  if (!elements.settingsSaveBtn || elements.settingsSaveBtn.disabled) {
+  const editor = mediaEditor();
+  if (editor.saving || !editor.baseline) return;
+  if ([elements.connectionRecheck].some(button => button?.disabled)) {
+    editor.message = "连接检测进行中，请等待检测完成后保存。";
+    updateMediaEditor();
     return;
   }
-
-  applyConfigFromInputs({ persist: true });
-  syncActiveMediaServerFields();
-  const activeServerConfig = getMediaServerConfig();
-  const hasManaged = (appState?.envControlledFields?.embyConfig || []).length > 0;
-  addSyncEvent(
-    "媒体库配置已保存",
-    hasManaged ? "普通配置已保存，受环境变量接管的字段未被覆盖。" : "服务器地址与 API Key 已写入本地配置。",
-    "success"
-  );
-  showToast(hasManaged ? "媒体库配置已保存（环境变量字段未覆盖）" : "媒体库配置已保存", 1200);
-  const synced = await syncInviteStore({
-    silentSuccess: true,
-    failureToast: "媒体库配置已保存，但服务端同步失败，邀请注册链接可能无法注册。",
-    failureEventTitle: "媒体库配置同步失败"
-  });
-  if (synced) {
-    await refreshInviteSyncStatus({ silent: true });
-    const backendTmdbToken = String(appState.config.tmdbToken || "").trim();
-    if (appState.config.tmdbEnabled && backendTmdbToken) {
-      await testTmdbConnection({ silent: true });
-    } else {
-      refreshTmdbUiState();
-    }
+  const draft = captureMediaDraft();
+  if (JSON.stringify(draft) === JSON.stringify(editor.baseline)) return;
+  if (draft.config.serverUrl) {
+    try {
+      const url = new URL(draft.config.serverUrl);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    } catch (_) { editor.message = "服务器地址无效，请填写完整的 http:// 或 https:// 地址。"; updateMediaEditor(); elements.serverUrl.focus(); return; }
   }
-  markSettingsSaveSuccess();
-
-  if (activeServerConfig.serverUrl && activeServerConfig.apiKey) {
-    appState.config.serverUrl = activeServerConfig.serverUrl;
-    appState.config.apiKey = activeServerConfig.apiKey;
-    await loadEmbyData();
-    await loadCoverStudioViews({ silent: true });
-  } else {
-    renderConnectionState(false, "配置已保存，请填写媒体服务器地址和 API Key 后再次保存连接。");
+  editor.saving = true;
+  editor.networkRequest = (editor.networkRequest || 0) + 1;
+  editor.message = "";
+  const controls = Array.from(document.querySelectorAll('#view-media-config input, #view-media-config select, #view-media-config button, #view-media-config summary'));
+  const disabled = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  updateMediaEditor();
+  let mediaSaved = JSON.stringify(draft.config) === JSON.stringify(editor.baseline.config);
+  try {
+    if (!mediaSaved) {
+      appState.config = draft.config;
+      mediaSaved = await syncInviteStore({ silentSuccess: true, failureToast: "媒体配置同步失败，草稿已保留，请重试。", failureEventTitle: "媒体配置保存失败" });
+      if (!mediaSaved) { editor.message = "媒体服务器配置保存失败。草稿已保留，可重试。"; return; }
+      editor.baseline.config = JSON.parse(JSON.stringify(draft.config));
+      persistLocalState();
+    }
+    elements.connectionMessage.textContent = elements.connectionMessage.textContent.replace(" 测试通过，当前修改尚未保存。", "");
+    editor.message = "所有修改已保存；连接状态以测试结果为准。";
+    addSyncEvent("媒体库配置已保存", "媒体服务器配置已确认保存。", "success");
+    showToast("媒体库配置已保存", 1200);
+  } catch (error) {
+    editor.message = `保存未完成：${error.message || "请重试"}。草稿已保留。`;
+  } finally {
+    editor.saving = false;
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+    renderEnvControlledState();
+    updateMediaEditor();
   }
 }
 
@@ -9541,6 +9640,8 @@ function renderDrive115ParseResult(payload = undefined) {
 
 function readStrm115ConfigFromInputs() {
   return normalizeStrm115Config({
+    includeFileName: document.getElementById("strm115-link-format")?.value === "named",
+    linkFormat: document.getElementById("strm115-link-format")?.value || "signed",
     enabled: Boolean(elements.strm115Enabled?.checked),
     sourceCid: elements.strm115SourceCid?.value,
     outputDir: elements.strm115OutputDir?.value,
@@ -9556,55 +9657,71 @@ function readStrm115ConfigFromInputs() {
   });
 }
 
-function renderStrm115RunLogs() {
-  if (!elements.strm115LogList) return;
-  const events = Array.isArray(appState.strm115LogEvents) ? appState.strm115LogEvents : [];
-  if (!events.length) {
-    elements.strm115LogList.innerHTML = "<p>暂无 STRM 运行记录。生成预览、同步或播放后会出现在这里。</p>";
-    return;
-  }
-  elements.strm115LogList.innerHTML = events.map((event) => {
-    const level = String(event?.level || "info").toLowerCase();
-    const detail = event?.detail && typeof event.detail === "object" ? event.detail : {};
-    const summary = [
-      detail.scanned !== undefined ? `扫描 ${detail.scanned}` : "",
-      detail.videos !== undefined ? `视频 ${detail.videos}` : "",
-      detail.created !== undefined ? `新增 ${detail.created}` : "",
-      detail.updated !== undefined ? `更新 ${detail.updated}` : "",
-      detail.name ? `文件 ${detail.name}` : ""
-    ].filter(Boolean).join(" · ");
-    return `<article class="strm115-log-row is-${escapeHtml(level)}"><time>${escapeHtml(event?.time || "-")}</time><div><strong>${escapeHtml(event?.message || "STRM 事件")}</strong>${summary ? `<p>${escapeHtml(summary)}</p>` : ""}</div><em>${escapeHtml(level === "error" ? "失败" : level === "warning" ? "警告" : "完成")}</em></article>`;
-  }).join("");
+let strm115LogConsole = null;
+function getStrm115LogConsole() {
+  if (!strm115LogConsole) strm115LogConsole = window.StrmLogConsole.create(inviteApiFetch, copyTextToClipboard);
+  return strm115LogConsole;
 }
+function renderStrm115RunLogs() { getStrm115LogConsole().render(); }
+async function loadStrm115RunLogs(options = {}) { return getStrm115LogConsole().refresh(!options.silent); }
+function openStrm115RunLogs() { getStrm115LogConsole().open(); }
+function closeStrm115RunLogs() { strm115LogConsole?.close(); }
 
-async function loadStrm115RunLogs(options = {}) {
+function renderStrm115LinkExample() {
+  const base = String(elements.strm115PublicBaseUrl?.value || "https://strm.example.com").replace(/\/$/, "");
+  const format = document.getElementById("strm115-link-format").value;
+  document.getElementById("strm115-url-example").value = format === "short_named"
+    ? `${base}/d/s_短标识.mkv?/示例影片.mkv`
+    : `${base}/d/文件ID.mkv?exp=0&sig=签名${format === "named" ? "&name=" + encodeURIComponent("示例影片.mkv") : ""}`;
+}
+function renderStrm115Samples(samples) {
+  const select = document.getElementById("strm115-test-file");
+  const previous = select.value;
+  select.innerHTML = (samples || []).map(row => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("") || '<option value="">请先同步视频</option>';
+  if ([...select.options].some(option => option.value === previous)) select.value = previous;
+}
+async function testStrm115Playback() {
+  const button = document.getElementById("strm115-playback-test"), result = document.getElementById("strm115-test-result"), link = document.getElementById("strm115-test-link");
+  const fileId = document.getElementById("strm115-test-file").value;
+  if (!fileId) { result.textContent = "请先同步视频并刷新列表。"; return; }
+  button.disabled = true; link.hidden = true;
+  result.textContent = "正在解析 115 客户端直链并读取视频数据…";
   try {
-    const result = await inviteApiFetch("/api/drive115/strm/logs");
-    appState.strm115LogEvents = Array.isArray(result?.events) ? result.events : [];
-    renderStrm115RunLogs();
-  } catch (error) {
-    if (elements.strm115LogList) elements.strm115LogList.innerHTML = `<p>读取运行日志失败：${escapeHtml(error.message || "未知错误")}</p>`;
-    if (!options.silent) showToast("读取 STRM 日志失败", 1200);
+    const data = await inviteApiFetch("/api/drive115/strm/playback-test", {method:"POST",body:JSON.stringify({fileId})});
+    result.textContent = `已读取 ${data.readBytes} 字节 · ${data.elapsedMs} ms · ${data.rangeSupported ? "支持分段读取" : "未确认分段读取"}。${data.message}`;
+    const url = new URL(data.streamUrl);
+    if (["http:", "https:"].includes(url.protocol)) { link.href = url.href; link.hidden = false; }
+  } catch (error) { result.textContent = `测试失败：${error.message || "未知错误"}`; }
+  finally { button.disabled = false; }
+}
+
+function renderStrm115Overview(config, status) {
+  const setText = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
+  const count = (value) => Number.isFinite(Number(value)) && value !== undefined && value !== null ? Number(value).toLocaleString("zh-CN") : "—";
+  setText("strm115-metric-files", count(status.fileCount));
+  setText("strm115-metric-pending", count(status.lastSummary?.remainingDirectories));
+  setText("strm115-metric-orphans", count(status.orphanCount));
+  const synced = status.lastSyncedAt ? new Date(status.lastSyncedAt) : null;
+  const validDate = synced && !Number.isNaN(synced.getTime());
+  setText("strm115-metric-time", validDate ? synced.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "—");
+  setText("strm115-metric-date", validDate ? synced.toLocaleDateString("zh-CN") : "尚无同步记录");
+  const badge = document.getElementById("strm115-engine-badge");
+  if (badge) {
+    badge.textContent = config.enabled ? "服务已启用" : "服务未启用";
+    badge.classList.toggle("is-enabled", Boolean(config.enabled));
   }
-}
-
-function openStrm115RunLogs() {
-  if (!elements.strm115LogModal) return;
-  elements.strm115LogModal.hidden = false;
-  loadStrm115RunLogs({ silent: true });
-}
-
-function closeStrm115RunLogs() {
-  if (elements.strm115LogModal) elements.strm115LogModal.hidden = true;
 }
 
 function renderStrm115Console() {
   const config = normalizeStrm115Config({ ...DEFAULT_STRM115_CONFIG, ...appState.strm115Config });
   const status = appState.strm115Status || {};
+  renderStrm115Overview(config, status);
+  document.getElementById("strm115-link-format").value = config.linkFormat;
   if (elements.strm115Enabled) elements.strm115Enabled.checked = config.enabled;
   if (elements.strm115SourceCid) elements.strm115SourceCid.value = config.sourceCid;
   if (elements.strm115OutputDir) elements.strm115OutputDir.value = config.outputDir;
   if (elements.strm115PublicBaseUrl) elements.strm115PublicBaseUrl.value = config.publicBaseUrl;
+  renderStrm115LinkExample();
   if (elements.strm115EmbyLibraryId) elements.strm115EmbyLibraryId.value = config.embyLibraryId;
   if (elements.strm115SyncMode) elements.strm115SyncMode.value = config.syncMode;
   if (elements.strm115RequestInterval) elements.strm115RequestInterval.value = config.requestIntervalMs;
@@ -9615,8 +9732,8 @@ function renderStrm115Console() {
   if (elements.strm115Status) {
     const summary = status.lastSummary || {};
     elements.strm115Status.textContent = !config.enabled
-      ? "ENGINE OFFLINE · 保存并启用后可预览或生成 STRM。"
-      : `ENGINE ONLINE · 已索引 ${Number(status.fileCount || 0)} 个视频${status.lastSyncedAt ? `\n最近完整同步：${status.lastSyncedAt}` : ""}${summary.videos !== undefined ? `\n本批视频：${summary.videos} · 剩余目录：${summary.remainingDirectories || 0}` : ""}${Number(status.orphanCount || 0) ? `\n待清理孤儿：${status.orphanCount} 项` : ""}`;
+      ? "服务未启用 · 保存并启用后可预览或生成 STRM。"
+      : `已索引 ${Number(status.fileCount || 0)} 个视频${status.lastSyncedAt ? `\n最近完整同步：${status.lastSyncedAt}` : ""}${summary.videos !== undefined ? `\n本批视频：${summary.videos} · 剩余目录：${summary.remainingDirectories || 0}` : ""}${Number(status.orphanCount || 0) ? `\n待清理孤儿：${status.orphanCount} 项` : ""}`;
   }
   if (elements.strm115CleanupConfirmBtn) {
     const count = Number(status.orphanCount || 0);
@@ -9628,6 +9745,7 @@ function renderStrm115Console() {
 async function loadStrm115Config(options = {}) {
   try {
     const result = await inviteApiFetch("/api/drive115/strm/config");
+    renderStrm115Samples(result?.samples || []);
     appState.strm115Config = normalizeStrm115Config({ ...DEFAULT_STRM115_CONFIG, ...(result?.strm115Config || {}) });
     appState.strm115Status = result?.status || {};
     renderStrm115Console();
@@ -9644,6 +9762,7 @@ async function saveStrm115Config() {
   if (button) { button.disabled = true; button.textContent = "保存中..."; }
   try {
     const result = await inviteApiFetch("/api/drive115/strm/config", { method: "POST", body: JSON.stringify({ strm115Config: readStrm115ConfigFromInputs() }) });
+    renderStrm115Samples(result?.samples || []);
     appState.strm115Config = normalizeStrm115Config({ ...DEFAULT_STRM115_CONFIG, ...(result?.strm115Config || {}) });
     appState.strm115Status = result?.status || appState.strm115Status;
     if (!elements.strm115LogModal?.hidden) loadStrm115RunLogs({ silent: true });
@@ -9653,6 +9772,31 @@ async function saveStrm115Config() {
     showToast(`STRM 配置保存失败：${error.message || "未知错误"}`, 1600);
   } finally {
     if (button) { button.disabled = false; button.textContent = "保存配置"; }
+  }
+}
+
+async function rewriteStrm115Links() {
+  const button = document.getElementById("strm115-rewrite-links-btn");
+  const result = document.getElementById("strm115-rewrite-result");
+  const saved = normalizeStrm115Config(appState.strm115Config);
+  const draft = readStrm115ConfigFromInputs();
+  if (["linkFormat", "publicBaseUrl", "outputDir", "enabled"].some(key => saved[key] !== draft[key])) {
+    result.textContent = "播放配置有未保存的修改，请先保存配置，再更新已生成 STRM。";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "更新中…";
+  result.textContent = "正在按现有索引更新 STRM 地址，不扫描网盘…";
+  try {
+    const data = await inviteApiFetch("/api/drive115/strm/rewrite-links", { method: "POST", body: "{}" });
+    const summary = data.summary || {};
+    result.textContent = `更新 ${summary.updated || 0} 个 · 无变化 ${summary.unchanged || 0} 个 · 文件不存在 ${summary.missing || 0} 个 · 失败 ${summary.failed || 0} 个。${summary.failed ? "请检查输出目录和写入权限。" : "请提交 Emby 刷库；若仍显示旧地址，再刷新该影片的媒体信息。"}`;
+    if (data.errors?.length) result.textContent += ` 首个错误：${data.errors[0].error}`;
+  } catch (error) {
+    result.textContent = `更新失败：${error.message || "未知错误"}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "更新已生成 STRM";
   }
 }
 
@@ -12633,6 +12777,7 @@ async function loadEmbyData() {
     }
 
     renderConnectionState(true, `已连接 ${systemInfo.ServerName || "Emby Server"}，数据同步完成。`);
+    refreshConnectionLatency();
     addSyncEvent(
       "数据同步完成",
       `已同步 ${appState.users.length} 个用户、${appState.sessions.length} 个在线会话、${appState.logs.length} 条日志。`,
@@ -12694,7 +12839,7 @@ async function runQualityRescan() {
     appState.qualityResolutionItemsByBucket = appState.qualityResolutionStats?.itemsByBucket || {};
 
     const bucketKeys = appState.qualityResolutionStats?.buckets?.map((bucket) => bucket.key) || [];
-    if (!bucketKeys.includes(appState.qualityResolutionActiveBucket)) {
+    if (appState.qualityResolutionActiveBucket !== "all" && !bucketKeys.includes(appState.qualityResolutionActiveBucket)) {
       appState.qualityResolutionActiveBucket = bucketKeys[0] || "uhd";
     }
 
@@ -12728,11 +12873,14 @@ async function runQualityRescan() {
 }
 
 async function runConnectionDiagnosis() {
+  const fingerprint = mediaConnectionFingerprint();
   applyConfigFromInputs();
+  const started = performance.now();
+  renderConnectionState(false, "正在检测当前输入的连接配置…");
 
   if (!appState.config.serverUrl || !appState.config.apiKey) {
     elements.connectionMessage.textContent = "诊断失败：请先填写服务器地址和 API Key。";
-    return;
+    return false;
   }
 
   const checks = [
@@ -12744,19 +12892,32 @@ async function runConnectionDiagnosis() {
   ];
 
   const results = [];
+  let serverInfo = null;
   for (const check of checks) {
     try {
-      await embyFetch(check.path);
+      if (fingerprint !== mediaConnectionFingerprint()) return false;
+      const data = await embyFetch(check.path);
+      if (check.path === "/System/Info") serverInfo = data;
       results.push(`✓ ${check.name}`);
     } catch (error) {
       results.push(`✗ ${check.name}（${error.message}）`);
     }
   }
 
+  if (fingerprint !== mediaConnectionFingerprint()) return false;
   const hasFailure = results.some((item) => item.startsWith("✗"));
   const summary = hasFailure ? "诊断完成：存在失败项" : "诊断完成：连接正常";
-  elements.connectionMessage.textContent = `${summary}。${results.join("；")}`;
+  const failedItems = results.filter((item) => item.startsWith("✗"));
+  elements.connectionMessage.textContent = hasFailure && failedItems.length
+    ? `${summary}：${failedItems.join("；")}`
+    : `${summary}。`;
+  appState.systemInfo = hasFailure ? null : serverInfo;
+  const detail = elements.connectionMessage.textContent;
+  renderConnectionState(!hasFailure, detail + (!hasFailure && mediaEditor().dirty ? " 测试通过，当前修改尚未保存。" : ""), hasFailure ? "danger" : "neutral");
+  const stamp = document.getElementById("media-connection-checked");
+  if (stamp) stamp.textContent = `检测于 ${new Date().toLocaleTimeString()} · 总耗时 ${Math.round(performance.now() - started)} ms`;
   addSyncEvent("连接诊断", results.join("；"), hasFailure ? "danger" : "success");
+  return !hasFailure;
 }
 
 function renderAll() {
@@ -12807,7 +12968,7 @@ function swapLogsActionBlocks(activeView) {
 }
 
 function shouldShowTopbar(view) {
-  return TOPBAR_VISIBLE_VIEWS.has(String(view || "").trim());
+  return !["users", "strm-115"].includes(String(view || "").trim()) && TOPBAR_VISIBLE_VIEWS.has(String(view || "").trim());
 }
 
 function switchView(view) {
@@ -12926,6 +13087,12 @@ function switchView(view) {
   }
   if (targetView === "strm-115" && shouldUseLocalProxy()) {
     loadStrm115Config({ silent: true });
+  }
+  if (targetView === "media-config") {
+    renderMediaServerSummary();
+    if (appState.systemInfo) {
+      refreshConnectionLatency();
+    }
   }
   if (elements.mainContent) {
     elements.mainContent.scrollTo({ top: 0, behavior: "smooth" });
@@ -13424,10 +13591,6 @@ function seedDemoConfig() {
 }
 
 function getActiveMediaServerType() {
-  const selectedButtonType = document.querySelector("[data-media-server].selected")?.dataset?.mediaServer || "";
-  if (MEDIA_SERVER_TYPES.includes(selectedButtonType)) {
-    return selectedButtonType;
-  }
   return MEDIA_SERVER_TYPES.includes(appState.config?.activeServerType) ? appState.config.activeServerType : "emby";
 }
 
@@ -13496,7 +13659,13 @@ function setActiveMediaServer(type, options = {}) {
 }
 
 window.handleMediaServerSwitch = function handleMediaServerSwitch(type) {
-  setActiveMediaServer(type, { persist: true });
+  if (mediaEditor().saving) return;
+  mediaEditor().switching = true;
+  setActiveMediaServer(type, { persist: false });
+  mediaEditor().switching = false;
+  mediaEditor().message = "";
+  invalidateMediaConnection();
+  updateMediaEditor();
   const label = MEDIA_SERVER_META[getActiveMediaServerType()]?.label || "媒体服务器";
   renderConnectionState(false, `已切换到 ${label} 配置。`);
 };
@@ -13547,7 +13716,7 @@ function clearConfig() {
   appState.devices = [];
   appState.qualityResolutionStats = null;
   appState.qualityResolutionItemsByBucket = {};
-  appState.qualityResolutionActiveBucket = "uhd";
+  appState.qualityResolutionActiveBucket = "all";
   appState.qualityResolutionFilters = normalizeQualityResolutionFilters({ type: "all", keyword: "", sort: "resolution_desc" });
   appState.qualityResolutionFilteredEntries = [];
   appState.qualityResolutionFocusBucketKey = "uhd";
@@ -14295,25 +14464,99 @@ function GlobalSearchModal() {
     });
   }
 
+  const categories = { all: "全部", function: "功能", media: "影视", docker: "Docker", user: "用户", task: "任务" };
+  let category = "all";
+  let batches = {};
+  let sourceCache = {};
+  let pending = new Set();
+  let failures = {};
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem("vm-search-recent") || "[]"); } catch (_) {}
+  if (!Array.isArray(recent)) recent = [];
+
+  function availableViews() {
+    return new Set([...document.querySelectorAll('.sidebar .nav-item[data-view]')]
+      .filter(e => !e.hidden && !e.disabled && !e.closest('[hidden]') && getComputedStyle(e).display !== 'none')
+      .map(e => e.dataset.view));
+  }
+
+  function functionRows() {
+    const allowed = availableViews();
+    const rows = [...allowed].filter(id => VIEW_META[id]).map(id => ({
+      kind: 'function', id: `view:${id}`, title: VIEW_META[id].title,
+      description: VIEW_META[id].subtitle, keywords: id,
+      open: () => switchView(id)
+    }));
+    const add = (id, title, description, view, action, keywords = '') => {
+      if (allowed.has(view)) rows.push({kind:'function', id, title, description, keywords, open:()=>{switchView(view);action?.();}});
+    };
+    add('tmdb', 'TMDB 海报兜底', '网络与服务 › 海报与语言配置', 'network-services', ()=>document.querySelector('[data-service-open="tmdb"]')?.click(), '海报 poster');
+    add('proxy', '网络代理', '网络与服务 › 公网请求代理', 'network-services', ()=>document.querySelector('[data-service-open="network"]')?.click(), 'proxy 代理');
+    add('telegram', 'Telegram 通知配置', '通知配置 › Telegram', 'bot-assistant', ()=>openNotificationChannelModal('telegram'), 'tg 电报');
+    add('wecom', '企业微信通知配置', '通知配置 › 企业微信', 'bot-assistant', ()=>openNotificationChannelModal('wecom'), 'wechat wecom');
+    add('media-key', '媒体服务器 API Key', '媒体库配置 › 服务器连接', 'media-config', ()=>{document.getElementById('api-key')?.focus();}, 'emby jellyfin 密钥');
+    rows.push({kind:'function',id:'connectivity',title:'连通性测试',description:'检查 TMDB、Telegram 等服务连接',keywords:'网络 延迟 测速',open:()=>document.querySelector('#connectivity-trigger')?.click()});
+    return rows;
+  }
+
+  function matchRows(rows, query) {
+    const key = normalizeSearchKey(query);
+    return rows.map(row => {
+      const title = normalizeSearchKey(row.title);
+      const haystack = normalizeSearchKey(`${row.title} ${row.description || ''} ${row.keywords || ''}`);
+      const score = !key ? 1 : title === key ? 100 : title.startsWith(key) ? 80 : title.includes(key) ? 60 : haystack.includes(key) ? 30 : normalizeSearchKey(toPinyinInitials(row.title)).includes(key) ? 20 : 0;
+      return {...row, score};
+    }).filter(row=>row.score).sort((a,b)=>b.score-a.score).slice(0, category === 'all' ? 6 : 30);
+  }
+
   function renderResults() {
-    if (!state.query) {
-      renderEmptyState();
-      return;
-    }
-    if (state.loading) {
-      renderLoadingState();
-      return;
-    }
-    if (state.error) {
-      renderMessage(state.error);
-      return;
-    }
-    if (!state.results.length) {
-      renderMessage("没有找到相关媒体");
-      return;
-    }
-    refs.results.innerHTML = state.results.map((result, index) => buildSearchResultCard(result, index)).join("");
+    const selected = state.results[state.selectedIndex]?.id;
+    state.results = Object.keys(categories).filter(k=>k!=='all' && (category==='all'||category===k)).flatMap(k=>batches[k]||[]);
+    state.selectedIndex = Math.max(0, state.results.findIndex(r=>r.id===selected));
+    let previous = '';
+    refs.results.innerHTML = state.results.map((row,index)=>{
+      const head = previous!==row.kind ? `<h3 class="gs-group">${categories[row.kind]}${!state.query && row.kind==='function' ? ' · 最近使用与快捷入口' : ''}</h3>` : '';
+      previous=row.kind;
+      if(row.kind==='media') return head+buildSearchResultCard(row,index);
+      const icon = {function:'⌘',docker:'▣',user:'◎',task:'◷'}[row.kind];
+      return head+`<button class="gs-item${index===state.selectedIndex?' active':''}" type="button" role="option" aria-selected="${index===state.selectedIndex}" data-global-search-index="${index}"><span class="gs-icon">${icon}</span><span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.description||'')}</small></span><span class="gs-enter">↵</span></button>`;
+    }).join('') || `<div class="global-search-message">${pending.size?'正在读取搜索数据…':state.query?'没有找到相关结果':'输入关键词搜索，或选择其他分类'}</div>`;
+    refs.modal.querySelector('.gs-status').textContent = [pending.size?`正在搜索：${[...pending].map(k=>categories[k]).join('、')}`:'',...Object.entries(failures).map(([k,v])=>`${categories[k]}：${v}`)].filter(Boolean).join(' · ');
+    refs.modal.querySelectorAll('[data-gs-category]').forEach(b=>{b.classList.toggle('active',b.dataset.gsCategory===category);b.setAttribute('aria-pressed',String(b.dataset.gsCategory===category));});
     bindPosterFallbacks();
+  }
+
+  function locateTask(id) {
+    switchView('task-center');
+    const find = () => {
+      const button = [...document.querySelectorAll('[data-run-task-id]')].find(e=>e.dataset.runTaskId===id);
+      const card = button?.closest('article');
+      if(!card) return false;
+      card.scrollIntoView({block:'center'});card.classList.add('gs-target');
+      window.setTimeout(()=>card.classList.remove('gs-target'),2500);return true;
+    };
+    if(find()) return;
+    const observer = new MutationObserver(()=>{if(find())observer.disconnect();});
+    observer.observe(document.querySelector('#view-task-center'),{childList:true,subtree:true});
+    window.setTimeout(()=>{observer.disconnect();if(!find()&&appState.activeView==='task-center')showToast('任务列表尚未加载，请在任务中心刷新后查找。',2400);},12000);
+  }
+
+  async function sourceRows(kind) {
+    if(kind==='docker') {
+      if(!window.vistaDockerSearch) throw new Error('模块未就绪');
+      return window.vistaDockerSearch.rows();
+    }
+    if(!appState.config.serverUrl || !appState.config.apiKey) throw new Error('请先连接媒体服务器');
+    if(kind==='user') {
+      const payload = await embyFetch('/Users');
+      return (Array.isArray(payload)?payload:payload.Items||[]).map(u=>({kind:'user',id:`user:${u.Id}`,title:u.Name||u.Id,description:'用户管理 › 用户配置',open:async()=>{
+        switchView('user-center');
+        if(!appState.users.some(row=>row.Id===u.Id)) appState.users.push(u);
+        await openUserConfigModal(u.Id);
+      }}));
+    }
+    const payload = await embyFetch('/ScheduledTasks');
+    return (Array.isArray(payload)?payload:payload.Items||[]).map(t=>({kind:'task',id:`task:${t.Id}`,title:t.Name||t.Key||t.Id,description:`${t.Category||'计划任务'} · ${t.Description||t.State||''}`,keywords:t.Key,open:()=>locateTask(String(t.Id))}));
   }
 
   function setSelectedIndex(nextIndex) {
@@ -14329,48 +14572,44 @@ function GlobalSearchModal() {
   }
 
   async function executeSearch(query) {
-    const trimmed = String(query || "").trim();
-    state.query = trimmed;
-    state.error = "";
-    state.results = [];
-    state.selectedIndex = 0;
-    state.searchSeq += 1;
-    const seq = state.searchSeq;
-    if (!trimmed) {
-      state.loading = false;
-      renderResults();
-      return;
+    const trimmed=String(query||'').trim();
+    state.query=trimmed;
+    const seq=++state.searchSeq;
+    batches={};pending=new Set();failures={};state.results=[];state.selectedIndex=0;
+    if(!isAdminReady()) { failures.function='请先登录';renderResults();return; }
+    if(category==='all'||category==='function') {
+      let rows=functionRows();
+      if(!trimmed) rows.sort((a,b)=>(recent.includes(b.id)?1:0)-(recent.includes(a.id)?1:0));
+      batches.function=matchRows(rows,trimmed);
     }
-    if (!appState.config.serverUrl || !appState.config.apiKey) {
-      state.loading = false;
-      state.error = "请先在媒体库配置中连接 Emby。";
-      renderResults();
-      return;
-    }
-    state.loading = true;
+    const allowed=availableViews();
+    const sources = trimmed || category!=='all' ? ['docker','user','task','media'].filter(k=>(category==='all'||category===k) && (k==='media'||allowed.has({docker:'infra-docker',user:'user-center',task:'task-center'}[k]))) : [];
+    for(const k of sources) pending.add(k);
     renderResults();
-    try {
-      const results = await runSearch(trimmed);
-      if (seq !== state.searchSeq) {
-        return;
+    await Promise.all(sources.map(async kind=>{
+      try {
+        let rows;
+        if(kind==='media') {
+          if(!trimmed) { rows=[]; }
+          else if(!appState.config.serverUrl||!appState.config.apiKey) throw new Error('请先连接媒体服务器');
+          else rows=(await runSearch(trimmed)).map(r=>({...r,kind:'media'}));
+        } else {
+          sourceCache[kind] ||= sourceRows(kind).catch(e=>{delete sourceCache[kind];throw e;});
+          rows=matchRows(await sourceCache[kind],trimmed);
+        }
+        if(seq!==state.searchSeq||!state.open)return;
+        batches[kind]=rows;
+      } catch(e) {
+        if(seq!==state.searchSeq||!state.open)return;
+        failures[kind]=e.message||'暂时不可用';
+      } finally {
+        if(seq===state.searchSeq&&state.open){pending.delete(kind);renderResults();}
       }
-      state.results = results;
-      state.error = "";
-    } catch (error) {
-      if (seq !== state.searchSeq) {
-        return;
-      }
-      state.results = [];
-      state.error = error?.message || "搜索失败，请稍后重试。";
-    } finally {
-      if (seq === state.searchSeq) {
-        state.loading = false;
-        renderResults();
-      }
-    }
+    }));
   }
 
   function scheduleSearch() {
+    state.searchSeq += 1;
     window.clearTimeout(state.debounceTimer);
     state.debounceTimer = window.setTimeout(() => {
       executeSearch(refs.input?.value || "");
@@ -14387,18 +14626,24 @@ function GlobalSearchModal() {
   }
 
   function openResult(index = state.selectedIndex) {
-    const result = state.results[index];
-    if (!result) {
+    const result=state.results[index];
+    if(!result || !isAdminReady()) return;
+    close();
+    if(result.kind==='media') {
+      const url=buildItemDetailUrl(result);
+      if(url)window.open(url,'_blank','noopener');
       return;
     }
-    const detailUrl = buildItemDetailUrl(result);
-    close();
-    if (detailUrl) {
-      window.open(detailUrl, "_blank", "noopener");
+    if(result.kind==='function') {
+      recent=[result.id,...recent.filter(id=>id!==result.id)].slice(0,6);
+      try { localStorage.setItem('vm-search-recent',JSON.stringify(recent)); } catch(_) {}
     }
+    Promise.resolve().then(()=>result.open()).catch(e=>showToast(e.message||'无法打开结果',2200));
   }
 
   function open() {
+    if (!isAdminReady()) return;
+    category="all"; sourceCache={};
     if (!state.mounted) {
       mount();
     }
@@ -14412,8 +14657,9 @@ function GlobalSearchModal() {
     window.clearTimeout(state.debounceTimer);
     refs.modal.hidden = false;
     document.body.classList.add("global-search-open");
+    elements.globalSearchTrigger?.setAttribute("aria-expanded", "true");
     refs.input.value = "";
-    renderResults();
+    executeSearch("");
     window.setTimeout(() => refs.input?.focus(), 0);
   }
 
@@ -14426,7 +14672,8 @@ function GlobalSearchModal() {
     window.clearTimeout(state.debounceTimer);
     refs.modal.hidden = true;
     document.body.classList.remove("global-search-open");
-    elements.sidebarGlobalSearchInput?.blur();
+    elements.globalSearchTrigger?.setAttribute("aria-expanded", "false");
+    elements.globalSearchTrigger?.focus({ preventScroll: true });
   }
 
   function handleKeydown(event) {
@@ -14439,6 +14686,14 @@ function GlobalSearchModal() {
     if (!state.open) {
       return;
     }
+    if (event.key === "Tab") {
+      const focusable=[...refs.panel.querySelectorAll('button:not(:disabled),input')].filter(e=>e.getClientRects().length);
+      const first=focusable[0],last=focusable[focusable.length-1];
+      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+      return;
+    }
+    if (event.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
       close();
@@ -14454,7 +14709,7 @@ function GlobalSearchModal() {
       setSelectedIndex(state.selectedIndex - 1);
       return;
     }
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && event.target === refs.input) {
       event.preventDefault();
       openResult();
     }
@@ -14472,10 +14727,10 @@ function GlobalSearchModal() {
       <div class="global-search-panel" role="dialog" aria-modal="true" aria-label="全局搜索">
         <div class="global-search-input-row">
           <span class="global-search-input-icon">⌕</span>
-          <input id="global-search-input" type="search" placeholder="输入影视名称、拼音首字母搜索..." autocomplete="off">
+          <input id="global-search-input" type="search" placeholder="搜索功能、影视、容器、用户、任务…" aria-label="搜索全站" autocomplete="off">
           <button class="global-search-esc" type="button" aria-label="关闭全局搜索">ESC</button>
         </div>
-        <div class="global-search-results" role="listbox"></div>
+        <div class="gs-categories" aria-label="搜索分类">${Object.entries(categories).map(([id,name])=>`<button type="button" data-gs-category="${id}">${name}</button>`).join("")}</div><div class="global-search-results" role="listbox" aria-label="搜索结果"></div><div class="gs-status" role="status"></div><footer class="gs-footer">↑ ↓ 选择　Enter 打开　Esc 关闭</footer>
       </div>
     `;
     document.body.appendChild(modal);
@@ -14490,6 +14745,10 @@ function GlobalSearchModal() {
       }
     });
     refs.input?.addEventListener("input", scheduleSearch);
+    modal.querySelector('.gs-categories').addEventListener('click',e=>{
+      const button=e.target.closest('[data-gs-category]');if(!button)return;
+      category=button.dataset.gsCategory;window.clearTimeout(state.debounceTimer);executeSearch(refs.input.value);refs.input.focus();
+    });
     refs.results?.addEventListener("click", (event) => {
       const button = event.target instanceof Element ? event.target.closest("[data-global-search-index]") : null;
       if (!(button instanceof HTMLButtonElement)) {
@@ -14561,19 +14820,12 @@ function initEvents() {
   elements.sidebarToggleBtn?.addEventListener("click", () => {
     setSidebarCollapsed(!appState.sidebarCollapsed);
   });
-  elements.sidebarGlobalSearchTrigger?.addEventListener("click", (event) => {
+  elements.globalSearchTrigger?.addEventListener("click", (event) => {
     event.preventDefault();
     globalSearchModal.open();
   });
-  elements.sidebarGlobalSearchTrigger?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      globalSearchModal.open();
-    }
-  });
-  elements.sidebarGlobalSearchInput?.addEventListener("focus", () => {
-    globalSearchModal.open();
-  });
+  const searchShortcut = document.getElementById("global-search-shortcut");
+  if (searchShortcut) searchShortcut.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
 
   elements.navItems.forEach((item) => {
     item.addEventListener("click", () => {
@@ -14626,18 +14878,26 @@ function initEvents() {
     renderLogs();
   });
 
+  document.getElementById("missing-force-refresh-btn")?.addEventListener("click", () => scanMissingEpisodes({ forceRefresh: true }));
   elements.missingScanBtn?.addEventListener("click", async () => {
     await scanMissingEpisodes();
   });
 
-  elements.missingStatus?.addEventListener("change", async () => {
-    await loadMissingList({ quiet: true });
-    renderMissing();
+  elements.missingList?.addEventListener("click", event => {
+    const button = event.target.closest("[data-missing-detail]");
+    if (button) openMissingDetail(appState.missingRows[Number(button.dataset.missingDetail)]);
   });
-
-  elements.missingSearch?.addEventListener("input", async () => {
-    await loadMissingList({ quiet: true });
-    renderMissing();
+  const refreshMissing = () => loadMissingList({ quiet: true }).catch(() => {});
+  elements.missingStatus?.addEventListener("change", refreshMissing);
+  elements.missingSearch?.addEventListener("input", () => {
+    ++missingListRequest;
+    window.clearTimeout(missingSearchTimer);
+    missingSearchTimer = window.setTimeout(refreshMissing, 250);
+  });
+  document.getElementById("missing-refresh-results")?.addEventListener("click", async () => {
+    appState.missingNotice = "";
+    await refreshMissing();
+    await resumeMissingScanIfRunning();
   });
 
   elements.projectLogLevel?.addEventListener("change", refreshProjectLogs);
@@ -14668,6 +14928,13 @@ function initEvents() {
     await runConnectionDiagnosis();
   });
 
+  elements.connectionRecheck?.addEventListener("click", async () => {
+    if (mediaEditor().saving) return;
+    elements.connectionRecheck.disabled = true;
+    try { await runConnectionDiagnosis(); }
+    finally { elements.connectionRecheck.disabled = false; }
+  });
+
   elements.disconnectBtn?.addEventListener("click", () => {
     clearConfig();
   });
@@ -14677,9 +14944,9 @@ function initEvents() {
   elements.tmdbToken?.addEventListener("input", () => {
     refreshTmdbUiState();
   });
-  elements.tmdbTestBtn?.addEventListener("click", () => testTmdbConnection({ silent: false }));
+
   elements.networkSaveBtn?.addEventListener("click", () => saveNetworkConfig());
-  elements.networkTestBtn?.addEventListener("click", () => testNetworkConnection());
+
   [
     elements.aiEnabled,
     elements.aiBaseUrl,
@@ -15156,6 +15423,13 @@ function initEvents() {
   });
   elements.drive115ParseBtn?.addEventListener("click", parseDrive115Link);
   elements.drive115TransferBtn?.addEventListener("click", transferDrive115Link);
+  document.getElementById("strm115-link-format")?.addEventListener("change", renderStrm115LinkExample);
+  elements.strm115PublicBaseUrl?.addEventListener("input", renderStrm115LinkExample);
+  document.getElementById("strm115-playback-test")?.addEventListener("click", testStrm115Playback);
+  document.getElementById("strm115-reload-samples")?.addEventListener("click", async () => {
+    try { const data = await inviteApiFetch("/api/drive115/strm/config"); renderStrm115Samples(data.samples); } catch (e) { document.getElementById("strm115-test-result").textContent = `读取失败：${e.message}`; }
+  });
+  document.getElementById("strm115-rewrite-links-btn")?.addEventListener("click", rewriteStrm115Links);
   elements.strm115SaveBtn?.addEventListener("click", saveStrm115Config);
   elements.strm115PreviewBtn?.addEventListener("click", () => runStrm115Sync("quick_verify"));
   elements.strm115SyncBtn?.addEventListener("click", () => runStrm115Sync(elements.strm115SyncMode?.value || "safe_incremental"));
@@ -15355,6 +15629,21 @@ function initEvents() {
   });
 
   elements.settingsSaveBtn?.addEventListener("click", saveSettingsConfig);
+  document.getElementById("view-media-config")?.addEventListener("input", event => {
+    if (!event.target.matches("input, select")) return;
+    mediaEditor().message = "";
+    if (["server-url", "api-key"].includes(event.target.id)) invalidateMediaConnection();
+    if (event.target.id === "network-proxy-url") elements.networkProxyHint.textContent = "代理配置已变更，尚未保存或测试。";
+    updateMediaEditor();
+  });
+  document.getElementById("view-media-config")?.addEventListener("change", () => { mediaEditor().message = ""; updateMediaEditor(); });
+  document.querySelectorAll("[data-media-save]").forEach(button => button.addEventListener("click", saveMediaConfig));
+  document.querySelectorAll("[data-media-revert]").forEach(button => button.addEventListener("click", revertMediaConfig));
+
+  document.addEventListener("adaptive:viewchange", () => updateMediaEditor());
+  window.addEventListener("beforeunload", event => {
+    if (mediaEditor().dirty) { event.preventDefault(); event.returnValue = ""; }
+  });
   elements.qualityRescanBtn?.addEventListener("click", runQualityRescan);
   elements.inviteForm?.addEventListener("submit", createInvite);
   elements.renewalForm?.addEventListener("submit", saveRenewal);
@@ -15553,10 +15842,13 @@ function initEvents() {
 }
 
 function hydrateInputs() {
+  const preserveMediaDraft = mediaEditor().dirty && !mediaEditor().switching;
+  if (!preserveMediaDraft) {
   syncActiveMediaServerFields();
   const activeConfig = getMediaServerConfig();
   elements.serverUrl.value = activeConfig.serverUrl.replace(/\/emby$/i, "");
   elements.apiKey.value = activeConfig.apiKey;
+  if (!document.getElementById("service-tmdb-dialog")?.open) {
   if (elements.tmdbEnabled) {
     elements.tmdbEnabled.checked = Boolean(appState.config.tmdbEnabled);
   }
@@ -15569,6 +15861,8 @@ function hydrateInputs() {
   if (elements.tmdbRegion) {
     elements.tmdbRegion.value = appState.config.tmdbRegion || "CN";
   }
+  }
+  }
   renderMediaServerSelector();
   refreshTmdbUiState();
   renderAiSettings();
@@ -15576,20 +15870,30 @@ function hydrateInputs() {
   renderCoverStudioSettings();
   renderLibraryDirectorySettings();
   renderEnvControlledState();
+  if (!mediaEditor().baseline || !mediaEditor().dirty && !mediaEditor().switching) mediaEditor().baseline = captureMediaDraft();
+  updateMediaEditor();
   loadNetworkConfig();
 }
 
 async function loadNetworkConfig() {
+  if (document.getElementById("service-network-dialog")?.open) return;
   if (!elements.networkProxyUrl) {
     return;
   }
   try {
+    const requestId = mediaEditor().networkRequest = (mediaEditor().networkRequest || 0) + 1;
     const result = await inviteApiFetch("/api/network/config");
+    if (requestId !== mediaEditor().networkRequest || mediaEditor().saving) return;
     const proxyUrl = String(result?.config?.proxyUrl || "");
     const envManaged = Array.isArray(result?.envManaged) ? result.envManaged : [];
-    elements.networkProxyUrl.value = proxyUrl;
+    const editor = mediaEditor();
+    const proxyEdited = editor.baseline && elements.networkProxyUrl.value.trim() !== editor.baseline.proxy;
+    if (!proxyEdited || envManaged.includes("proxyUrl")) elements.networkProxyUrl.value = proxyUrl;
+    editor.networkReady = true;
+    if (editor.baseline) editor.baseline.proxy = proxyUrl;
     const locked = envManaged.includes("proxyUrl");
     elements.networkProxyUrl.disabled = locked;
+    elements.networkProxyUrl.dataset.envControlled = String(locked);
     if (elements.networkSaveBtn) {
       elements.networkSaveBtn.disabled = locked;
     }
@@ -15603,7 +15907,10 @@ async function loadNetworkConfig() {
           ? "代理已启用，公网请求（TMDB、登录海报墙等）将走代理。"
           : "未配置代理，公网请求将直接连接。";
     }
+    updateMediaEditor();
   } catch (error) {
+
+    updateMediaEditor();
     if (elements.networkProxyHint) {
       elements.networkProxyHint.className = "tmdb-token-hint is-warning";
       elements.networkProxyHint.textContent = error.message || "代理配置读取失败。";

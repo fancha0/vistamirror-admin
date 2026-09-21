@@ -1,0 +1,37 @@
+.service-settings-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;max-width:1040px; }
+body.vistamirror-fig1-skin .main-content .service-settings-card { display:flex;flex-direction:column;align-items:flex-start;gap:10px;text-align:left;padding:24px;border:1px solid #dfe6f0;border-radius:16px;background:#fff;color:#26354a;cursor:pointer;box-shadow:0 5px 18px #21355208; }
+.service-settings-card:hover { border-color:#9ebaf2; }
+.service-settings-card img,.service-settings-card svg { width:44px;height:44px;color:#3979f6; }
+.service-settings-card h3 { font-size:16px;margin:4px 0 0; }
+.service-settings-card p { margin:0;color:#78869c;font-size:14px; }
+.service-settings-card span { color:#426cb3;font-size:14px;overflow-wrap:anywhere; }
+.service-settings-card small { color:#78869c;font-size:12px; }
+.service-settings-card b { margin-top:12px;color:#3979f6;font-size:14px; }
+.service-settings-dialog { width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 32px);padding:0;border:1px solid #dfe6f0;border-radius:20px;background:#fff;color:#26354a;font:14px/1.5 var(--vm-font-sans); }
+.service-settings-dialog[open] { display:flex;flex-direction:column; }
+.service-settings-dialog::backdrop { background:rgba(20,32,57,.22);-webkit-backdrop-filter:none;backdrop-filter:none; }
+.service-settings-dialog header,.service-settings-dialog footer { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #e6ebf3; }
+.service-settings-dialog h2 { font-size:20px;margin:0; }
+.service-settings-dialog footer { flex-wrap:wrap;border-bottom:0;border-top:1px solid #e6ebf3; }
+.service-settings-dialog footer p { margin:0;flex:1 1 100%;font-size:12px;color:#78869c; }
+.service-settings-dialog footer>div { margin-left:auto;display:flex;gap:8px; }
+body.vistamirror-fig1-skin .service-settings-dialog button { min-height:38px;padding:0 12px;border:1px solid #dfe6f0;border-radius:10px;background:#f7f9fd;color:#426cb3;cursor:pointer; }
+body.vistamirror-fig1-skin .service-settings-dialog [data-service-save] { background:#3979f6;color:#fff; }
+.service-settings-dialog button:disabled { opacity:.45;cursor:default; }
+.service-settings-body { min-height:0;overflow:auto;padding:0 20px; }
+.service-settings-dialog .service-settings-fields, .service-settings-dialog .mc-group-card { margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none; }
+.service-settings-dialog .mc-group-label { display:none; }
+.service-settings-dialog .mc-row { display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid #edf0f5; }
+.service-settings-dialog .mc-label { width:110px;flex-shrink:0;font-size:14px; }
+.service-settings-dialog .mc-control { min-width:0;flex:1;display:flex;align-items:center;flex-wrap:wrap;gap:8px; }
+.service-settings-dialog .password-field { display:flex;width:100%;min-width:0;gap:8px; }
+.service-settings-dialog input:not([type=checkbox]) { width:100%;min-width:0;min-height:38px;padding:8px 10px;border:1px solid #dfe6f0;border-radius:10px;font:inherit; }
+.service-settings-dialog .password-field input { flex:1; }
+.service-settings-dialog input:disabled { opacity:.65; }
+.service-settings-dialog .mc-group-foot { margin:0;padding:12px 0;font-size:12px;line-height:1.6;font-weight:400;color:#78869c;border:0;border-radius:0;background:transparent;box-shadow:none; }
+#view-media-config .settings-core-grid { grid-template-columns:minmax(0,1fr)!important;max-width:900px; }
+@media(max-width:640px){.service-settings-grid { grid-template-columns:minmax(0,1fr);gap:16px; }.service-settings-dialog .mc-row { align-items:flex-start;flex-direction:column;gap:8px; }.service-settings-dialog .mc-control { width:100%; }.service-settings-dialog button { min-height:44px!important; }}
+#view-media-config .config-main { width:100%;max-width:900px; }
+#view-media-config .settings-core-grid { width:100%;margin:0; }
+#view-media-config section.mc-group:nth-of-type(1) { grid-column:1;grid-row:auto; }
+.service-settings-dialog .tmdb-status-badge { background:#f1f5fb;color:#64748b; }
