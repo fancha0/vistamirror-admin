@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">VistaMirror · 镜界</title>
+  <desc id="desc">媒体库管理控制台。媒体洞察、STRM 直连与 Docker 管理。</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#eef9ff"/><stop offset=".55" stop-color="#f2f4ff"/><stop offset="1" stop-color="#f3edff"/></linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7a57ff"/><stop offset=".5" stop-color="#1494ff"/><stop offset="1" stop-color="#22cbd9"/></linearGradient>
+    <radialGradient id="glow"><stop stop-color="#b6d6ff" stop-opacity=".65"/><stop offset="1" stop-color="#b6d6ff" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect x="1" y="1" width="1198" height="358" rx="28" fill="url(#bg)" stroke="#dfe7f5"/>
+  <circle cx="1080" cy="70" r="220" fill="url(#glow)"/>
+  <g fill="none" stroke="#c7d6f4" opacity=".6"><circle cx="90" cy="330" r="130"/><circle cx="90" cy="330" r="180"/><circle cx="1140" cy="20" r="140"/><circle cx="1140" cy="20" r="190"/></g>
+  <g transform="translate(218 79)">
+    <rect width="98" height="98" rx="26" fill="#ffffff" fill-opacity=".85" stroke="#dce7fa"/>
+    <g transform="translate(10 10) scale(.305)"><path d="M58 70L120 190L165 118L196 146L196 94" fill="none" stroke="url(#brand)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/></g>
+  </g>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+    <text x="350" y="102" font-size="12" letter-spacing="4" fill="#7185ac">YOUR MEDIA, CONNECTED</text>
+    <text x="346" y="153" font-size="48" font-weight="600" fill="#253754">VistaMirror<tspan font-size="28" font-weight="400" fill="#647b9e"> · 镜界</tspan></text>
+    <text x="600" y="215" text-anchor="middle" font-size="19" fill="#607393">让媒体、播放与日常运维，在同一个界面相遇。</text>
+    <g font-size="13" text-anchor="middle">
+      <rect x="352" y="251" width="148" height="36" rx="18" fill="#e4edff"/><text x="426" y="274" fill="#4d73ba">媒体库洞察</text>
+      <rect x="526" y="251" width="148" height="36" rx="18" fill="#eae5ff"/><text x="600" y="274" fill="#765cbc">STRM 直连</text>
+      <rect x="700" y="251" width="148" height="36" rx="18" fill="#e1f3f3"/><text x="774" y="274" fill="#3f858c">Docker 管理</text>
+    </g>
+  </g>
+</svg>
